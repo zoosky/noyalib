@@ -23,6 +23,7 @@ pub(crate) struct ParseConfig {
     pub max_mapping_keys: usize,
     pub max_sequence_length: usize,
     pub duplicate_key_policy: DuplicateKeyPolicy,
+    pub strict_booleans: bool,
 }
 
 impl From<&ParserConfig> for ParseConfig {
@@ -34,6 +35,7 @@ impl From<&ParserConfig> for ParseConfig {
             max_mapping_keys: c.max_mapping_keys,
             max_sequence_length: c.max_sequence_length,
             duplicate_key_policy: c.duplicate_key_policy,
+            strict_booleans: c.strict_booleans,
         }
     }
 }
@@ -164,7 +166,7 @@ impl<'a> Loader<'a> {
                 span,
             } => {
                 let resolved = if style == ScalarStyle::Plain {
-                    resolve_plain_scalar(&value, &tag)
+                    resolve_plain_scalar(&value, &tag, self.config.strict_booleans)
                 } else {
                     resolve_quoted_scalar(value, &tag)
                 };
@@ -471,6 +473,7 @@ fn value_to_key(value: &Value) -> Result<String> {
 fn resolve_plain_scalar(
     value: &str,
     tag: &Option<(String, String)>,
+    strict_booleans: bool,
 ) -> std::result::Result<Value, String> {
     // If there's a tag, handle it.
     if let Some((handle, suffix)) = tag {
@@ -482,9 +485,11 @@ fn resolve_plain_scalar(
         // Null values.
         "" | "~" | "null" | "Null" | "NULL" => Ok(Value::Null),
 
-        // Boolean values.
-        "true" | "True" | "TRUE" => Ok(Value::Bool(true)),
-        "false" | "False" | "FALSE" => Ok(Value::Bool(false)),
+        // Boolean values — strict mode only accepts lowercase.
+        "true" => Ok(Value::Bool(true)),
+        "false" => Ok(Value::Bool(false)),
+        "True" | "TRUE" if !strict_booleans => Ok(Value::Bool(true)),
+        "False" | "FALSE" if !strict_booleans => Ok(Value::Bool(false)),
 
         // Special float values.
         ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => {

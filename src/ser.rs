@@ -76,6 +76,17 @@ pub struct SerializerConfig {
     /// Maximum number of items in a collection to use flow style in Auto mode
     /// (default: 4).
     pub flow_threshold: usize,
+    /// Force-quote all string scalars regardless of content (default: false).
+    pub quote_all: bool,
+    /// Compact list indentation under mapping keys (default: false).
+    ///
+    /// When `true`, sequence items under a mapping key align with the key
+    /// instead of being indented an extra level.
+    pub compact_list_indent: bool,
+    /// Line width for folded block scalars (default: 80).
+    pub folded_wrap_chars: usize,
+    /// Minimum string length before block scalar style is considered (default: 80).
+    pub min_fold_chars: usize,
 }
 
 impl Default for SerializerConfig {
@@ -89,6 +100,10 @@ impl Default for SerializerConfig {
             flow_style: FlowStyle::Block,
             scalar_style: ScalarStyle::Auto,
             flow_threshold: 4,
+            quote_all: false,
+            compact_list_indent: false,
+            folded_wrap_chars: 80,
+            min_fold_chars: 80,
         }
     }
 }
@@ -167,6 +182,40 @@ impl SerializerConfig {
     #[must_use]
     pub fn flow_threshold(mut self, threshold: usize) -> Self {
         self.flow_threshold = threshold;
+        self
+    }
+
+    /// Force-quote all string scalars regardless of content.
+    #[must_use]
+    pub fn quote_all(mut self, enabled: bool) -> Self {
+        self.quote_all = enabled;
+        self
+    }
+
+    /// Enable compact list indentation under mapping keys.
+    ///
+    /// When enabled, sequence items align with the key rather than
+    /// being indented an extra level.
+    #[must_use]
+    pub fn compact_list_indent(mut self, enabled: bool) -> Self {
+        self.compact_list_indent = enabled;
+        self
+    }
+
+    /// Set the line width for folded block scalars.
+    #[must_use]
+    pub fn folded_wrap_chars(mut self, chars: usize) -> Self {
+        self.folded_wrap_chars = chars;
+        self
+    }
+
+    /// Set the minimum string length for block scalar style.
+    ///
+    /// Strings shorter than this threshold will not use block scalar
+    /// (`|` / `>`) style, even if they contain newlines.
+    #[must_use]
+    pub fn min_fold_chars(mut self, chars: usize) -> Self {
+        self.min_fold_chars = chars;
         self
     }
 }
@@ -270,6 +319,39 @@ where
     let mut writer = writer;
     writer.write_all(s.as_bytes())?;
     Ok(())
+}
+
+/// Serialize a Rust type to a `fmt::Write` destination.
+///
+/// # Errors
+///
+/// Returns an error if the type cannot be serialized or writing fails.
+pub fn to_fmt_writer<W, T>(writer: &mut W, value: &T) -> Result<()>
+where
+    W: std::fmt::Write,
+    T: ?Sized + Serialize,
+{
+    to_fmt_writer_with_config(writer, value, &SerializerConfig::default())
+}
+
+/// Serialize a Rust type to a `fmt::Write` destination with custom configuration.
+///
+/// # Errors
+///
+/// Returns an error if the type cannot be serialized or writing fails.
+pub fn to_fmt_writer_with_config<W, T>(
+    writer: &mut W,
+    value: &T,
+    config: &SerializerConfig,
+) -> Result<()>
+where
+    W: std::fmt::Write,
+    T: ?Sized + Serialize,
+{
+    let s = to_string_with_config(value, config)?;
+    writer
+        .write_str(&s)
+        .map_err(|e| Error::Serialize(e.to_string()))
 }
 
 /// Serialize a Rust type to a `Value`.
@@ -477,6 +559,12 @@ fn write_string(output: &mut String, s: &str, indent: usize, config: &Serializer
         return;
     }
 
+    // Force-quote all strings when configured
+    if config.quote_all {
+        write_single_quoted(output, s);
+        return;
+    }
+
     // Block scalar for multiline strings
     if config.block_scalars {
         let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
@@ -530,6 +618,19 @@ fn write_string(output: &mut String, s: &str, indent: usize, config: &Serializer
     // Use double quotes for all quoted strings
     let _ = has_control;
     write_double_quoted(output, s);
+}
+
+/// Write a single-quoted string, escaping embedded single quotes.
+fn write_single_quoted(output: &mut String, s: &str) {
+    output.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            output.push_str("''");
+        } else {
+            output.push(c);
+        }
+    }
+    output.push('\'');
 }
 
 /// Write a double-quoted string with bulk-copy between escape points.

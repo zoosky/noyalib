@@ -76,6 +76,12 @@ pub struct ParserConfig {
     pub max_sequence_length: usize,
     /// How to handle duplicate keys in mappings (default: Last).
     pub duplicate_key_policy: DuplicateKeyPolicy,
+    /// YAML 1.2 strict boolean mode (default: false).
+    ///
+    /// When `true`, only exact `"true"` and `"false"` (lowercase) resolve to
+    /// booleans. Case variants like `"True"`, `"TRUE"`, `"False"`, `"FALSE"`
+    /// are treated as strings. This matches the YAML 1.2 JSON Schema.
+    pub strict_booleans: bool,
 }
 
 impl Default for ParserConfig {
@@ -87,6 +93,7 @@ impl Default for ParserConfig {
             max_mapping_keys: 65536,
             max_sequence_length: 65536,
             duplicate_key_policy: DuplicateKeyPolicy::default(),
+            strict_booleans: false,
         }
     }
 }
@@ -145,7 +152,8 @@ impl ParserConfig {
 
     /// Create a strict configuration with lower limits.
     ///
-    /// Useful for parsing untrusted input.
+    /// Useful for parsing untrusted input. Enables strict booleans
+    /// (only `"true"` / `"false"`, not case variants).
     #[must_use]
     pub fn strict() -> Self {
         Self {
@@ -155,7 +163,18 @@ impl ParserConfig {
             max_mapping_keys: 1024,
             max_sequence_length: 1024,
             duplicate_key_policy: DuplicateKeyPolicy::Error,
+            strict_booleans: true,
         }
+    }
+
+    /// Enable or disable strict boolean mode.
+    ///
+    /// When enabled, only exact `"true"` and `"false"` (lowercase) resolve
+    /// to booleans. Case variants are treated as strings.
+    #[must_use]
+    pub fn strict_booleans(mut self, enabled: bool) -> Self {
+        self.strict_booleans = enabled;
+        self
     }
 
     /// Set the duplicate key handling policy.
@@ -241,6 +260,20 @@ where
 {
     let s = std::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
     from_str(s)
+}
+
+/// Deserialize a YAML byte slice with custom security limits.
+///
+/// # Errors
+///
+/// Returns an error if the bytes are not valid UTF-8, security limits
+/// are exceeded, or the data cannot be deserialized.
+pub fn from_slice_with_config<T>(slice: &[u8], config: &ParserConfig) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let s = std::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
+    from_str_with_config(s, config)
 }
 
 /// Deserialize YAML from a reader into a Rust type.

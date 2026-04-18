@@ -58,8 +58,8 @@ pub mod with;
 
 pub use anchors::{ArcAnchor, ArcWeakAnchor, RcAnchor, RcWeakAnchor};
 pub use de::{
-    from_reader, from_reader_with_config, from_slice, from_str, from_str_with_config, from_value,
-    Deserializer, DuplicateKeyPolicy, ParserConfig,
+    from_reader, from_reader_with_config, from_slice, from_slice_with_config, from_str,
+    from_str_with_config, from_value, Deserializer, DuplicateKeyPolicy, ParserConfig,
 };
 pub use error::{Error, Location, Result};
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};
@@ -70,9 +70,10 @@ pub use schema::{
     validate_json_schema,
 };
 pub use ser::{
-    to_string, to_string_multi, to_string_multi_with_config, to_string_with_config, to_value,
-    to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_with_config, FlowStyle,
-    ScalarStyle, Serializer, SerializerConfig,
+    to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,
+    to_string_multi_with_config, to_string_with_config, to_value, to_writer, to_writer_multi,
+    to_writer_multi_with_config, to_writer_with_config, FlowStyle, ScalarStyle, Serializer,
+    SerializerConfig,
 };
 pub use spanned::Spanned;
 pub use value::{
