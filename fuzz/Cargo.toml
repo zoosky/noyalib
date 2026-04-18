@@ -1,0 +1,52 @@
+[package]
+name = "noyalib-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+
+[dependencies.noyalib]
+path = ".."
+
+# ── Fuzz Targets ─────────────────────────────────────────────────────
+
+[[bin]]
+name = "fuzz_parse"
+path = "fuzz_targets/fuzz_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_roundtrip"
+path = "fuzz_targets/fuzz_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_from_value"
+path = "fuzz_targets/fuzz_from_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_multi_doc"
+path = "fuzz_targets/fuzz_multi_doc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_strict"
+path = "fuzz_targets/fuzz_strict.rs"
+test = false
+doc = false
+bench = false

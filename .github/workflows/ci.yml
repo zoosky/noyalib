@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main, "feat/**"]
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Rust CI
+    uses: sebastienrousseau/pipelines/.github/workflows/rust-ci.yml@cf0413f34ee0f24fe52a32f39d26eca513f65713
+    with:
+      rust-version: 'stable'
+      run-clippy: true
+      run-fmt: true
+      run-audit: true
+      run-coverage: true
+      coverage-threshold: 80
+    secrets: inherit
+
+  test-matrix:
+    name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [stable, nightly]
+        include:
+          - os: ubuntu-latest
+            toolchain: "1.75.0"
+          - os: macos-latest
+            toolchain: "1.75.0"
+          - os: windows-latest
+            toolchain: "1.75.0"
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Rust ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Run tests
+        run: cargo test --all-features
+
+  miri:
+    name: Miri (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      # Override rust-toolchain.toml which specifies stable.
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master
+        with:
+          toolchain: nightly
+          components: miri
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - name: Setup Miri
+        run: cargo +nightly miri setup
+      - name: Run tests under Miri
+        run: cargo +nightly miri test
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
+
+  verify-signatures:
+    name: Verify commit signatures
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify PR commits are signed (via GitHub API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          UNSIGNED=""
+          for COMMIT in $(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits --jq '.[].sha'); do
+            VERIFIED=$(gh api repos/${{ github.repository }}/git/commits/$COMMIT --jq '.verification.verified')
+            if [ "$VERIFIED" != "true" ]; then
+              MSG=$(gh api repos/${{ github.repository }}/git/commits/$COMMIT --jq '.message' | head -1)
+              echo "::error::Unverified commit: $COMMIT ($MSG)"
+              UNSIGNED="$UNSIGNED $COMMIT"
+            fi
+          done
+          if [ -n "$UNSIGNED" ]; then
+            echo "::error::Unverified commits detected. All PR commits must be signed."
+            exit 1
+          fi
+          echo "All commits are verified."

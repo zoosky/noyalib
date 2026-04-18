@@ -1,0 +1,21 @@
+/target
+
+# Editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Cargo
+*.orig
+
+# Coverage artifacts
+*.profraw
+lcov.info
+tarpaulin-report.html

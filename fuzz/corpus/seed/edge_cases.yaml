@@ -1,0 +1,15 @@
+? [complex, key]
+: value
+? {mapping: key}
+: another value
+empty_map: {}
+empty_seq: []
+unicode: "café ñ 日本語 \u0041\x42"
+block_keep: |+
+  content
+
+
+block_strip: |-
+  content
+
+

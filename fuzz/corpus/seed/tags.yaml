@@ -1,0 +1,5 @@
+!!str 42
+!!int "42"
+!!float 3.14
+!!bool true
+!!null ~
