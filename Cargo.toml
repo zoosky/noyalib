@@ -1,0 +1,216 @@
+[package]
+name = "noyalib"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.75.0"
+license = "MIT OR Apache-2.0"
+description = "A pure Rust YAML library with zero unsafe code and full serde integration"
+repository = "https://github.com/sebastienrousseau/noyalib"
+homepage = "https://github.com/sebastienrousseau/noyalib"
+documentation = "https://docs.rs/noyalib"
+readme = "README.md"
+keywords = ["yaml", "serde", "serialization", "parser", "safe"]
+categories = ["encoding", "parser-implementations", "config"]
+authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
+include = [
+    "/benches/**",
+    "/Cargo.toml",
+    "/examples/**",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/README.md",
+    "/src/**",
+    "/tests/**",
+]
+
+[lib]
+name = "noyalib"
+path = "src/lib.rs"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+
+[[example]]
+name = "collections"
+path = "examples/collections.rs"
+
+[[example]]
+name = "enums"
+path = "examples/enums.rs"
+
+[[example]]
+name = "nested"
+path = "examples/nested.rs"
+
+[[example]]
+name = "value"
+path = "examples/value.rs"
+
+[[example]]
+name = "multi_document"
+path = "examples/multi_document.rs"
+
+[[example]]
+name = "config"
+path = "examples/config.rs"
+
+[[example]]
+name = "merge"
+path = "examples/merge.rs"
+
+[[example]]
+name = "error_handling"
+path = "examples/error_handling.rs"
+
+[[example]]
+name = "singleton_map"
+path = "examples/singleton_map.rs"
+
+[[example]]
+name = "anchors"
+path = "examples/anchors.rs"
+
+[[example]]
+name = "merge_keys"
+path = "examples/merge_keys.rs"
+
+[[example]]
+name = "error_paths"
+path = "examples/error_paths.rs"
+
+[[example]]
+name = "custom_serialization"
+path = "examples/custom_serialization.rs"
+
+[[example]]
+name = "benchmarks-comparison"
+path = "examples/benchmarks/comparison.rs"
+
+[[example]]
+name = "spanned"
+path = "examples/spanned.rs"
+
+[[example]]
+name = "schema_validation"
+path = "examples/schema_validation.rs"
+
+[[example]]
+name = "parser_config"
+path = "examples/parser_config.rs"
+
+[[example]]
+name = "fmt_wrappers"
+path = "examples/fmt_wrappers.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+indexmap = { version = "2.14", features = ["serde"] }
+thiserror = "2.0"
+itoa = "1"
+ryu = "1"
+
+[dev-dependencies]
+serde_json = "1.0"
+serde_bytes = "0.11"
+criterion = "0.5"
+proptest = "1.11"
+serde_yaml_ng = "0.10"
+yaml-rust2 = "0.9"
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[[bench]]
+name = "comparison"
+harness = false
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# Linting config
+[lints.rust]
+missing_copy_implementations = "warn"
+missing_docs = "warn"
+unstable_features = "warn"
+unused_extern_crates = "warn"
+unused_results = "warn"
+
+bare_trait_objects = "allow"
+elided_lifetimes_in_paths = "allow"
+
+missing_debug_implementations = "forbid"
+non_ascii_idents = "forbid"
+unreachable_pub = "forbid"
+unsafe_code = "forbid"
+
+dead_code = "deny"
+deprecated_in_future = "deny"
+ellipsis_inclusive_range_patterns = "deny"
+explicit_outlives_requirements = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+keyword_idents = { level = "deny", priority = -1 }
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+noop_method_call = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2021_compatibility = { level = "deny", priority = -1 }
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unused = { level = "deny", priority = -1 }
+unused_features = "deny"
+unused_import_braces = "deny"
+unused_labels = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+unused_qualifications = "deny"
+variant_size_differences = "deny"
+
+[package.metadata.clippy]
+warn-lints = [
+    "clippy::all",
+    "clippy::pedantic",
+    "clippy::cargo",
+    "clippy::nursery",
+]
+
+[profile.dev]
+codegen-units = 256
+debug = true
+debug-assertions = true
+incremental = true
+lto = false
+opt-level = 0
+overflow-checks = true
+panic = "unwind"
+rpath = false
+strip = false
+
+[profile.release]
+codegen-units = 1
+debug = false
+debug-assertions = false
+incremental = false
+lto = true
+opt-level = "s"
+overflow-checks = true
+panic = "abort"
+rpath = false
+strip = "symbols"
+
+[profile.test]
+codegen-units = 256
+debug = true
+debug-assertions = true
+incremental = true
+lto = false
+opt-level = 0
+overflow-checks = true
+rpath = false
+strip = false
