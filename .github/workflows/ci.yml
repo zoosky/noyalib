@@ -5,6 +5,9 @@ on:
     branches: [main, "feat/**"]
   pull_request:
     branches: [main, "feat/**"]
+  schedule:
+    - cron: '0 4 * * *'  # Nightly at 04:00 UTC — triggers Miri
+  workflow_dispatch:
 
 permissions: read-all
 
@@ -52,14 +55,12 @@ jobs:
         run: cargo test --all-features
 
   miri:
-    name: Miri (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: Miri (nightly)
+    # Scheduled nightly — crate is #![forbid(unsafe_code)] so Miri is a
+    # defence-in-depth check, not a per-push gate.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
     env:
-      # Override rust-toolchain.toml which specifies stable.
       RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
