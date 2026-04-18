@@ -1,7 +1,7 @@
 //! Coverage tests for the loader module — load_all, load_all_with_config,
 //! try_load_all, load_all_as.
 
-use noyalib::loader::{load_all, load_all_as, load_all_with_config, try_load_all};
+use noyalib::document::{load_all, load_all_as, load_all_with_config, try_load_all};
 use noyalib::{ParserConfig, Value};
 use serde::Deserialize;
 

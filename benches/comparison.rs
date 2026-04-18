@@ -36,7 +36,7 @@ logging:
       path: /var/log/app.log
 ";
 
-const LARGE_LIST: &str = include_str!("large_list.yaml");
+const LARGE_LIST: &str = include_str!("fixtures/large_list.yaml");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Simple {

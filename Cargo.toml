@@ -84,8 +84,8 @@ name = "custom_serialization"
 path = "examples/custom_serialization.rs"
 
 [[example]]
-name = "benchmarks-comparison"
-path = "examples/benchmarks/comparison.rs"
+name = "bench-comparison"
+path = "examples/bench_comparison.rs"
 
 [[example]]
 name = "spanned"

@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust
-//! use noyalib::loader::load_all;
+//! use noyalib::document::load_all;
 //!
 //! let yaml = "---
 //! name: doc1
@@ -70,7 +70,7 @@ impl ExactSizeIterator for DocumentIterator {}
 /// # Example
 ///
 /// ```rust
-/// use noyalib::loader::load_all;
+/// use noyalib::document::load_all;
 ///
 /// let yaml = "---
 /// first: 1
@@ -115,7 +115,7 @@ pub fn load_all_with_config(input: &str, config: &ParserConfig) -> Result<Docume
 /// # Example
 ///
 /// ```rust
-/// use noyalib::loader::try_load_all;
+/// use noyalib::document::try_load_all;
 ///
 /// let yaml = "---
 /// first: 1
@@ -139,7 +139,7 @@ pub fn try_load_all(input: &str) -> Result<DocumentIterator> {
 /// # Example
 ///
 /// ```rust
-/// use noyalib::loader::load_all_as;
+/// use noyalib::document::load_all_as;
 /// use serde::Deserialize;
 ///
 /// #[derive(Debug, Deserialize, PartialEq)]

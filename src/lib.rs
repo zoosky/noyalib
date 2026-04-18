@@ -43,10 +43,11 @@
 
 mod anchors;
 mod de;
+/// Multi-document loading and iteration.
+pub mod document;
 mod error;
 /// Formatting wrappers for per-value YAML output style control.
 pub mod fmt;
-pub mod loader;
 mod parser;
 mod path;
 mod schema;
@@ -61,9 +62,9 @@ pub use de::{
     from_reader, from_reader_with_config, from_slice, from_slice_with_config, from_str,
     from_str_with_config, from_value, Deserializer, DuplicateKeyPolicy, ParserConfig,
 };
+pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
 pub use error::{Error, Location, Result};
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};
-pub use loader::{load_all, load_all_as, load_all_with_config, try_load_all};
 pub use path::Path;
 pub use schema::{
     is_failsafe_compatible, is_json_compatible, validate_core_schema, validate_failsafe_schema,

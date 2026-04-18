@@ -5,5 +5,5 @@
 
 #![allow(missing_docs)]
 
-#[path = "test_suite/mod.rs"]
+#[path = "spec/mod.rs"]
 mod cases;
