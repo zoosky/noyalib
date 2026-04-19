@@ -1,28 +1,56 @@
-# noyalib
+<!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
 
-A YAML 1.2 library for Rust. Pure safe code. Full serde integration.
+<h1 align="center">noyalib</h1>
 
-[![CI](https://github.com/sebastienrousseau/noyalib/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastienrousseau/noyalib/actions/workflows/ci.yml)
-[![docs.rs](https://docs.rs/noyalib/badge.svg)](https://docs.rs/noyalib)
-[![crates.io](https://img.shields.io/crates/v/noyalib.svg)](https://crates.io/crates/noyalib)
-[![License](https://img.shields.io/crates/l/noyalib.svg)](LICENSE-MIT)
+<p align="center">
+  <strong>Pure Rust YAML 1.2 library. Zero unsafe code. Full serde integration.</strong>
+</p>
 
-## Why noyalib
+<p align="center">
+  <a href="https://github.com/sebastienrousseau/noyalib/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/noyalib/ci.yml?style=for-the-badge&logo=github" alt="Build" /></a>
+  <a href="https://crates.io/crates/noyalib"><img src="https://img.shields.io/crates/v/noyalib.svg?style=for-the-badge&color=fc8d62&logo=rust" alt="Crates.io" /></a>
+  <a href="https://docs.rs/noyalib"><img src="https://img.shields.io/badge/docs.rs-noyalib-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
+  <a href="https://lib.rs/crates/noyalib"><img src="https://img.shields.io/badge/lib.rs-v0.0.1-orange.svg?style=for-the-badge" alt="lib.rs" /></a>
+</p>
 
-- **Pure Rust** -- native YAML 1.2 scanner and parser. No C bindings. No FFI.
-- **Zero `unsafe`** -- `#![forbid(unsafe_code)]` enforced at compile time.
-- **Fast** -- 74% faster serialization than serde\_yaml\_ng. Sub-microsecond on simple docs.
-- **Serde-native** -- serialize and deserialize any `Serialize` / `Deserialize` type.
-- **Ordered mappings** -- `IndexMap`-backed. Insertion order preserved.
-- **Source spans** -- `Spanned<T>` tracks exact line, column, and byte offset.
-- **Hardened parser** -- configurable depth, size, and alias limits. Billion-laughs safe.
-- **Five dependencies** -- `serde`, `indexmap`, `thiserror`, `itoa`, `ryu`. That's it.
+---
+
+## Contents
+
+- [Install](#install) -- Cargo, source
+- [Quick Start](#quick-start) -- parse and serialize in 10 lines
+- [Overview](#overview) -- what noyalib does
+- [Benchmarks](#benchmarks) -- performance vs competitors
+- [Features](#features) -- capability matrix
+- [Library Usage](#library-usage) -- deserialization, serialization, values, spans
+- [Configuration](#configuration) -- parser and serializer options
+- [Examples](#examples) -- 40 branded examples
+- [Development](#development) -- make targets, fuzzing, CI
+- [Security](#security) -- safety guarantees and compliance
+- [License](#license)
+
+---
+
+## Install
+
+```toml
+[dependencies]
+noyalib = "0.0.1"
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/sebastienrousseau/noyalib.git
+cd noyalib
+make          # check + clippy + test
+```
+
+Requires **Rust 1.75.0+** (pinned in `rust-toolchain.toml`). Tested on Linux, macOS, and Windows.
+
+---
 
 ## Quick Start
-
-```sh
-cargo add noyalib
-```
 
 ```rust
 use noyalib::{from_str, to_string};
@@ -44,16 +72,8 @@ features:
   - api
 ";
 
-    // Deserialize
     let config: Config = from_str(yaml)?;
-    assert_eq!(config.name, "myapp");
-    assert_eq!(config.port, 8080);
-
-    // Serialize
     let output = to_string(&config)?;
-    assert!(output.contains("name: myapp"));
-
-    // Roundtrip
     let roundtrip: Config = from_str(&output)?;
     assert_eq!(config, roundtrip);
 
@@ -61,35 +81,75 @@ features:
 }
 ```
 
-## Performance
+---
+
+## Overview
+
+noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde integration. No C bindings. No FFI. No unsafe blocks. The parser is hardened against denial-of-service attacks with configurable depth, size, and alias expansion limits.
+
+- **74% faster serialization** than serde\_yaml\_ng
+- **22% faster deserialization** on simple documents
+- **201 KB WASM binary** -- runs in browsers via wasm-bindgen
+- **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu
+- **2,206 tests** -- unit, integration, doc-tests, property-based
+- **5 fuzz targets** -- adversarial input coverage
+
+---
+
+## Benchmarks
 
 Benchmarked on Apple M4, Rust 1.94 stable (lower is better):
 
-| Operation | noyalib | serde\_yaml\_ng | vs |
-|:---|---:|---:|---:|
-| **Deserialize (simple)** | 2.25 us | 2.84 us | 21% faster |
-| **Deserialize (nested)** | 14.6 us | 17.2 us | 15% faster |
-| **Deserialize (large)** | 1.32 ms | 1.48 ms | 11% faster |
-| **Serialize (simple)** | 366 ns | 1.43 us | 74% faster |
-| **Serialize (nested)** | 2.93 us | 8.50 us | 66% faster |
+| Operation | noyalib | serde\_yaml\_ng | Improvement |
+| :--- | ---: | ---: | ---: |
+| **Serialize (simple)** | 366 ns | 1.43 us | **74% faster** |
+| **Serialize (nested)** | 2.93 us | 8.50 us | **66% faster** |
+| **Deserialize (simple)** | 2.20 us | 2.82 us | **22% faster** |
+| **Deserialize (nested)** | 14.3 us | 17.0 us | **16% faster** |
+| **Deserialize (large)** | 1.31 ms | 1.48 ms | **11% faster** |
 
 Reproduce: `cargo bench --bench comparison`.
 
-## Deserialization
+| Metric | Value |
+| :--- | :--- |
+| **Source** | 20,481 lines across 21 modules |
+| **Test suite** | 2,206 tests + 69 doc-tests |
+| **Coverage** | 95.7% line coverage |
+| **Dependencies** | 5 runtime |
+| **WASM binary** | 201 KB (release, LTO) |
+| **MSRV** | Rust 1.75.0 |
+
+---
+
+## Features
+
+| | |
+| :--- | :--- |
+| **Serde** | `from_str`, `from_slice`, `from_reader`, `to_string`, `to_writer`, `to_fmt_writer` -- all with `_with_config` variants. `to_value`, `from_value` for Value conversion. Multi-document: `load_all`, `load_all_as`, `to_string_multi`. |
+| **Values** | 7-variant `Value` enum: Null, Bool, Number, String, Sequence, Mapping, Tagged. Path traversal via `get_path("server.host")`. Deep merge via `merge()` and `merge_concat()`. `MappingAny` for non-string keys. |
+| **Spans** | `Spanned<T>` tracks line, column, and byte offset for every deserialized field. Serializes transparently as `T`. |
+| **Formatting** | Per-value output control: `FlowSeq<T>`, `FlowMap<T>`, `LitStr`, `FoldStr`, `Commented<T>`, `SpaceAfter<T>`. |
+| **Enums** | `singleton_map`, `singleton_map_optional`, `singleton_map_recursive`, `singleton_map_with` -- custom key transforms (snake\_case, kebab-case, lowercase). |
+| **Schemas** | Validate against YAML schema levels: `validate_failsafe_schema`, `validate_json_schema`, `validate_core_schema`. |
+| **Anchors** | Anchors (`&`), aliases (`*`), and merge keys (`<<`). Smart pointer wrappers: `RcAnchor`, `ArcAnchor`, `RcWeakAnchor`, `ArcWeakAnchor`. |
+| **Security** | 6 configurable limits in `ParserConfig`: depth, document size, alias expansions, mapping keys, sequence length, duplicate key policy. `ParserConfig::strict()` for untrusted input. Billion-laughs safe. |
+| **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
+| **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. |
+
+---
+
+## Library Usage
+
+<details>
+<summary><b>Deserialization</b></summary>
 
 ```rust
 use noyalib::{from_str, from_slice, from_reader, from_value, ParserConfig};
 
-// From string
+// From string, byte slice, reader, or Value
 let config: Config = from_str(yaml)?;
-
-// From byte slice
 let config: Config = from_slice(bytes)?;
-
-// From reader (file, network, etc.)
 let config: Config = from_reader(file)?;
-
-// From a Value
 let config: Config = from_value(&value)?;
 
 // With security limits
@@ -99,18 +159,17 @@ let config: Config = noyalib::from_slice_with_config(bytes, &parser)?;
 let config: Config = noyalib::from_reader_with_config(reader, &parser)?;
 ```
 
-## Serialization
+</details>
+
+<details>
+<summary><b>Serialization</b></summary>
 
 ```rust
 use noyalib::{to_string, to_writer, to_fmt_writer, to_value, SerializerConfig};
 
-// To string
+// To string, io::Write, or fmt::Write
 let yaml: String = to_string(&config)?;
-
-// To io::Write (file, Vec<u8>, etc.)
 to_writer(&mut file, &config)?;
-
-// To fmt::Write (String buffer, etc.)
 let mut buf = String::new();
 to_fmt_writer(&mut buf, &config)?;
 
@@ -125,7 +184,10 @@ let ser_config = SerializerConfig::new()
 let yaml = noyalib::to_string_with_config(&config, &ser_config)?;
 ```
 
-## Dynamic Values
+</details>
+
+<details>
+<summary><b>Dynamic values</b></summary>
 
 ```rust
 use noyalib::{from_str, Value};
@@ -153,9 +215,10 @@ assert!(value.get("nonexistent").is_none());
 assert!(value.get_path("a.b.c").is_none());
 ```
 
-## Source Spans
+</details>
 
-Track exact source locations for every deserialized field:
+<details>
+<summary><b>Source spans</b></summary>
 
 ```rust
 use noyalib::{from_str, Spanned};
@@ -174,48 +237,10 @@ assert_eq!(config.port.start.column(), 6);
 
 `Spanned<T>` serializes transparently as `T`.
 
-## Parser Configuration
+</details>
 
-Set safety limits for untrusted input:
-
-```rust
-use noyalib::{from_str_with_config, ParserConfig, DuplicateKeyPolicy};
-
-let config = ParserConfig::new()
-    .max_depth(64)
-    .max_document_length(1_000_000)
-    .max_alias_expansions(1000)
-    .max_mapping_keys(10_000)
-    .max_sequence_length(10_000)
-    .duplicate_key_policy(DuplicateKeyPolicy::Error)
-    .strict_booleans(true);  // Only "true"/"false", not "True"/"FALSE"
-
-let value: noyalib::Value = from_str_with_config(input, &config)?;
-```
-
-For maximum strictness, use `ParserConfig::strict()`.
-
-## Serializer Configuration
-
-```rust
-use noyalib::{to_string_with_config, SerializerConfig, FlowStyle, ScalarStyle};
-
-let config = SerializerConfig::new()
-    .indent(4)                   // 4 spaces per level
-    .flow_style(FlowStyle::Auto) // Inline small collections
-    .scalar_style(ScalarStyle::DoubleQuoted)
-    .quote_all(true)             // Force-quote all strings
-    .document_start(true)        // Emit ---
-    .document_end(true)          // Emit ...
-    .block_scalars(true)         // Use | for multiline
-    .block_scalar_threshold(3);  // Trigger at 3+ newlines
-
-let yaml = to_string_with_config(&value, &config)?;
-```
-
-## Merge Keys
-
-Expand YAML `<<` merge keys:
+<details>
+<summary><b>Merge keys</b></summary>
 
 ```rust
 use noyalib::{from_str, Value};
@@ -235,32 +260,27 @@ value.apply_merge()?;
 // production -> {timeout: 60, retries: 3}
 ```
 
-## Multi-Document Streams
+</details>
+
+<details>
+<summary><b>Multi-document streams</b></summary>
 
 ```rust
 use noyalib::{load_all, to_string_multi};
 
-// Parse
 let docs = load_all("---\na: 1\n---\nb: 2\n")?;
 for doc in &docs {
     println!("{doc:?}");
 }
 
-// Typed
 let items: Vec<Config> = noyalib::load_all_as::<Config>(yaml)?;
-
-// Serialize
 let yaml = to_string_multi(&[config1, config2])?;
 ```
 
-## Enum Serialization
+</details>
 
-| Module | Purpose |
-|:---|:---|
-| `singleton_map` | Serialize enums as `{Variant: data}` |
-| `singleton_map_optional` | Same, for `Option<Enum>` |
-| `singleton_map_recursive` | Apply recursively to nested enums |
-| `singleton_map_with` | Custom key transforms (snake\_case, kebab-case) |
+<details>
+<summary><b>Enum serialization</b></summary>
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -275,12 +295,20 @@ struct Task {
 }
 ```
 
-## Formatting Wrappers
+| Module | Purpose |
+| :--- | :--- |
+| `singleton_map` | Serialize enums as `{Variant: data}` |
+| `singleton_map_optional` | Same, for `Option<Enum>` |
+| `singleton_map_recursive` | Apply recursively to nested enums |
+| `singleton_map_with` | Custom key transforms (snake\_case, kebab-case) |
 
-Per-value output control via the `fmt` module:
+</details>
+
+<details>
+<summary><b>Formatting wrappers</b></summary>
 
 | Wrapper | Effect |
-|:---|:---|
+| :--- | :--- |
 | `FlowSeq<T>` | Inline sequence: `[a, b, c]` |
 | `FlowMap<T>` | Inline mapping: `{a: 1, b: 2}` |
 | `LitStr` / `LitString` | Literal block scalar (`\|`) |
@@ -288,40 +316,133 @@ Per-value output control via the `fmt` module:
 | `Commented<T>` | Attach a YAML comment |
 | `SpaceAfter<T>` | Insert a blank line after the value |
 
-## Schema Validation
+</details>
 
-Validate values against YAML schema levels:
+---
 
-```rust
-use noyalib::{from_str, validate_json_schema, validate_core_schema, Value};
+## Configuration
 
-let value: Value = from_str("port: 8080")?;
-validate_json_schema(&value)?;   // No NaN, no tags
-validate_core_schema(&value)?;   // Permissive
-```
-
-## Error Handling
-
-Errors include source locations and render annotated context:
+<details>
+<summary><b>Parser configuration</b></summary>
 
 ```rust
-match noyalib::from_str::<noyalib::Value>(yaml) {
-    Ok(value) => { /* ... */ }
-    Err(e) => {
-        eprintln!("Error: {e}");
-        if let Some(loc) = e.location() {
-            eprintln!("  at line {}, column {}", loc.line(), loc.column());
-        }
-        eprintln!("{}", e.format_with_source(yaml));
-    }
-}
+use noyalib::{from_str_with_config, ParserConfig, DuplicateKeyPolicy};
+
+let config = ParserConfig::new()
+    .max_depth(64)
+    .max_document_length(1_000_000)
+    .max_alias_expansions(1000)
+    .max_mapping_keys(10_000)
+    .max_sequence_length(10_000)
+    .duplicate_key_policy(DuplicateKeyPolicy::Error)
+    .strict_booleans(true);
+
+let value: noyalib::Value = from_str_with_config(input, &config)?;
 ```
 
-## Fuzzing
+For maximum strictness, use `ParserConfig::strict()`.
 
-Five `cargo-fuzz` targets exercise the parser under adversarial input:
+</details>
 
-```sh
+<details>
+<summary><b>Serializer configuration</b></summary>
+
+```rust
+use noyalib::{to_string_with_config, SerializerConfig, FlowStyle, ScalarStyle};
+
+let config = SerializerConfig::new()
+    .indent(4)
+    .flow_style(FlowStyle::Auto)
+    .scalar_style(ScalarStyle::DoubleQuoted)
+    .quote_all(true)
+    .document_start(true)
+    .document_end(true)
+    .block_scalars(true)
+    .block_scalar_threshold(3);
+
+let yaml = to_string_with_config(&value, &config)?;
+```
+
+</details>
+
+---
+
+## Examples
+
+Run all 40 examples:
+
+```bash
+cargo run --example all
+```
+
+<details>
+<summary><b>All 40 examples</b></summary>
+
+| Category | Example | Purpose |
+| :--- | :--- | :--- |
+| **Core** | `hello` | Struct roundtrip |
+| | `std` | Vec, HashMap |
+| | `variants` | Enum strategies |
+| | `deep` | Nested structures |
+| | `dynamic` | Dynamic Value type |
+| | `modify` | to\_value, from\_value, get\_path, MappingAny |
+| | `tags` | Singleton map enums |
+| **Spec** | `alias` | Anchors, aliases, merge keys |
+| | `smart` | RcAnchor, ArcAnchor |
+| | `overlay` | Value merging |
+| | `inherit` | Merge key precedence |
+| | `stream` | Multi-document streams |
+| | `types` | Custom YAML tags |
+| | `binary` | Large ints, .inf, .nan, hex/octal |
+| **Security** | `strict` | strict\_booleans, DuplicateKeyPolicy |
+| | `secure` | ParserConfig limits |
+| | `schema` | Schema validation |
+| | `env` | ${VAR} expansion |
+| **DX** | `errors` | Error types, diagnostics |
+| | `trace` | Path tracking |
+| | `source` | Spanned\<T\> locations |
+| | `style` | FlowSeq, FlowMap, Commented |
+| **Advanced** | `emit` | SerializerConfig options |
+| | `rename` | Custom key transforms |
+| | `flatten` | serde flatten, untagged |
+| | `bridge` | JSON <-> YAML interop |
+| | `pipes` | from\_slice, from\_reader, to\_writer |
+| | `global` | Configuration layering |
+| **Future** | `portable` | WASM portability proof |
+| | `mask` | Secret\<T\> redaction |
+| | `patch` | Surgical YAML patching |
+| | `suggest` | "Did you mean?" typo detection |
+| | `schema_ext` | Self-documenting config schemas |
+| **Deep Rust** | `untagged` | Polymorphic deserialization |
+| | `borrow` | Zero-copy patterns |
+| | `transcode` | Value-to-Value transcoding |
+| | `comments` | Comment handling |
+| | `async_io` | Async integration |
+| | `recursive` | Self-referential types |
+| **Bench** | `bench` | Performance overview |
+
+</details>
+
+---
+
+## Development
+
+```bash
+make              # check + clippy + test
+make test         # run all tests
+make clippy       # lint with Clippy
+make fmt          # check formatting
+make examples     # run all 40 examples
+make doc          # build API documentation
+make deny         # supply-chain audit
+make miri         # Miri memory checking (requires nightly)
+make sbom         # generate software bill of materials
+make clean        # remove build artifacts
+```
+
+### Fuzzing
+
+```bash
 cargo +nightly fuzz run fuzz_parse       # Arbitrary YAML parsing
 cargo +nightly fuzz run fuzz_roundtrip   # Parse -> serialize -> re-parse
 cargo +nightly fuzz run fuzz_from_value  # Value -> typed deserialization
@@ -329,72 +450,45 @@ cargo +nightly fuzz run fuzz_multi_doc   # Multi-document streams
 cargo +nightly fuzz run fuzz_strict      # Tight security limits
 ```
 
-## Examples
+Seed corpus included in `fuzz/corpus/seed/`.
 
-Run all 24 examples:
+### CI
 
-```sh
-cargo run --example run_all
-```
+| Workflow | Trigger | Purpose |
+| :--- | :--- | :--- |
+| `ci.yml` | push, PR | Clippy, fmt, test (3 OS x 3 toolchains), coverage, audit, cargo-deny |
+| `docs.yml` | push to main | Build and deploy API docs to GitHub Pages |
+| `release.yml` | tag `v*` | Validate, cross-verify, checksums, SBOM, GitHub Release, crates.io |
+| `security.yml` | push, PR, weekly | Dependency review, CodeQL analysis |
 
-Or individually:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for signed commits and PR guidelines.
 
-```sh
-cargo run --example basic               # Struct roundtrip
-cargo run --example collections         # Vec, HashMap
-cargo run --example enums               # Enum strategies
-cargo run --example nested              # Complex structures
-cargo run --example value               # Dynamic Value type
-cargo run --example io_formats          # from_slice, from_reader, to_writer, to_fmt_writer
-cargo run --example value_manipulation  # to_value, from_value, get_path, MappingAny
-cargo run --example config              # SerializerConfig options
-cargo run --example serializer_config   # quote_all, flow styles, multi-doc
-cargo run --example strict_parsing      # strict_booleans, DuplicateKeyPolicy
-cargo run --example parser_config       # Security limits
-cargo run --example error_handling      # Errors and source context
-cargo run --example error_paths         # Path tracking
-cargo run --example schema_validation   # YAML schema validation
-cargo run --example anchors             # Anchors, aliases, merge keys
-cargo run --example shared_anchors      # RcAnchor, ArcAnchor
-cargo run --example merge               # Value merging
-cargo run --example merge_keys          # apply_merge() for << keys
-cargo run --example multi_document      # Multi-document parsing
-cargo run --example spanned             # Source locations
-cargo run --example fmt_wrappers        # Formatting wrappers
-cargo run --example singleton_map       # Enum singleton maps
-cargo run --example custom_serialization # Key transformations
-cargo run --example bench-comparison    # Performance overview
-```
+---
 
-## Development
+## Security
 
-```sh
-make              # check + clippy + test
-make test         # all tests
-make clippy       # lint
-make fmt          # check formatting
-make examples     # run all examples
-make doc          # build documentation
-make deny         # supply-chain audit
-make miri         # Miri (requires nightly)
-```
+<details>
+<summary><b>Safety guarantees and compliance</b></summary>
 
-## Safety
+- `#![forbid(unsafe_code)]` across the entire codebase
+- `#[non_exhaustive]` on `ParserConfig`, `SerializerConfig`, `FlowStyle`, `ScalarStyle`
+- `#[must_use]` on 83 query methods
+- `#[track_caller]` on 13 Index/IndexMut panic paths
+- All internal invariant panics documented with `expect("internal: ...")`
+- 6 configurable DoS limits with `ParserConfig::strict()`
+- `cargo audit` with zero advisories
+- `cargo deny` -- license, advisory, ban, and source checks
+- SPDX license headers on all 94 source files
+- Signed commits enforced via CI
 
-noyalib is written entirely in safe Rust:
+</details>
 
-```rust
-#![forbid(unsafe_code)]
-```
-
-No C dependencies. No FFI. No `unsafe` blocks.
-
-Runtime dependencies: [`serde`](https://crates.io/crates/serde), [`indexmap`](https://crates.io/crates/indexmap), [`thiserror`](https://crates.io/crates/thiserror), [`itoa`](https://crates.io/crates/itoa), [`ryu`](https://crates.io/crates/ryu).
-
-## Minimum Supported Rust Version
-
-Rust **1.75.0** or later. Tested on Linux, macOS, and Windows.
+---
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) and [Apache 2.0](LICENSE-APACHE).
+Dual-licensed under [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) or [MIT](https://opensource.org/licenses/MIT), at your option.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
+<p align="right"><a href="#contents">Back to Top</a></p>
