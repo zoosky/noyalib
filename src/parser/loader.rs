@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use std::borrow::Cow;
+
 use super::events::{Event, Parser};
 use super::scanner::ScalarStyle;
 use crate::de::{DuplicateKeyPolicy, ParserConfig};
@@ -59,7 +61,7 @@ pub(crate) fn load(input: &str, config: &ParseConfig) -> Result<Vec<(Value, Span
     loop {
         let event = parser
             .next_event()
-            .map_err(|e| Error::parse_at(&e.message, input, e.index))?;
+            .map_err(|e| Error::parse_at(&*e.message, input, e.index))?;
 
         match loader.process_event(event, input)? {
             LoaderState::Continue => {}
@@ -149,7 +151,7 @@ impl<'a> Loader<'a> {
         self.docs
     }
 
-    fn process_event(&mut self, event: Event, input: &str) -> Result<LoaderState> {
+    fn process_event(&mut self, event: Event<'_>, input: &str) -> Result<LoaderState> {
         match event {
             Event::StreamStart => Ok(LoaderState::Continue),
             Event::StreamEnd => Ok(LoaderState::Done),
@@ -173,7 +175,7 @@ impl<'a> Loader<'a> {
                 span,
             } => {
                 let resolved = if style == ScalarStyle::Plain {
-                    resolve_plain_scalar(&value, &tag, self.config.strict_booleans)
+                    resolve_plain_scalar(value, &tag, self.config.strict_booleans)
                 } else {
                     resolve_quoted_scalar(value, &tag)
                 };
@@ -358,7 +360,7 @@ impl<'a> Loader<'a> {
                 start_offset,
             }) => {
                 // This value is a mapping key.
-                let key = value_to_key(&value)?;
+                let key = value_into_key(value)?;
                 let key_span = match &span_tree {
                     SpanTree::Leaf(s, e) => (*s, *e),
                     SpanTree::Sequence { start, end, .. } => (*start, *end),
@@ -476,31 +478,36 @@ impl<'a> Loader<'a> {
     }
 }
 
-/// Convert a Value to a string key for mappings.
-fn value_to_key(value: &Value) -> Result<String> {
+/// Convert a Value into a string key for mappings.
+///
+/// Takes ownership of the value to avoid cloning `Value::String`.
+fn value_into_key(value: Value) -> Result<String> {
     match value {
-        Value::String(s) => Ok(s.clone()),
-        Value::Number(Number::Integer(n)) => Ok(n.to_string()),
-        Value::Number(Number::Float(n)) => Ok(n.to_string()),
-        Value::Bool(b) => Ok(b.to_string()),
-        Value::Null => Ok("null".to_string()),
-        _ => Err(Error::Invalid("non-scalar key in mapping".to_string())),
+        Value::String(s) => Ok(s),
+        Value::Number(Number::Integer(n)) => Ok(itoa::Buffer::new().format(n).to_owned()),
+        Value::Number(Number::Float(n)) => Ok(ryu::Buffer::new().format(n).to_owned()),
+        Value::Bool(b) => Ok(if b { "true" } else { "false" }.to_owned()),
+        Value::Null => Ok("null".to_owned()),
+        _ => Err(Error::Invalid("non-scalar key in mapping".to_owned())),
     }
 }
 
 /// Resolve a plain (unquoted) scalar according to YAML 1.2 Core Schema.
+///
+/// Accepts `Cow<str>` so that borrowed scalars (from the scanner fast path)
+/// avoid allocation when they resolve to a non-String type (null, bool, number).
 fn resolve_plain_scalar(
-    value: &str,
+    value: Cow<'_, str>,
     tag: &Option<(String, String)>,
     strict_booleans: bool,
 ) -> std::result::Result<Value, String> {
     // If there's a tag, handle it.
     if let Some((handle, suffix)) = tag {
-        return resolve_tagged_scalar(value, handle, suffix);
+        return resolve_tagged_scalar(&value, handle, suffix);
     }
 
     // YAML 1.2 Core Schema resolution for plain scalars.
-    match value {
+    match &*value {
         // Null values.
         "" | "~" | "null" | "Null" | "NULL" => Ok(Value::Null),
 
@@ -526,41 +533,41 @@ fn resolve_plain_scalar(
 
             // Try integer patterns.
             if could_be_number {
-                if let Some(n) = try_parse_integer(value) {
+                if let Some(n) = try_parse_integer(&value) {
                     return Ok(Value::Number(Number::Integer(n)));
                 }
             }
 
             // Try float patterns.
             if could_be_number {
-                if let Some(f) = try_parse_float(value) {
+                if let Some(f) = try_parse_float(&value) {
                     return Ok(Value::Number(Number::Float(f)));
                 }
             }
 
             // Large integers that overflow i64 — store as float (matches YAML convention).
-            if could_be_number && looks_like_integer(value) {
+            if could_be_number && looks_like_integer(&value) {
                 if let Ok(f) = value.parse::<f64>() {
                     return Ok(Value::Number(Number::Float(f)));
                 }
             }
 
-            // Default: string.
-            Ok(Value::String(value.to_string()))
+            // Default: string — into_owned() avoids allocation if already Owned.
+            Ok(Value::String(value.into_owned()))
         }
     }
 }
 
 /// Resolve a quoted scalar.
 fn resolve_quoted_scalar(
-    value: String,
+    value: Cow<'_, str>,
     tag: &Option<(String, String)>,
 ) -> std::result::Result<Value, String> {
     if let Some((handle, suffix)) = tag {
         return resolve_tagged_scalar(&value, handle, suffix);
     }
     // Quoted scalars are always strings.
-    Ok(Value::String(value))
+    Ok(Value::String(value.into_owned()))
 }
 
 /// Resolve a scalar with an explicit tag.
@@ -708,6 +715,335 @@ fn try_parse_float(s: &str) -> Option<f64> {
     // Validate: digits, dots, and exponent parts.
     // Let Rust's parser handle the actual validation.
     s.parse::<f64>().ok()
+}
+
+// ── Span-free loader ────────────────────────────────────────────────────
+// Used by `from_str` (the common path) to avoid building a SpanTree that
+// is immediately discarded for non-Spanned types.
+
+/// Build a single `Value` from YAML input without constructing a `SpanTree`.
+pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Value> {
+    if input.len() > config.max_document_length {
+        return Err(Error::Parse(format!(
+            "document exceeds maximum length of {} bytes",
+            config.max_document_length
+        )));
+    }
+
+    let mut parser = Parser::new(input);
+    let mut loader = NoSpanLoader::new(config);
+
+    loop {
+        let event = parser
+            .next_event()
+            .map_err(|e| Error::parse_at(&*e.message, input, e.index))?;
+
+        match loader.process_event(event, input)? {
+            LoaderState::Continue => {}
+            LoaderState::Done => break,
+        }
+    }
+
+    let mut docs = loader.into_docs();
+    if docs.is_empty() {
+        return Err(Error::Parse("empty YAML document".to_owned()));
+    }
+    Ok(docs.swap_remove(0))
+}
+
+/// Stack frame for the span-free tree builder.
+#[derive(Debug)]
+enum NoSpanFrame {
+    Sequence {
+        items: Vec<Value>,
+        anchor: Option<String>,
+    },
+    MappingKey {
+        map: Mapping,
+        anchor: Option<String>,
+        merge_values: Vec<Value>,
+    },
+    MappingValue {
+        map: Mapping,
+        key: String,
+        anchor: Option<String>,
+        merge_values: Vec<Value>,
+    },
+}
+
+/// Span-free YAML tree builder — identical logic to `Loader` but without any
+/// `SpanTree` tracking.
+struct NoSpanLoader<'a> {
+    docs: Vec<Value>,
+    stack: Vec<NoSpanFrame>,
+    anchor_map: HashMap<String, Value>,
+    alias_count: usize,
+    alias_bytes: usize,
+    config: &'a ParseConfig,
+    depth: usize,
+    in_document: bool,
+}
+
+impl<'a> NoSpanLoader<'a> {
+    fn new(config: &'a ParseConfig) -> Self {
+        NoSpanLoader {
+            docs: Vec::new(),
+            stack: Vec::new(),
+            anchor_map: HashMap::new(),
+            alias_count: 0,
+            alias_bytes: 0,
+            config,
+            depth: 0,
+            in_document: false,
+        }
+    }
+
+    fn into_docs(self) -> Vec<Value> {
+        self.docs
+    }
+
+    fn process_event(&mut self, event: Event<'_>, input: &str) -> Result<LoaderState> {
+        match event {
+            Event::StreamStart => Ok(LoaderState::Continue),
+            Event::StreamEnd => Ok(LoaderState::Done),
+            Event::DocumentStart => {
+                self.in_document = true;
+                self.anchor_map.clear();
+                self.alias_count = 0;
+                self.alias_bytes = 0;
+                Ok(LoaderState::Continue)
+            }
+            Event::DocumentEnd => {
+                self.in_document = false;
+                Ok(LoaderState::Continue)
+            }
+            Event::Scalar {
+                value,
+                style,
+                anchor,
+                tag,
+                span,
+            } => {
+                let resolved = if style == ScalarStyle::Plain {
+                    resolve_plain_scalar(value, &tag, self.config.strict_booleans)
+                } else {
+                    resolve_quoted_scalar(value, &tag)
+                };
+                let resolved = match resolved {
+                    Ok(v) => v,
+                    Err(msg) => return Err(Error::parse_at(msg, input, span.start)),
+                };
+                if let Some(name) = anchor {
+                    let _ = self.anchor_map.insert(name, resolved.clone());
+                }
+                self.push_value(resolved)?;
+                Ok(LoaderState::Continue)
+            }
+            Event::Alias { anchor, span } => {
+                self.alias_count += 1;
+                if self.alias_count > self.config.max_alias_expansions {
+                    return Err(Error::RepetitionLimitExceeded);
+                }
+                let value = self.anchor_map.get(&anchor).cloned().ok_or_else(|| {
+                    Error::parse_at(format!("unknown anchor '{anchor}'"), input, span.start)
+                })?;
+                self.alias_bytes = self.alias_bytes.saturating_add(estimate_value_size(&value));
+                if self.alias_bytes > self.config.max_document_length {
+                    return Err(Error::RepetitionLimitExceeded);
+                }
+                self.push_value(value)?;
+                Ok(LoaderState::Continue)
+            }
+            Event::SequenceStart { anchor, .. } => {
+                self.depth += 1;
+                if self.depth > self.config.max_depth {
+                    return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
+                self.stack.push(NoSpanFrame::Sequence {
+                    items: Vec::new(),
+                    anchor,
+                });
+                Ok(LoaderState::Continue)
+            }
+            Event::SequenceEnd { .. } => {
+                self.depth = self.depth.saturating_sub(1);
+                match self.stack.pop() {
+                    Some(NoSpanFrame::Sequence { items, anchor }) => {
+                        if items.len() > self.config.max_sequence_length {
+                            return Err(Error::Parse(format!(
+                                "sequence exceeds maximum length of {} elements",
+                                self.config.max_sequence_length
+                            )));
+                        }
+                        let value = Value::Sequence(items);
+                        if let Some(name) = anchor {
+                            let _ = self.anchor_map.insert(name, value.clone());
+                        }
+                        self.push_value(value)?;
+                    }
+                    _ => return Err(Error::Parse("unexpected sequence end".to_owned())),
+                }
+                Ok(LoaderState::Continue)
+            }
+            Event::MappingStart { anchor, .. } => {
+                self.depth += 1;
+                if self.depth > self.config.max_depth {
+                    return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
+                self.stack.push(NoSpanFrame::MappingKey {
+                    map: Mapping::new(),
+                    anchor,
+                    merge_values: Vec::new(),
+                });
+                Ok(LoaderState::Continue)
+            }
+            Event::MappingEnd { .. } => {
+                self.depth = self.depth.saturating_sub(1);
+                match self.stack.pop() {
+                    Some(NoSpanFrame::MappingKey {
+                        mut map,
+                        anchor,
+                        merge_values,
+                    }) => {
+                        for merge_val in merge_values {
+                            match merge_val {
+                                Value::Mapping(merge_map) => {
+                                    for (k, v) in merge_map {
+                                        if !map.contains_key(&k) {
+                                            let _ = map.insert(k, v);
+                                        }
+                                    }
+                                }
+                                Value::Sequence(seq) => {
+                                    for item in seq {
+                                        if let Value::Mapping(merge_map) = item {
+                                            for (k, v) in merge_map {
+                                                if !map.contains_key(&k) {
+                                                    let _ = map.insert(k, v);
+                                                }
+                                            }
+                                        } else {
+                                            return Err(Error::ScalarInMergeElement);
+                                        }
+                                    }
+                                }
+                                _ => return Err(Error::ScalarInMergeElement),
+                            }
+                        }
+
+                        if map.len() > self.config.max_mapping_keys {
+                            return Err(Error::Parse(format!(
+                                "mapping exceeds maximum of {} keys",
+                                self.config.max_mapping_keys
+                            )));
+                        }
+                        let value = Value::Mapping(map);
+                        if let Some(name) = anchor {
+                            let _ = self.anchor_map.insert(name, value.clone());
+                        }
+                        self.push_value(value)?;
+                    }
+                    Some(NoSpanFrame::MappingValue { .. }) => {
+                        return Err(Error::Parse(
+                            "unexpected mapping end while expecting value".to_owned(),
+                        ));
+                    }
+                    _ => return Err(Error::Parse("unexpected mapping end".to_owned())),
+                }
+                Ok(LoaderState::Continue)
+            }
+        }
+    }
+
+    fn push_value(&mut self, value: Value) -> Result<()> {
+        match self.stack.last_mut() {
+            None => {
+                self.docs.push(value);
+            }
+            Some(NoSpanFrame::Sequence { items, .. }) => {
+                items.push(value);
+            }
+            Some(NoSpanFrame::MappingKey {
+                map,
+                anchor,
+                merge_values,
+            }) => {
+                let key = value_into_key(value)?;
+
+                if key == MERGE_KEY {
+                    let map = std::mem::replace(map, Mapping::new());
+                    let anchor = anchor.clone();
+                    let merge_values = std::mem::take(merge_values);
+                    *self
+                        .stack
+                        .last_mut()
+                        .expect("internal: stack non-empty during event processing") =
+                        NoSpanFrame::MappingValue {
+                            map,
+                            key,
+                            anchor,
+                            merge_values,
+                        };
+                    return Ok(());
+                }
+
+                if self.config.duplicate_key_policy == DuplicateKeyPolicy::Error
+                    && map.contains_key(&key)
+                {
+                    return Err(Error::DuplicateKey(key));
+                }
+
+                let map = std::mem::replace(map, Mapping::new());
+                let anchor = anchor.clone();
+                let merge_values = std::mem::take(merge_values);
+                *self
+                    .stack
+                    .last_mut()
+                    .expect("internal: stack non-empty during event processing") =
+                    NoSpanFrame::MappingValue {
+                        map,
+                        key,
+                        anchor,
+                        merge_values,
+                    };
+            }
+            Some(NoSpanFrame::MappingValue {
+                map,
+                key,
+                anchor,
+                merge_values,
+            }) => {
+                if key == MERGE_KEY {
+                    merge_values.push(value);
+                } else {
+                    match self.config.duplicate_key_policy {
+                        DuplicateKeyPolicy::First => {
+                            if !map.contains_key(key.as_str()) {
+                                let _ = map.insert(key.clone(), value);
+                            }
+                        }
+                        DuplicateKeyPolicy::Last | DuplicateKeyPolicy::Error => {
+                            let _ = map.insert(key.clone(), value);
+                        }
+                    }
+                }
+
+                let map = std::mem::replace(map, Mapping::new());
+                let anchor = anchor.clone();
+                let merge_values = std::mem::take(merge_values);
+                *self
+                    .stack
+                    .last_mut()
+                    .expect("internal: stack non-empty during event processing") =
+                    NoSpanFrame::MappingKey {
+                        map,
+                        anchor,
+                        merge_values,
+                    };
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Estimate the in-memory size of a Value tree (in bytes).

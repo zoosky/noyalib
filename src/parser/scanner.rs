@@ -7,6 +7,8 @@
 
 // VecDeque replaced with Vec + consumed index for better cache locality.
 
+use std::borrow::Cow;
+
 /// Byte-offset span in the source input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Span {
@@ -25,8 +27,12 @@ pub(crate) enum ScalarStyle {
 }
 
 /// Token kinds emitted by the scanner.
+///
+/// String-carrying variants use `Cow<'a, str>` so that plain scalars and
+/// anchor names can borrow directly from the input, avoiding allocation
+/// when the value is immediately resolved to a non-String type.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum TokenKind {
+pub(crate) enum TokenKind<'a> {
     #[default]
     StreamStart,
     StreamEnd,
@@ -43,23 +49,23 @@ pub(crate) enum TokenKind {
     FlowEntry,
     Key,
     Value,
-    Anchor(String),
-    Alias(String),
-    Tag(String, String),
-    Scalar(ScalarStyle, String),
+    Anchor(Cow<'a, str>),
+    Alias(Cow<'a, str>),
+    Tag(Cow<'a, str>, Cow<'a, str>),
+    Scalar(ScalarStyle, Cow<'a, str>),
 }
 
 /// A token with its source span.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Token {
-    pub kind: TokenKind,
+pub(crate) struct Token<'a> {
+    pub kind: TokenKind<'a>,
     pub span: Span,
 }
 
 /// Error from the scanner.
 #[derive(Debug, Clone)]
 pub(crate) struct ScanError {
-    pub message: String,
+    pub message: Cow<'static, str>,
     pub index: usize,
 }
 
@@ -80,6 +86,17 @@ struct SimpleKey {
     index: usize,
 }
 
+/// Lookup table for bytes that are blanks (space, tab) or line breaks (LF, CR).
+/// Index by byte value for O(1) classification — replaces per-call branching.
+static IS_BLANK_OR_BREAK: [bool; 256] = {
+    let mut t = [false; 256];
+    t[b' ' as usize] = true;
+    t[b'\t' as usize] = true;
+    t[b'\n' as usize] = true;
+    t[b'\r' as usize] = true;
+    t
+};
+
 /// YAML 1.2 lexical scanner.
 #[derive(Debug)]
 pub(crate) struct Scanner<'a> {
@@ -92,7 +109,7 @@ pub(crate) struct Scanner<'a> {
     /// Current column (tracked incrementally to avoid O(n) backward scan).
     col: usize,
     /// Output token buffer (contiguous for cache locality).
-    tokens: Vec<Token>,
+    tokens: Vec<Token<'a>>,
     /// Index of the next token to consume from `tokens`.
     tokens_consumed: usize,
     /// Total tokens produced (including consumed ones).
@@ -139,7 +156,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// Fetch the next token from the scanner.
-    pub(super) fn next_token(&mut self) -> ScanResult<Token> {
+    pub(super) fn next_token(&mut self) -> ScanResult<Token<'a>> {
         // Ensure we have at least one token buffered.
         while self.needs_more_tokens() {
             self.fetch_next_token()?;
@@ -251,14 +268,14 @@ impl<'a> Scanner<'a> {
         &self.input_str[start..end]
     }
 
-    fn error(&self, msg: &str) -> ScanError {
+    fn error(&self, msg: &'static str) -> ScanError {
         ScanError {
-            message: msg.to_string(),
+            message: Cow::Borrowed(msg),
             index: self.pos,
         }
     }
 
-    fn emit(&mut self, kind: TokenKind) {
+    fn emit(&mut self, kind: TokenKind<'a>) {
         let span = Span {
             start: self.mark,
             end: self.pos,
@@ -266,7 +283,7 @@ impl<'a> Scanner<'a> {
         self.tokens.push(Token { kind, span });
     }
 
-    fn insert_token(&mut self, index: usize, kind: TokenKind, span: Span) {
+    fn insert_token(&mut self, index: usize, kind: TokenKind<'a>, span: Span) {
         self.tokens
             .insert(self.tokens_consumed + index, Token { kind, span });
     }
@@ -285,7 +302,7 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     fn is_blank_or_break(c: u8) -> bool {
-        Self::is_blank(c) || Self::is_break(c)
+        IS_BLANK_OR_BREAK[c as usize]
     }
 
     fn skip_blank(&mut self) {
@@ -347,7 +364,13 @@ impl<'a> Scanner<'a> {
 
     // ── Indentation ──────────────────────────────────────────────────────
 
-    fn roll_indent(&mut self, column: i32, number: Option<usize>, kind: TokenKind, mark: usize) {
+    fn roll_indent(
+        &mut self,
+        column: i32,
+        number: Option<usize>,
+        kind: TokenKind<'a>,
+        mark: usize,
+    ) {
         if self.flow_level > 0 {
             return;
         }
@@ -402,7 +425,7 @@ impl<'a> Scanner<'a> {
         if let Some(sk) = self.simple_keys.last() {
             if sk.possible && sk.required {
                 return Err(ScanError {
-                    message: "simple key was required but not found".to_string(),
+                    message: Cow::Borrowed("simple key was required but not found"),
                     index: sk.index,
                 });
             }
@@ -717,7 +740,7 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    fn scan_anchor_name(&mut self) -> ScanResult<String> {
+    fn scan_anchor_name(&mut self) -> ScanResult<Cow<'a, str>> {
         /// Maximum length of an anchor or alias name (in bytes).
         const MAX_ANCHOR_NAME_LEN: usize = 1024;
 
@@ -742,7 +765,7 @@ impl<'a> Scanner<'a> {
         if self.pos == start {
             return Err(self.error("expected anchor or alias name"));
         }
-        Ok(self.slice_str(start, self.pos).to_owned())
+        Ok(Cow::Borrowed(self.slice_str(start, self.pos)))
     }
 
     fn fetch_tag(&mut self) -> ScanResult<()> {
@@ -754,11 +777,12 @@ impl<'a> Scanner<'a> {
         self.mark = self.pos;
         self.advance(); // skip '!'
 
-        let mut handle = String::from("!");
-        let suffix;
+        let handle: Cow<'a, str>;
+        let suffix: Cow<'a, str>;
 
         if self.peek() == b'<' {
             // Verbatim tag: !<...>
+            handle = Cow::Borrowed("!");
             self.advance(); // skip '<'
             let start = self.pos;
             while !self.is_eof() && self.peek() != b'>' {
@@ -767,13 +791,13 @@ impl<'a> Scanner<'a> {
                 }
                 self.advance();
             }
-            suffix = self.slice_str(start, self.pos).to_owned();
+            suffix = Cow::Borrowed(self.slice_str(start, self.pos));
             if self.peek() == b'>' {
                 self.advance();
             }
         } else if self.peek() == b'!' {
             // Secondary tag handle !!
-            handle.push('!');
+            handle = Cow::Borrowed("!!");
             self.advance();
             let start = self.pos;
             while !self.is_eof()
@@ -789,9 +813,10 @@ impl<'a> Scanner<'a> {
                 }
                 self.advance();
             }
-            suffix = self.slice_str(start, self.pos).to_owned();
+            suffix = Cow::Borrowed(self.slice_str(start, self.pos));
         } else {
             // Primary tag handle !suffix or just !
+            handle = Cow::Borrowed("!");
             let start = self.pos;
             while !self.is_eof()
                 && !Self::is_blank_or_break(self.peek())
@@ -806,7 +831,7 @@ impl<'a> Scanner<'a> {
                 }
                 self.advance();
             }
-            suffix = self.slice_str(start, self.pos).to_owned();
+            suffix = Cow::Borrowed(self.slice_str(start, self.pos));
         }
 
         self.emit(TokenKind::Tag(handle, suffix));
@@ -881,7 +906,7 @@ impl<'a> Scanner<'a> {
             }
 
             if is_single_line && len > 0 {
-                let s = self.slice_str(self.pos, self.pos + len).to_owned();
+                let s = Cow::Borrowed(self.slice_str(self.pos, self.pos + len));
                 self.advance_by(len);
                 self.emit(TokenKind::Scalar(ScalarStyle::Plain, s));
                 return Ok(());
@@ -1042,7 +1067,7 @@ impl<'a> Scanner<'a> {
             self.simple_key_allowed = true;
         }
 
-        self.emit(TokenKind::Scalar(ScalarStyle::Plain, string));
+        self.emit(TokenKind::Scalar(ScalarStyle::Plain, Cow::Owned(string)));
         Ok(())
     }
 
@@ -1062,7 +1087,7 @@ impl<'a> Scanner<'a> {
         } else {
             ScalarStyle::SingleQuoted
         };
-        self.emit(TokenKind::Scalar(style, string));
+        self.emit(TokenKind::Scalar(style, Cow::Owned(string)));
         Ok(())
     }
 
@@ -1249,10 +1274,10 @@ impl<'a> Scanner<'a> {
                         }
                         _ => {
                             return Err(ScanError {
-                                message: format!(
+                                message: Cow::Owned(format!(
                                     "unknown escape character '\\{}'",
                                     escaped as char
-                                ),
+                                )),
                                 index: self.pos - 1,
                             });
                         }
@@ -1344,7 +1369,7 @@ impl<'a> Scanner<'a> {
         for _ in 0..digits {
             if self.is_eof() || !self.peek().is_ascii_hexdigit() {
                 return Err(ScanError {
-                    message: format!("expected {} hex digits in escape sequence", digits),
+                    message: Cow::Owned(format!("expected {digits} hex digits in escape sequence")),
                     index: start,
                 });
             }
@@ -1354,7 +1379,7 @@ impl<'a> Scanner<'a> {
         let code =
             u32::from_str_radix(hex_str, 16).map_err(|_| self.error("invalid hex escape"))?;
         char::from_u32(code).ok_or_else(|| ScanError {
-            message: format!("invalid Unicode code point U+{code:04X}"),
+            message: Cow::Owned(format!("invalid Unicode code point U+{code:04X}")),
             index: start,
         })
     }
@@ -1370,7 +1395,7 @@ impl<'a> Scanner<'a> {
         } else {
             ScalarStyle::Folded
         };
-        self.emit(TokenKind::Scalar(style, string));
+        self.emit(TokenKind::Scalar(style, Cow::Owned(string)));
         Ok(())
     }
 

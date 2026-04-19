@@ -5,14 +5,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::scanner::{ScalarStyle, ScanError, Scanner, Span, TokenKind};
 
 /// Parsing events emitted by the parser.
+///
+/// The lifetime `'a` allows `Scalar::value` to borrow directly from the input
+/// when no escaping or line-folding was needed (plain scalar fast path).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) enum Event {
+pub(crate) enum Event<'a> {
     StreamStart,
     StreamEnd,
     DocumentStart,
@@ -22,7 +26,7 @@ pub(crate) enum Event {
         span: Span,
     },
     Scalar {
-        value: String,
+        value: Cow<'a, str>,
         style: ScalarStyle,
         anchor: Option<String>,
         tag: Option<(String, String)>,
@@ -80,7 +84,7 @@ pub(crate) struct Parser<'a> {
     states: Vec<State>,
     state: State,
     /// Current peeked token kind + span (if any).
-    current_kind: Option<TokenKind>,
+    current_kind: Option<TokenKind<'a>>,
     current_span: Span,
     has_current: bool,
     /// Anchor name registry.
@@ -102,7 +106,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn next_event(&mut self) -> Result<Event, ScanError> {
+    pub(super) fn next_event(&mut self) -> Result<Event<'a>, ScanError> {
         match self.state {
             State::StreamStart => self.parse_stream_start(),
             State::ImplicitDocumentStart => self.parse_document_start(true),
@@ -126,14 +130,14 @@ impl<'a> Parser<'a> {
             State::FlowMappingValue => self.parse_flow_mapping_value(false),
             State::FlowMappingEmptyValue => self.parse_flow_mapping_value(true),
             State::End => Err(ScanError {
-                message: "parser has already finished".to_string(),
+                message: Cow::Borrowed("parser has already finished"),
                 index: 0,
             }),
         }
     }
 
     /// Ensure the current token is buffered and return its kind + span.
-    fn peek(&mut self) -> Result<(&TokenKind, Span), ScanError> {
+    fn peek(&mut self) -> Result<(&TokenKind<'a>, Span), ScanError> {
         if !self.has_current {
             let t = self.scanner.next_token()?;
             self.current_kind = Some(t.kind);
@@ -153,20 +157,20 @@ impl<'a> Parser<'a> {
     /// NOTE: This clones the `TokenKind`, including any owned `String` in
     /// `Scalar`/`Anchor`/`Alias`/`Tag` variants. Prefer `peek_is()` or
     /// `take()` when you only need the discriminant or will consume the token.
-    fn peek_kind(&mut self) -> Result<TokenKind, ScanError> {
+    fn peek_kind(&mut self) -> Result<TokenKind<'a>, ScanError> {
         let (kind, _) = self.peek()?;
         Ok(kind.clone())
     }
 
     /// Check whether the peeked token matches a discriminant without cloning.
     #[inline]
-    fn peek_is(&mut self, f: fn(&TokenKind) -> bool) -> Result<bool, ScanError> {
+    fn peek_is(&mut self, f: fn(&TokenKind<'_>) -> bool) -> Result<bool, ScanError> {
         let (kind, _) = self.peek()?;
         Ok(f(kind))
     }
 
     /// Consume the current token and return its kind + span.
-    fn take(&mut self) -> Result<(TokenKind, Span), ScanError> {
+    fn take(&mut self) -> Result<(TokenKind<'a>, Span), ScanError> {
         if self.has_current {
             self.has_current = false;
             Ok((
@@ -191,9 +195,9 @@ impl<'a> Parser<'a> {
         self.states.pop().unwrap_or(State::End)
     }
 
-    fn empty_scalar(&self, span: Span) -> Event {
+    fn empty_scalar(&self, span: Span) -> Event<'a> {
         Event::Scalar {
-            value: String::new(),
+            value: Cow::Borrowed(""),
             style: ScalarStyle::Plain,
             anchor: None,
             tag: None,
@@ -203,13 +207,13 @@ impl<'a> Parser<'a> {
 
     // ── State handlers ───────────────────────────────────────────────────
 
-    fn parse_stream_start(&mut self) -> Result<Event, ScanError> {
+    fn parse_stream_start(&mut self) -> Result<Event<'a>, ScanError> {
         self.skip()?; // StreamStart
         self.state = State::ImplicitDocumentStart;
         Ok(Event::StreamStart)
     }
 
-    fn parse_document_start(&mut self, implicit: bool) -> Result<Event, ScanError> {
+    fn parse_document_start(&mut self, implicit: bool) -> Result<Event<'a>, ScanError> {
         // Skip any document end markers (`...`).
         while self.peek_is(|k| matches!(k, TokenKind::DocumentEnd))? {
             self.skip()?;
@@ -236,7 +240,7 @@ impl<'a> Parser<'a> {
         Ok(Event::DocumentStart)
     }
 
-    fn parse_document_content(&mut self) -> Result<Event, ScanError> {
+    fn parse_document_content(&mut self) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
         if self.peek_is(|k| {
@@ -253,7 +257,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_document_end(&mut self) -> Result<Event, ScanError> {
+    fn parse_document_end(&mut self) -> Result<Event<'a>, ScanError> {
         if self.peek_is(|k| matches!(k, TokenKind::DocumentEnd))? {
             self.skip()?;
         }
@@ -263,7 +267,7 @@ impl<'a> Parser<'a> {
         Ok(Event::DocumentEnd)
     }
 
-    fn parse_node(&mut self, block: bool, indentless: bool) -> Result<Event, ScanError> {
+    fn parse_node(&mut self, block: bool, indentless: bool) -> Result<Event<'a>, ScanError> {
         // Peek once to get the span; use take() to extract owned data only
         // when the token is actually consumed — avoids cloning Strings.
         let _ = self.peek()?;
@@ -272,42 +276,43 @@ impl<'a> Parser<'a> {
         let mut anchor: Option<String> = None;
         let mut tag: Option<(String, String)> = None;
 
-        // Parse optional anchor — take() to move the String out without cloning.
+        // Parse optional anchor — take() to move the Cow out; convert to owned
+        // for the Event boundary.
         if self.peek_is(|k| matches!(k, TokenKind::Anchor(_)))? {
             if let (TokenKind::Anchor(name), _) = self.take()? {
-                // name is already moved out by destructuring — clone for marks,
-                // move into anchor.
-                let _ = self.marks.insert(name.clone(), self.next_anchor_id);
+                let owned = name.into_owned();
+                let _ = self.marks.insert(owned.clone(), self.next_anchor_id);
                 self.next_anchor_id += 1;
-                anchor = Some(name);
+                anchor = Some(owned);
             }
             // Check for tag after anchor.
             if self.peek_is(|k| matches!(k, TokenKind::Tag(_, _)))? {
                 if let (TokenKind::Tag(h, s), _) = self.take()? {
-                    tag = Some((h, s));
+                    tag = Some((h.into_owned(), s.into_owned()));
                 }
             }
         } else if self.peek_is(|k| matches!(k, TokenKind::Tag(_, _)))? {
             if let (TokenKind::Tag(h, s), _) = self.take()? {
-                tag = Some((h, s));
+                tag = Some((h.into_owned(), s.into_owned()));
             }
             // Check for anchor after tag.
             if self.peek_is(|k| matches!(k, TokenKind::Anchor(_)))? {
                 if let (TokenKind::Anchor(name), _) = self.take()? {
-                    let _ = self.marks.insert(name.clone(), self.next_anchor_id);
+                    let owned = name.into_owned();
+                    let _ = self.marks.insert(owned.clone(), self.next_anchor_id);
                     self.next_anchor_id += 1;
-                    anchor = Some(name);
+                    anchor = Some(owned);
                 }
             }
         }
 
-        // Alias — take() moves the String instead of cloning.
+        // Alias — take() moves the Cow; convert to owned for the Event.
         if self.peek_is(|k| matches!(k, TokenKind::Alias(_)))? {
             let (kind, alias_span) = self.take()?;
             if let TokenKind::Alias(name) = kind {
                 self.state = self.pop_state();
                 return Ok(Event::Alias {
-                    anchor: name,
+                    anchor: name.into_owned(),
                     span: alias_span,
                 });
             }
@@ -377,7 +382,7 @@ impl<'a> Parser<'a> {
                 if anchor.is_some() || tag.is_some() {
                     self.state = self.pop_state();
                     Ok(Event::Scalar {
-                        value: String::new(),
+                        value: Cow::Borrowed(""),
                         style: ScalarStyle::Plain,
                         anchor,
                         tag,
@@ -389,7 +394,7 @@ impl<'a> Parser<'a> {
                 } else {
                     let kind = self.peek_kind()?;
                     Err(ScanError {
-                        message: format!("expected a node but found {kind:?}"),
+                        message: Cow::Owned(format!("expected a node but found {kind:?}")),
                         index: span.start,
                     })
                 }
@@ -399,7 +404,7 @@ impl<'a> Parser<'a> {
 
     // ── Block sequences ──────────────────────────────────────────────────
 
-    fn parse_block_sequence_entry(&mut self, _first: bool) -> Result<Event, ScanError> {
+    fn parse_block_sequence_entry(&mut self, _first: bool) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 
@@ -418,13 +423,13 @@ impl<'a> Parser<'a> {
             Ok(Event::SequenceEnd { span })
         } else {
             Err(ScanError {
-                message: "expected block sequence entry or end".to_string(),
+                message: Cow::Borrowed("expected block sequence entry or end"),
                 index: span.start,
             })
         }
     }
 
-    fn parse_indentless_sequence_entry(&mut self) -> Result<Event, ScanError> {
+    fn parse_indentless_sequence_entry(&mut self) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 
@@ -450,7 +455,7 @@ impl<'a> Parser<'a> {
 
     // ── Block mappings ───────────────────────────────────────────────────
 
-    fn parse_block_mapping_key(&mut self, _first: bool) -> Result<Event, ScanError> {
+    fn parse_block_mapping_key(&mut self, _first: bool) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 
@@ -471,13 +476,13 @@ impl<'a> Parser<'a> {
             Ok(Event::MappingEnd { span })
         } else {
             Err(ScanError {
-                message: "expected block mapping key or end".to_string(),
+                message: Cow::Borrowed("expected block mapping key or end"),
                 index: span.start,
             })
         }
     }
 
-    fn parse_block_mapping_value(&mut self) -> Result<Event, ScanError> {
+    fn parse_block_mapping_value(&mut self) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 
@@ -500,7 +505,7 @@ impl<'a> Parser<'a> {
 
     // ── Flow sequences ───────────────────────────────────────────────────
 
-    fn parse_flow_sequence_entry(&mut self, first: bool) -> Result<Event, ScanError> {
+    fn parse_flow_sequence_entry(&mut self, first: bool) -> Result<Event<'a>, ScanError> {
         if !first {
             let _ = self.peek()?;
             let span = self.current_span;
@@ -508,7 +513,7 @@ impl<'a> Parser<'a> {
                 self.skip()?;
             } else if !self.peek_is(|k| matches!(k, TokenKind::FlowSequenceEnd))? {
                 return Err(ScanError {
-                    message: "expected ',' or ']' in flow sequence".to_string(),
+                    message: Cow::Borrowed("expected ',' or ']' in flow sequence"),
                     index: span.start,
                 });
             }
@@ -538,7 +543,7 @@ impl<'a> Parser<'a> {
         self.parse_node(false, false)
     }
 
-    fn parse_flow_sequence_entry_mapping_key(&mut self) -> Result<Event, ScanError> {
+    fn parse_flow_sequence_entry_mapping_key(&mut self) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 
@@ -556,7 +561,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_flow_sequence_entry_mapping_value(&mut self) -> Result<Event, ScanError> {
+    fn parse_flow_sequence_entry_mapping_value(&mut self) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 
@@ -572,7 +577,7 @@ impl<'a> Parser<'a> {
         Ok(self.empty_scalar(span))
     }
 
-    fn parse_flow_sequence_entry_mapping_end(&mut self) -> Result<Event, ScanError> {
+    fn parse_flow_sequence_entry_mapping_end(&mut self) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
         self.state = self.pop_state();
@@ -581,7 +586,7 @@ impl<'a> Parser<'a> {
 
     // ── Flow mappings ────────────────────────────────────────────────────
 
-    fn parse_flow_mapping_key(&mut self, first: bool) -> Result<Event, ScanError> {
+    fn parse_flow_mapping_key(&mut self, first: bool) -> Result<Event<'a>, ScanError> {
         if !first {
             let _ = self.peek()?;
             let span = self.current_span;
@@ -589,7 +594,7 @@ impl<'a> Parser<'a> {
                 self.skip()?;
             } else if !self.peek_is(|k| matches!(k, TokenKind::FlowMappingEnd))? {
                 return Err(ScanError {
-                    message: "expected ',' or '}' in flow mapping".to_string(),
+                    message: Cow::Borrowed("expected ',' or '}' in flow mapping"),
                     index: span.start,
                 });
             }
@@ -626,7 +631,7 @@ impl<'a> Parser<'a> {
         self.parse_node(false, false)
     }
 
-    fn parse_flow_mapping_value(&mut self, empty: bool) -> Result<Event, ScanError> {
+    fn parse_flow_mapping_value(&mut self, empty: bool) -> Result<Event<'a>, ScanError> {
         let _ = self.peek()?;
         let span = self.current_span;
 

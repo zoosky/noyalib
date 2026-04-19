@@ -26,3 +26,11 @@ pub(crate) fn parse(input: &str, config: &ParseConfig) -> Result<Vec<(Value, Spa
 pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, SpanTree)> {
     loader::load_one(input, config)
 }
+
+/// Parse a single YAML document into a `Value` without building a `SpanTree`.
+///
+/// This is faster than [`parse_one`] when source-location tracking is not
+/// needed (the common case for [`crate::from_str`]).
+pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
+    loader::load_one_no_spans(input, config)
+}

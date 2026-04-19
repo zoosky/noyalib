@@ -19,3 +19,4 @@ Desktop.ini
 *.profraw
 lcov.info
 tarpaulin-report.html
+.claude/worktrees/

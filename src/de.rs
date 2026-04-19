@@ -263,7 +263,9 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let s = std::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
-    from_str(s)
+    let parse_config = parser::ParseConfig::from(&ParserConfig::default());
+    let value = parser::parse_one_value(s, &parse_config)?;
+    T::deserialize(Deserializer::new(&value))
 }
 
 /// Deserialize a YAML byte slice with custom security limits.
@@ -293,7 +295,9 @@ where
 {
     let mut s = String::new();
     let _ = reader.read_to_string(&mut s)?;
-    from_str(&s)
+    let parse_config = parser::ParseConfig::from(&ParserConfig::default());
+    let value = parser::parse_one_value(&s, &parse_config)?;
+    T::deserialize(Deserializer::new(&value))
 }
 
 /// Deserialize YAML from a reader with custom security limits.
