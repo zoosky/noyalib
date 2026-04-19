@@ -12,7 +12,7 @@ mod support;
 use noyalib::{from_str, to_string, Value};
 
 fn main() {
-    support::header("noyalib -- merge");
+    support::header("noyalib -- overlay");
 
     support::task_with_output("Merge override configuration into base", || {
         let base_yaml = r#"

@@ -11,7 +11,7 @@ mod support;
 use noyalib::{from_str_with_config, DuplicateKeyPolicy, ParserConfig, Value};
 
 fn main() {
-    support::header("noyalib -- parser_config");
+    support::header("noyalib -- secure");
 
     support::task_with_output("Strict preset for untrusted input", || {
         let strict = ParserConfig::strict();

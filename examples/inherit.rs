@@ -21,7 +21,7 @@ fn val(v: &Value, path: &str) -> String {
 }
 
 fn main() {
-    support::header("noyalib -- merge_keys");
+    support::header("noyalib -- inherit");
 
     // ── Basic: overrides and inheritance ──────────────────────────────
     support::task_with_output("Basic merge (overrides and inheritance)", || {

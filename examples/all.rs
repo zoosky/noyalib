@@ -9,35 +9,13 @@ use std::process::Command;
 use std::time::Instant;
 
 const EXAMPLES: &[&str] = &[
-    "basic",
-    "collections",
-    "enums",
-    "nested",
-    "value",
-    "io_formats",
-    "value_manipulation",
-    "config",
-    "serializer_config",
-    "strict_parsing",
-    "parser_config",
-    "error_handling",
-    "error_paths",
-    "schema_validation",
-    "anchors",
-    "shared_anchors",
-    "merge",
-    "merge_keys",
-    "multi_document",
-    "custom_tags",
-    "binary_data",
-    "serde_interop",
-    "flattened_data",
-    "env_expansion",
-    "spanned",
-    "fmt_wrappers",
-    "singleton_map",
-    "custom_serialization",
-    "bench-comparison",
+    // Core
+    "hello", "std", "variants", "deep", "dynamic", "modify", "tags", // Spec
+    "alias", "smart", "overlay", "inherit", "stream", "types", "binary",
+    // Logic & Security
+    "strict", "secure", "schema", "env", // DX
+    "errors", "trace", "source", "style", // Advanced
+    "emit", "rename", "flatten", "bridge", "pipes", "global", "bench",
 ];
 
 fn main() {

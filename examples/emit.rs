@@ -11,7 +11,7 @@ mod support;
 use noyalib::{from_str, to_string_with_config, ScalarStyle, SerializerConfig, Value};
 
 fn main() {
-    support::header("noyalib -- serializer_config");
+    support::header("noyalib -- emit");
 
     let yaml = "name: noyalib\ntags:\n  - yaml\n  - rust\n  - fast\n";
     let value: Value = from_str(yaml).unwrap();

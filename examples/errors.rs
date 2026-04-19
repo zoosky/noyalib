@@ -12,7 +12,7 @@ use noyalib::{from_str, Error, Location, Value};
 use serde::Deserialize;
 
 fn main() {
-    support::header("noyalib -- error_handling");
+    support::header("noyalib -- errors");
 
     // ── Syntax error (genuinely broken YAML) ─────────────────────────
     support::task_with_output("Catch syntax error (expected failure)", || {

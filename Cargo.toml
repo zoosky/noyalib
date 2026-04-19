@@ -28,125 +28,105 @@ include = [
 name = "noyalib"
 path = "src/lib.rs"
 
+## ── Core ──
 [[example]]
-name = "basic"
-path = "examples/basic.rs"
+name = "hello"
+path = "examples/hello.rs"
+[[example]]
+name = "dynamic"
+path = "examples/dynamic.rs"
+[[example]]
+name = "modify"
+path = "examples/modify.rs"
+[[example]]
+name = "deep"
+path = "examples/deep.rs"
+[[example]]
+name = "std"
+path = "examples/std.rs"
+[[example]]
+name = "variants"
+path = "examples/variants.rs"
+[[example]]
+name = "tags"
+path = "examples/tags.rs"
 
+## ── Spec ──
 [[example]]
-name = "collections"
-path = "examples/collections.rs"
+name = "alias"
+path = "examples/alias.rs"
+[[example]]
+name = "smart"
+path = "examples/smart.rs"
+[[example]]
+name = "overlay"
+path = "examples/overlay.rs"
+[[example]]
+name = "inherit"
+path = "examples/inherit.rs"
+[[example]]
+name = "stream"
+path = "examples/stream.rs"
+[[example]]
+name = "types"
+path = "examples/types.rs"
+[[example]]
+name = "binary"
+path = "examples/binary.rs"
 
+## ── Logic & Security ──
 [[example]]
-name = "enums"
-path = "examples/enums.rs"
+name = "strict"
+path = "examples/strict.rs"
+[[example]]
+name = "secure"
+path = "examples/secure.rs"
+[[example]]
+name = "schema"
+path = "examples/schema.rs"
+[[example]]
+name = "env"
+path = "examples/env.rs"
 
+## ── DX ──
 [[example]]
-name = "nested"
-path = "examples/nested.rs"
+name = "errors"
+path = "examples/errors.rs"
+[[example]]
+name = "trace"
+path = "examples/trace.rs"
+[[example]]
+name = "source"
+path = "examples/source.rs"
+[[example]]
+name = "style"
+path = "examples/style.rs"
 
+## ── Advanced ──
 [[example]]
-name = "value"
-path = "examples/value.rs"
-
+name = "emit"
+path = "examples/emit.rs"
 [[example]]
-name = "multi_document"
-path = "examples/multi_document.rs"
-
+name = "rename"
+path = "examples/rename.rs"
 [[example]]
-name = "config"
-path = "examples/config.rs"
-
+name = "flatten"
+path = "examples/flatten.rs"
 [[example]]
-name = "merge"
-path = "examples/merge.rs"
-
+name = "bridge"
+path = "examples/bridge.rs"
 [[example]]
-name = "error_handling"
-path = "examples/error_handling.rs"
-
+name = "pipes"
+path = "examples/pipes.rs"
 [[example]]
-name = "singleton_map"
-path = "examples/singleton_map.rs"
-
+name = "global"
+path = "examples/global.rs"
 [[example]]
-name = "anchors"
-path = "examples/anchors.rs"
-
+name = "bench"
+path = "examples/bench.rs"
 [[example]]
-name = "merge_keys"
-path = "examples/merge_keys.rs"
-
-[[example]]
-name = "error_paths"
-path = "examples/error_paths.rs"
-
-[[example]]
-name = "custom_serialization"
-path = "examples/custom_serialization.rs"
-
-[[example]]
-name = "bench-comparison"
-path = "examples/bench_comparison.rs"
-
-[[example]]
-name = "spanned"
-path = "examples/spanned.rs"
-
-[[example]]
-name = "schema_validation"
-path = "examples/schema_validation.rs"
-
-[[example]]
-name = "parser_config"
-path = "examples/parser_config.rs"
-
-[[example]]
-name = "fmt_wrappers"
-path = "examples/fmt_wrappers.rs"
-
-[[example]]
-name = "io_formats"
-path = "examples/io_formats.rs"
-
-[[example]]
-name = "value_manipulation"
-path = "examples/value_manipulation.rs"
-
-[[example]]
-name = "serializer_config"
-path = "examples/serializer_config.rs"
-
-[[example]]
-name = "strict_parsing"
-path = "examples/strict_parsing.rs"
-
-[[example]]
-name = "shared_anchors"
-path = "examples/shared_anchors.rs"
-
-[[example]]
-name = "custom_tags"
-path = "examples/custom_tags.rs"
-
-[[example]]
-name = "binary_data"
-path = "examples/binary_data.rs"
-
-[[example]]
-name = "serde_interop"
-path = "examples/serde_interop.rs"
-
-[[example]]
-name = "flattened_data"
-path = "examples/flattened_data.rs"
-
-[[example]]
-name = "env_expansion"
-path = "examples/env_expansion.rs"
-
-[[example]]
-name = "run_all"
-path = "examples/run_all.rs"
+name = "all"
+path = "examples/all.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

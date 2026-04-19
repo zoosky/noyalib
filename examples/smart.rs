@@ -13,7 +13,7 @@ use std::sync::Arc;
 use noyalib::{from_str, to_string, ArcAnchor, RcAnchor, Value};
 
 fn main() {
-    support::header("noyalib -- shared_anchors");
+    support::header("noyalib -- smart");
 
     support::task_with_output("RcAnchor: serialize via Rc<T>", || {
         let shared: RcAnchor<String> = RcAnchor::from("shared-config".to_string());

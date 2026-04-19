@@ -14,7 +14,7 @@ use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
 
 fn main() {
-    support::header("noyalib -- collections");
+    support::header("noyalib -- std");
 
     support::task_with_output("Serialize and roundtrip Vec", || {
         let numbers = vec![1, 2, 3, 4, 5];

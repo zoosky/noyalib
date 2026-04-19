@@ -11,7 +11,7 @@ mod support;
 use noyalib::{from_str, to_string, Tag, TaggedValue, Value};
 
 fn main() {
-    support::header("noyalib -- custom_tags");
+    support::header("noyalib -- types");
 
     // ── Parse tagged values ──────────────────────────────────────────
     support::task_with_output("Parse tagged values", || {

@@ -45,7 +45,7 @@ struct Company {
 }
 
 fn main() {
-    support::header("noyalib -- nested");
+    support::header("noyalib -- deep");
 
     let company = Company {
         name: "TechCorp".to_string(),

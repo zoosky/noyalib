@@ -53,7 +53,7 @@ enum Resource {
 }
 
 fn main() {
-    support::header("noyalib -- flattened_data");
+    support::header("noyalib -- flatten");
 
     // ── Flatten ──────────────────────────────────────────────────────
     support::task_with_output("#[serde(flatten)]: merge fields into parent", || {

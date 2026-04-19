@@ -11,7 +11,7 @@ mod support;
 use std::io::Cursor;
 
 fn main() {
-    support::header("noyalib -- io_formats");
+    support::header("noyalib -- pipes");
 
     let yaml_bytes = b"name: noyalib\nversion: 1\n";
 

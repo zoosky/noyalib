@@ -13,7 +13,7 @@ mod support;
 use noyalib::Path;
 
 fn main() {
-    support::header("noyalib -- error_paths");
+    support::header("noyalib -- trace");
 
     support::task_with_output("Building paths step by step", || {
         let root = Path::Root;

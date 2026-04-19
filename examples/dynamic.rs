@@ -11,7 +11,7 @@ mod support;
 use noyalib::{from_str, to_string, Value};
 
 fn main() {
-    support::header("noyalib -- value");
+    support::header("noyalib -- dynamic");
 
     let yaml = r#"
 name: my-config

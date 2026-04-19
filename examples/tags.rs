@@ -51,7 +51,7 @@ struct Workflow {
 }
 
 fn main() {
-    support::header("noyalib -- singleton_map");
+    support::header("noyalib -- tags");
 
     // ── Basic: each variant type ─────────────────────────────────────
     support::task_with_output("Serialize enum variants as singleton maps", || {

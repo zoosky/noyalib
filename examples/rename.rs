@@ -146,7 +146,7 @@ struct SingletonStyle {
 }
 
 fn main() {
-    support::header("noyalib -- custom_serialization");
+    support::header("noyalib -- rename");
 
     // Show the three enum representation styles
     support::task_with_output("Default enum: status: Active (simple string)", || {

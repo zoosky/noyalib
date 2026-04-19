@@ -24,7 +24,7 @@ struct Config {
 }
 
 fn main() {
-    support::header("noyalib -- fmt_wrappers");
+    support::header("noyalib -- style");
 
     support::task("FlowSeq: inline sequence [a, b, c]", || {
         let v = FlowSeq(vec!["yaml".to_string(), "serde".to_string()]);

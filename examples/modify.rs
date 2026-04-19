@@ -18,7 +18,7 @@ struct Server {
 }
 
 fn main() {
-    support::header("noyalib -- value_manipulation");
+    support::header("noyalib -- modify");
 
     let server = Server {
         host: "localhost".to_string(),

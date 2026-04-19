@@ -19,7 +19,7 @@ struct Config {
 }
 
 fn main() {
-    support::header("noyalib -- spanned");
+    support::header("noyalib -- source");
 
     support::task_with_output("Parse and inspect spanned values", || {
         let yaml = "host: localhost\nport: 8080\ndebug: true\n";

@@ -20,7 +20,7 @@ struct ServerConfig {
 }
 
 fn main() {
-    support::header("noyalib -- config");
+    support::header("noyalib -- global");
 
     let config = ServerConfig {
         host: "localhost".to_string(),

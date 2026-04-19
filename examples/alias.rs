@@ -14,7 +14,7 @@ use noyalib::{from_str, Value};
 use serde::Deserialize;
 
 fn main() {
-    support::header("noyalib -- anchors");
+    support::header("noyalib -- alias");
 
     // Simple anchor and alias
     support::task_with_output("Simple anchor and alias", || {

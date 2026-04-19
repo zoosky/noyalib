@@ -19,7 +19,7 @@ struct Person {
 }
 
 fn main() {
-    support::header("noyalib -- basic");
+    support::header("noyalib -- hello");
 
     let person = Person {
         name: "John Doe".to_string(),

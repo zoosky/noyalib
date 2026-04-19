@@ -11,7 +11,7 @@ mod support;
 use noyalib::{from_str, validate_core_schema, validate_json_schema, Value};
 
 fn main() {
-    support::header("noyalib -- schema_validation");
+    support::header("noyalib -- schema");
 
     let yaml = "name: noyalib\nversion: 1\nenabled: true\ntags:\n  - yaml\n  - serde\n";
     let value: Value = from_str(yaml).unwrap();

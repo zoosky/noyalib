@@ -39,7 +39,7 @@ fn fmt_dur(d: Duration) -> String {
 }
 
 fn main() {
-    support::header("noyalib -- bench-comparison");
+    support::header("noyalib -- bench");
 
     // Warn if running in debug mode
     if cfg!(debug_assertions) {

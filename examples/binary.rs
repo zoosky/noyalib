@@ -14,7 +14,7 @@ mod support;
 use noyalib::{from_str, to_string, Value};
 
 fn main() {
-    support::header("noyalib -- binary_data");
+    support::header("noyalib -- binary");
 
     // ── Large integers ───────────────────────────────────────────────
     support::task_with_output("Large integers (i64 boundary)", || {

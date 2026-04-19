@@ -34,7 +34,7 @@ fn compact(v: &Value) -> String {
 }
 
 fn main() {
-    support::header("noyalib -- multi_document");
+    support::header("noyalib -- stream");
 
     let yaml = "---\nname: document1\nvalue: 100\n---\nname: document2\nvalue: 200\n---\nname: document3\nvalue: 300\n";
 

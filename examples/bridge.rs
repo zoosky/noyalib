@@ -12,7 +12,7 @@ use noyalib::Value as YamlValue;
 use serde_json::Value as JsonValue;
 
 fn main() {
-    support::header("noyalib -- serde_interop");
+    support::header("noyalib -- bridge");
 
     // ── JSON -> YAML ─────────────────────────────────────────────────
     support::task_with_output("JSON to YAML conversion", || {

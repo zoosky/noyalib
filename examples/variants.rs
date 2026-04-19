@@ -33,7 +33,7 @@ enum Message {
 }
 
 fn main() {
-    support::header("noyalib -- enums");
+    support::header("noyalib -- variants");
 
     support::task_with_output("Serialize and roundtrip struct variants", || {
         let shapes = vec![

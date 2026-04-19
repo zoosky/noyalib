@@ -42,7 +42,7 @@ fn expand_env(value: &mut Value, env: &HashMap<&str, &str>) {
 }
 
 fn main() {
-    support::header("noyalib -- env_expansion");
+    support::header("noyalib -- env");
 
     let yaml = r#"
 database:

@@ -11,7 +11,7 @@ mod support;
 use noyalib::{from_str_with_config, DuplicateKeyPolicy, ParserConfig, Value};
 
 fn main() {
-    support::header("noyalib -- strict_parsing");
+    support::header("noyalib -- strict");
 
     let yaml = "a: True\nb: FALSE\nc: true\nd: false\n";
 
