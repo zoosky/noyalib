@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! Shared data with smart pointer anchors: RcAnchor, ArcAnchor.
+//! Smart pointer anchors: RcAnchor, ArcAnchor for shared YAML data.
 //!
 //! Run: `cargo run --example shared_anchors`
 
@@ -15,14 +15,16 @@ use noyalib::{from_str, to_string, ArcAnchor, RcAnchor, Value};
 fn main() {
     support::header("noyalib -- shared_anchors");
 
-    support::task("RcAnchor: serialize via Rc<T>", || {
+    support::task_with_output("RcAnchor: serialize via Rc<T>", || {
         let shared: RcAnchor<String> = RcAnchor::from("shared-config".to_string());
-        let _ = to_string(&shared).unwrap();
+        let yaml = to_string(&shared).unwrap();
+        vec![format!("Output: {}", yaml.trim())]
     });
 
-    support::task("ArcAnchor: serialize via Arc<T>", || {
+    support::task_with_output("ArcAnchor: serialize via Arc<T>", || {
         let shared: ArcAnchor<i64> = ArcAnchor::from(42i64);
-        let _ = to_string(&shared).unwrap();
+        let yaml = to_string(&shared).unwrap();
+        vec![format!("Output: {}", yaml.trim())]
     });
 
     let yaml = r#"
@@ -41,25 +43,54 @@ production:
 "#;
     let config: Value = from_str(yaml).unwrap();
 
-    support::task("anchor/alias merge: development inherits defaults", || {
-        assert_eq!(
-            config["development"]["adapter"],
-            Value::String("postgres".to_string())
-        );
+    support::task_with_output("anchor/alias merge: development inherits defaults", || {
+        vec![
+            format!(
+                "adapter  = {} (inherited via *defaults)",
+                config["development"]
+                    .get("adapter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+            ),
+            format!(
+                "database = {} (local)",
+                config["development"]
+                    .get("database")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+            ),
+        ]
     });
 
-    support::task("anchor/alias merge: production overrides host", || {
-        assert_eq!(
-            config["production"]["host"],
-            Value::String("db.example.com".to_string())
-        );
+    support::task_with_output("anchor/alias merge: production overrides host", || {
+        vec![
+            format!(
+                "host     = {} (overridden)",
+                config["production"]
+                    .get("host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+            ),
+            format!(
+                "adapter  = {} (inherited)",
+                config["production"]
+                    .get("adapter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+            ),
+        ]
     });
 
-    support::task("ArcAnchor from Arc", || {
-        let data = Arc::new("thread-safe".to_string());
+    support::task_with_output("ArcAnchor from Arc (shared ownership)", || {
+        let data = Arc::new("thread-safe-value".to_string());
         let anchor: ArcAnchor<String> = ArcAnchor::from(data.clone());
-        assert_eq!(*anchor, "thread-safe");
-        assert_eq!(Arc::strong_count(&data), 2);
+        vec![
+            format!("Value:        {}", *anchor),
+            format!(
+                "Strong count: {} (Arc + ArcAnchor)",
+                Arc::strong_count(&data)
+            ),
+        ]
     });
 
     support::summary(5);
