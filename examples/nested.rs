@@ -1,9 +1,9 @@
-//! Nested structure example for noyalib.
-//!
-//! Demonstrates complex nested structures and optional fields.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Nested structure serialization and roundtrip.
+//!
+//! Run: `cargo run --example nested`
 
 #[path = "support.rs"]
 mod support;
@@ -47,64 +47,95 @@ struct Company {
 fn main() {
     support::header("noyalib -- nested");
 
-    support::task("Serialize and roundtrip nested structures", || {
-        let company = Company {
-            name: "TechCorp".to_string(),
-            founded: 2020,
-            headquarters: Address {
-                street: "123 Main St".to_string(),
-                city: "San Francisco".to_string(),
-                country: "USA".to_string(),
-                zip: Some("94102".to_string()),
+    let company = Company {
+        name: "TechCorp".to_string(),
+        founded: 2020,
+        headquarters: Address {
+            street: "123 Main St".to_string(),
+            city: "San Francisco".to_string(),
+            country: "USA".to_string(),
+            zip: Some("94102".to_string()),
+        },
+        employees: vec![
+            Employee {
+                id: 1,
+                name: "Alice Smith".to_string(),
+                title: "CEO".to_string(),
+                address: Address {
+                    street: "456 Oak Ave".to_string(),
+                    city: "San Francisco".to_string(),
+                    country: "USA".to_string(),
+                    zip: Some("94103".to_string()),
+                },
+                contact: Contact {
+                    email: "alice@techcorp.com".to_string(),
+                    phone: Some("+1-555-0100".to_string()),
+                },
+                skills: vec!["leadership".to_string(), "strategy".to_string()],
+                active: true,
             },
-            employees: vec![
-                Employee {
-                    id: 1,
-                    name: "Alice Smith".to_string(),
-                    title: "CEO".to_string(),
-                    address: Address {
-                        street: "456 Oak Ave".to_string(),
-                        city: "San Francisco".to_string(),
-                        country: "USA".to_string(),
-                        zip: Some("94103".to_string()),
-                    },
-                    contact: Contact {
-                        email: "alice@techcorp.com".to_string(),
-                        phone: Some("+1-555-0100".to_string()),
-                    },
-                    skills: vec!["leadership".to_string(), "strategy".to_string()],
-                    active: true,
+            Employee {
+                id: 2,
+                name: "Bob Jones".to_string(),
+                title: "CTO".to_string(),
+                address: Address {
+                    street: "789 Pine Rd".to_string(),
+                    city: "Oakland".to_string(),
+                    country: "USA".to_string(),
+                    zip: None,
                 },
-                Employee {
-                    id: 2,
-                    name: "Bob Jones".to_string(),
-                    title: "CTO".to_string(),
-                    address: Address {
-                        street: "789 Pine Rd".to_string(),
-                        city: "Oakland".to_string(),
-                        country: "USA".to_string(),
-                        zip: None,
-                    },
-                    contact: Contact {
-                        email: "bob@techcorp.com".to_string(),
-                        phone: None,
-                    },
-                    skills: vec![
-                        "rust".to_string(),
-                        "systems".to_string(),
-                        "architecture".to_string(),
-                    ],
-                    active: true,
+                contact: Contact {
+                    email: "bob@techcorp.com".to_string(),
+                    phone: None,
                 },
-            ],
-        };
+                skills: vec![
+                    "rust".to_string(),
+                    "systems".to_string(),
+                    "architecture".to_string(),
+                ],
+                active: true,
+            },
+        ],
+    };
 
-        let yaml = to_string(&company).unwrap();
-        println!("Company serialized:\n{}\n", yaml);
+    let yaml = support::task("Serialize nested struct to YAML", || {
+        to_string(&company).unwrap()
+    });
 
+    support::task_with_output("Verify serialized output", || {
+        yaml.lines().map(|l| l.to_string()).collect()
+    });
+
+    support::task("Deserialize and verify roundtrip", || {
         let parsed: Company = from_str(&yaml).unwrap();
         assert_eq!(company, parsed);
     });
 
-    support::summary(1);
+    support::task_with_output("Access nested fields", || {
+        let v: noyalib::Value = from_str(&yaml).unwrap();
+        vec![
+            format!(
+                "company          = {}",
+                v.get("name").and_then(|v| v.as_str()).unwrap_or("?")
+            ),
+            format!(
+                "headquarters     = {}",
+                v.get_path("headquarters.city")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+            ),
+            format!(
+                "employee[0].name = {}",
+                v.get_path("employees[0].name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+            ),
+            format!(
+                "employee[1].zip  = {:?} (None = omitted)",
+                v.get_path("employees[1].address.zip")
+            ),
+        ]
+    });
+
+    support::summary(4);
 }
