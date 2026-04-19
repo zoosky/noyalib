@@ -568,6 +568,38 @@ fn write_string(output: &mut String, s: &str, indent: usize, config: &Serializer
         return;
     }
 
+    // Fast path: short ASCII strings that are clearly safe as plain scalars.
+    // Avoids the full lookup table scan for the majority of mapping keys.
+    if bytes.len() <= 64
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+        && !config.block_scalars
+        || bytes.iter().all(|&b| b != b'\n')
+    {
+        let safe = bytes.iter().all(|&b| {
+            b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.' || b == b'/'
+        });
+        if safe
+            && !matches!(
+                s,
+                "true"
+                    | "false"
+                    | "null"
+                    | "~"
+                    | "True"
+                    | "False"
+                    | "TRUE"
+                    | "FALSE"
+                    | "Null"
+                    | "NULL"
+            )
+            && !looks_like_number(s)
+        {
+            output.push_str(s);
+            return;
+        }
+    }
+
     // Block scalar for multiline strings
     if config.block_scalars {
         let newlines = bytes.iter().filter(|&&b| b == b'\n').count();

@@ -115,19 +115,23 @@ pub(crate) struct Scanner<'a> {
 impl<'a> Scanner<'a> {
     /// Create a new scanner for the given input.
     pub(super) fn new(input: &'a str) -> Self {
+        // Pre-allocate based on input size heuristics:
+        // ~1 token per 8 bytes, ~1 indent level per 64 bytes.
+        let estimated_tokens = (input.len() / 8).max(16);
+        let estimated_depth = (input.len() / 64).max(4);
         Scanner {
             input: input.as_bytes(),
             input_str: input,
             pos: 0,
             mark: 0,
             col: 0,
-            tokens: Vec::new(),
+            tokens: Vec::with_capacity(estimated_tokens),
             tokens_consumed: 0,
             tokens_produced: 0,
             indent: -1,
-            indents: Vec::new(),
+            indents: Vec::with_capacity(estimated_depth),
             flow_level: 0,
-            simple_keys: Vec::new(),
+            simple_keys: Vec::with_capacity(estimated_depth),
             simple_key_allowed: false,
             stream_started: false,
             stream_ended: false,
@@ -222,11 +226,15 @@ impl<'a> Scanner<'a> {
     #[inline]
     fn advance_by(&mut self, n: usize) {
         let end = (self.pos + n).min(self.input.len());
-        for i in self.pos..end {
-            if self.input[i] == b'\n' {
-                self.col = 0;
-            } else {
-                self.col += 1;
+        let slice = &self.input[self.pos..end];
+        // Fast path: no newlines in the slice (common for scalar content).
+        match slice.iter().rposition(|&b| b == b'\n') {
+            Some(last_nl) => {
+                // Column resets at the last newline, then counts remaining bytes.
+                self.col = slice.len() - last_nl - 1;
+            }
+            None => {
+                self.col += slice.len();
             }
         }
         self.pos = end;
@@ -281,8 +289,16 @@ impl<'a> Scanner<'a> {
     }
 
     fn skip_blank(&mut self) {
-        while !self.is_eof() && Self::is_blank(self.peek()) {
-            self.advance();
+        // Bulk-scan blanks from the byte slice directly — avoids per-byte
+        // bounds checks via peek()/advance() in the common case.
+        let remaining = &self.input[self.pos..];
+        let mut count = 0;
+        while count < remaining.len() && Self::is_blank(remaining[count]) {
+            count += 1;
+        }
+        if count > 0 {
+            self.col += count; // blanks never contain newlines
+            self.pos += count;
         }
     }
 
@@ -300,11 +316,15 @@ impl<'a> Scanner<'a> {
             // Skip whitespace (tabs are only allowed in some contexts).
             self.skip_blank();
 
-            // Skip comment.
+            // Skip comment — bulk-scan to next line break.
             if self.peek() == b'#' {
-                while !self.is_eof() && !Self::is_break(self.peek()) {
-                    self.advance();
-                }
+                let remaining = &self.input[self.pos..];
+                let end = remaining
+                    .iter()
+                    .position(|&b| b == b'\n' || b == b'\r')
+                    .unwrap_or(remaining.len());
+                self.col += end;
+                self.pos += end;
             }
 
             // Skip line break.
@@ -804,31 +824,35 @@ impl<'a> Scanner<'a> {
         let mut leading_blanks = false;
         let mut whitespace = String::new();
         let indent = self.indent + 1;
+        let in_flow = self.flow_level > 0;
 
         loop {
-            // Skip to the end of the current run.
+            // Skip to the end of the current run — scan directly from the
+            // byte slice for cache-line-friendly sequential access.
             let mut length = 0;
+            let remaining = &self.input[self.pos..];
 
             loop {
-                let c = self.peek_at(length);
-
-                if c == 0 && self.pos + length >= self.input.len() {
+                if length >= remaining.len() {
                     break;
                 }
+                let c = remaining[length];
 
-                // Check for ':' followed by blank/flow-indicator, or flow indicators.
+                // Check for ':' followed by blank/flow-indicator.
                 if c == b':' {
-                    let next = self.peek_at(length + 1);
+                    let next = if length + 1 < remaining.len() {
+                        remaining[length + 1]
+                    } else {
+                        0
+                    };
                     if Self::is_blank_or_break(next)
-                        || (self.flow_level > 0 && (next == b',' || next == b']' || next == b'}'))
+                        || (in_flow && (next == b',' || next == b']' || next == b'}'))
                     {
                         break;
                     }
                 }
 
-                if self.flow_level > 0
-                    && (c == b',' || c == b'[' || c == b']' || c == b'{' || c == b'}')
-                {
+                if in_flow && (c == b',' || c == b'[' || c == b']' || c == b'{' || c == b'}') {
                     break;
                 }
 
