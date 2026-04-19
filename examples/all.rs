@@ -50,6 +50,9 @@ const EXAMPLES: &[&str] = &[
     "borrow",
     "transcode",
     "comments",
+    // Final
+    "async_io",
+    "recursive",
     // Bench (last — longest)
     "bench",
 ];

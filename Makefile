@@ -49,7 +49,8 @@ examples:
 	           errors trace source style \
 	           emit rename flatten bridge pipes global \
 	           portable mask patch suggest schema_ext \
-	           untagged borrow transcode comments bench; do \
+	           untagged borrow transcode comments \
+	           async_io recursive bench; do \
 	    printf "\033[90m%-25s\033[0m" "$$ex" ; \
 	    if cargo run --example $$ex --quiet 2>/dev/null 1>/dev/null; then \
 	        printf "\033[32m[ok]\033[0m\n" ; \

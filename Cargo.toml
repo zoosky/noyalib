@@ -158,6 +158,14 @@ path = "examples/transcode.rs"
 name = "comments"
 path = "examples/comments.rs"
 
+## ── Final ──
+[[example]]
+name = "async_io"
+path = "examples/async_io.rs"
+[[example]]
+name = "recursive"
+path = "examples/recursive.rs"
+
 [[example]]
 name = "all"
 path = "examples/all.rs"
