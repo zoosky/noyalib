@@ -1,5 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
 
+<p align="center">
+  <img src="https://cloudcdn.pro/noyalib/v1/logos/noyalib.svg" alt="Noyalib logo" width="128" />
+</p>
+
 <h1 align="center">noyalib</h1>
 
 <p align="center">
