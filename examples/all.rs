@@ -45,6 +45,11 @@ const EXAMPLES: &[&str] = &[
     "patch",
     "suggest",
     "schema_ext",
+    // Deep Rust
+    "untagged",
+    "borrow",
+    "transcode",
+    "comments",
     // Bench (last — longest)
     "bench",
 ];

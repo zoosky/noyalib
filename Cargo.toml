@@ -144,6 +144,20 @@ path = "examples/suggest.rs"
 name = "schema_ext"
 path = "examples/schema_ext.rs"
 
+## ── Deep Rust ──
+[[example]]
+name = "untagged"
+path = "examples/untagged.rs"
+[[example]]
+name = "borrow"
+path = "examples/borrow.rs"
+[[example]]
+name = "transcode"
+path = "examples/transcode.rs"
+[[example]]
+name = "comments"
+path = "examples/comments.rs"
+
 [[example]]
 name = "all"
 path = "examples/all.rs"
