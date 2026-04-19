@@ -1,10 +1,9 @@
-//! Multi-document YAML example for noyalib.
-//!
-//! Demonstrates parsing and working with multiple YAML documents in a single
-//! file.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Multi-document YAML streams separated by `---`.
+//!
+//! Run: `cargo run --example multi_document`
 
 #[path = "support.rs"]
 mod support;
@@ -12,95 +11,92 @@ mod support;
 use noyalib::{load_all, load_all_as, try_load_all, Value};
 use serde::Deserialize;
 
+/// Format a Value as a compact one-liner (no debug dump).
+fn compact(v: &Value) -> String {
+    match v {
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => format!("\"{s}\""),
+        Value::Sequence(seq) => {
+            let items: Vec<String> = seq.iter().map(compact).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Mapping(map) => {
+            let entries: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", compact(v)))
+                .collect();
+            format!("{{{}}}", entries.join(", "))
+        }
+        Value::Tagged(t) => format!("!{} {}", t.tag(), compact(t.value())),
+    }
+}
+
 fn main() {
     support::header("noyalib -- multi_document");
 
-    let yaml = r#"---
-name: document1
-value: 100
----
-name: document2
-value: 200
----
-name: document3
-value: 300
-"#;
+    let yaml = "---\nname: document1\nvalue: 100\n---\nname: document2\nvalue: 200\n---\nname: document3\nvalue: 300\n";
 
-    support::task_with_output("Using load_all to iterate documents", || {
-        let mut lines = Vec::new();
-        for (i, result) in load_all(yaml).unwrap().enumerate() {
-            match result {
-                Ok(doc) => {
-                    lines.push(format!("Document {}: {doc:?}", i + 1));
-                    if let Some(name) = doc.get("name") {
-                        lines.push(format!("  Name: {}", name.as_str().unwrap_or("unknown")));
-                    }
-                }
-                Err(e) => lines.push(format!("Error parsing document {}: {e}", i + 1)),
-            }
-        }
-        lines
-    });
-
-    support::task_with_output("Using try_load_all for early error detection", || {
-        let iter = try_load_all(yaml).unwrap();
-        let mut lines = vec![
-            format!("Found {} documents", iter.len()),
-            format!("Is empty: {}", iter.is_empty()),
-        ];
-
-        for value in iter.flatten() {
-            lines.push(format!("Document: {value:?}"));
-        }
-        lines
-    });
-
-    support::task_with_output("Using load_all_as with typed structs", || {
-        #[derive(Debug, Deserialize)]
-        struct Document {
-            name: String,
-            value: i32,
-        }
-
-        let documents: Vec<Document> = load_all_as(yaml).unwrap();
-        documents
-            .iter()
-            .map(|doc| format!("Document: {} = {}", doc.name, doc.value))
+    // ── load_all: iterate ────────────────────────────────────────────
+    support::task_with_output("load_all: iterate documents", || {
+        load_all(yaml)
+            .unwrap()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                r.ok().map(|doc| {
+                    let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let val = doc.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                    format!("[Doc {}] name = {}, value = {}", i + 1, name, val)
+                })
+            })
             .collect()
     });
 
-    support::task_with_output("Different document types", || {
-        let mixed_yaml = r#"---
-42
----
-hello world
----
-- item1
-- item2
-- item3
----
-key: value
-nested:
-  a: 1
-  b: 2
-"#;
-
-        let mut lines = Vec::new();
-        for (i, result) in load_all(mixed_yaml).unwrap().enumerate() {
+    // ── try_load_all: collected ──────────────────────────────────────
+    support::task_with_output("try_load_all: collected results", || {
+        let iter = try_load_all(yaml).unwrap();
+        let mut lines = vec![format!("Status: {} documents found", iter.len())];
+        for (i, result) in iter.enumerate() {
             if let Ok(doc) = result {
-                let type_name = match &doc {
-                    Value::Null => "null",
-                    Value::Bool(_) => "bool",
-                    Value::Number(_) => "number",
-                    Value::String(_) => "string",
-                    Value::Sequence(_) => "sequence",
-                    Value::Mapping(_) => "mapping",
-                    Value::Tagged(_) => "tagged",
-                };
-                lines.push(format!("Document {} is a {type_name}: {doc:?}", i + 1));
+                lines.push(format!("[Doc {}] {}", i + 1, compact(&doc)));
             }
         }
         lines
+    });
+
+    // ── load_all_as: typed structs ───────────────────────────────────
+    support::task_with_output("load_all_as: typed deserialization", || {
+        #[derive(Debug, Deserialize)]
+        struct Config {
+            name: String,
+            value: i32,
+        }
+        let docs: Vec<Config> = load_all_as(yaml).unwrap();
+        docs.iter()
+            .map(|d| format!("{} = {}", d.name, d.value))
+            .collect()
+    });
+
+    // ── Mixed types ──────────────────────────────────────────────────
+    support::task_with_output("Different document types", || {
+        let mixed = "---\n42\n---\nhello world\n---\n- item1\n- item2\n- item3\n---\nkey: value\nnested:\n  a: 1\n  b: 2\n";
+        load_all(mixed)
+            .unwrap()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                r.ok().map(|doc| {
+                    let kind = match &doc {
+                        Value::Number(_) => "Number",
+                        Value::String(_) => "String",
+                        Value::Sequence(_) => "Sequence",
+                        Value::Mapping(_) => "Mapping",
+                        _ => "Other",
+                    };
+                    format!("[Doc {}] {} ({})", i + 1, compact(&doc), kind)
+                })
+            })
+            .collect()
     });
 
     support::summary(4);
