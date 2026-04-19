@@ -1,9 +1,9 @@
-//! Error handling example for noyalib.
-//!
-//! Demonstrates error types and formatting error messages with source context.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Error handling: error types, locations, formatted diagnostics.
+//!
+//! Run: `cargo run --example error_handling`
 
 #[path = "support.rs"]
 mod support;
@@ -14,166 +14,130 @@ use serde::Deserialize;
 fn main() {
     support::header("noyalib -- error_handling");
 
-    support::task_with_output("Parse error in YAML syntax", || {
-        let invalid_yaml = r#"
-name: test
-  invalid indentation here
-value: 42
-"#;
-
-        match from_str::<Value>(invalid_yaml) {
-            Ok(_) => vec!["Unexpectedly succeeded".to_string()],
+    // ── Syntax error (genuinely broken YAML) ─────────────────────────
+    support::task_with_output("Catch syntax error (expected failure)", || {
+        let broken = "key: [unclosed\n";
+        match from_str::<Value>(broken) {
             Err(e) => {
-                let mut lines = vec![format!("Error: {e}")];
+                let mut lines = vec![format!("Caught: {e}")];
                 if let Some(loc) = e.location() {
-                    lines.push(format!(
-                        "Location: line {}, column {}",
-                        loc.line(),
-                        loc.column()
-                    ));
+                    lines.push(format!("  at line {}, column {}", loc.line(), loc.column()));
                 }
                 lines
             }
+            Ok(_) => vec!["BUG: should have failed".to_string()],
         }
     });
 
-    support::task_with_output("Type mismatch error", || {
-        let yaml_with_wrong_type = "name: not_a_number\n";
-
-        #[derive(Debug, Deserialize)]
+    // ── Type mismatch ────────────────────────────────────────────────
+    support::task_with_output("Catch type mismatch (expected failure)", || {
+        #[derive(Deserialize)]
         #[allow(dead_code)]
-        struct TypedConfig {
+        struct Typed {
             name: i32,
         }
-
-        match from_str::<TypedConfig>(yaml_with_wrong_type) {
-            Ok(_) => vec!["Unexpectedly succeeded".to_string()],
-            Err(e) => vec![format!("Error: {e}")],
+        match from_str::<Typed>("name: not_a_number\n") {
+            Err(e) => vec![format!("Caught: {e}")],
+            Ok(_) => vec!["BUG: should have failed".to_string()],
         }
     });
 
-    support::task_with_output("Missing field error", || {
-        let incomplete_yaml = "name: test\n";
-
-        #[derive(Debug, Deserialize)]
+    // ── Missing field ────────────────────────────────────────────────
+    support::task_with_output("Catch missing field (expected failure)", || {
+        #[derive(Deserialize)]
         #[allow(dead_code)]
-        struct RequiredFields {
+        struct Required {
             name: String,
-            required_value: i32,
+            port: u16,
         }
-
-        match from_str::<RequiredFields>(incomplete_yaml) {
-            Ok(_) => vec!["Unexpectedly succeeded".to_string()],
-            Err(e) => vec![format!("Error: {e}")],
+        match from_str::<Required>("name: test\n") {
+            Err(e) => vec![format!("Caught: {e}")],
+            Ok(_) => vec!["BUG: should have failed".to_string()],
         }
     });
 
-    support::task_with_output("Programmatic error creation", || {
-        let source = "line1\nline2\nline3\n";
-        let error = Error::parse_at("Invalid syntax", source, 6);
-
-        let mut lines = vec![format!("Created error: {error}")];
-        if let Some(loc) = error.location() {
-            lines.push(format!(
-                "Location: line {}, column {}",
-                loc.line(),
-                loc.column()
-            ));
-        }
-
+    // ── Formatted error with source context (rustc-style) ─────────────
+    support::task_with_output("Formatted error with source pointer", || {
+        // Use programmatic error creation to guarantee the pointer renders
+        // at a visible line. This demonstrates the rustc-style diagnostic.
+        let source = "host: localhost\nport: not_valid\ndb: postgres";
+        let error = Error::parse_at("expected integer value", source, 16);
         let formatted = error.format_with_source(source);
-        lines.push(String::new());
-        lines.push("Formatted error:".to_string());
-        lines.extend(formatted.lines().map(|l| l.to_string()));
-        lines
+        formatted.lines().map(|l| l.to_string()).collect()
     });
 
-    support::task_with_output("Location calculations", || {
-        let multiline = "first line\nsecond line\nthird line\n";
-
-        let loc1 = Location::from_index(multiline, 0);
-        let loc2 = Location::from_index(multiline, 11);
-        let loc3 = Location::from_index(multiline, 23);
-
+    // ── Location calculations ────────────────────────────────────────
+    support::task_with_output("Location from byte index", || {
+        let text = "first line\nsecond line\nthird line\n";
         vec![
-            format!("Index 0: line {}, column {}", loc1.line(), loc1.column()),
-            format!("Index 11: line {}, column {}", loc2.line(), loc2.column()),
-            format!("Index 23: line {}, column {}", loc3.line(), loc3.column()),
+            format!(
+                "index  0 = line {}, col {}",
+                Location::from_index(text, 0).line(),
+                Location::from_index(text, 0).column()
+            ),
+            format!(
+                "index 11 = line {}, col {}",
+                Location::from_index(text, 11).line(),
+                Location::from_index(text, 11).column()
+            ),
+            format!(
+                "index 23 = line {}, col {}",
+                Location::from_index(text, 23).line(),
+                Location::from_index(text, 23).column()
+            ),
         ]
     });
 
-    support::task_with_output("Error type matching", || {
-        let errors = vec![
-            Error::Parse("parse error".to_string()),
-            Error::Serialize("serialize error".to_string()),
-            Error::Deserialize("deserialize error".to_string()),
-            Error::Invalid("invalid error".to_string()),
+    // ── Error type matching ──────────────────────────────────────────
+    support::task_with_output("Programmatic error type matching", || {
+        let errors: Vec<Error> = vec![
+            Error::Parse("bad syntax".to_string()),
             Error::TypeMismatch {
                 expected: "string",
                 found: "integer".to_string(),
             },
-            Error::MissingField("name".to_string()),
-            Error::Custom("custom error".to_string()),
+            Error::MissingField("port".to_string()),
+            Error::Custom("application error".to_string()),
         ];
-
         errors
-            .into_iter()
-            .map(|error| {
-                let kind = match &error {
+            .iter()
+            .map(|e| {
+                let kind = match e {
                     Error::Parse(_) => "Parse",
-                    Error::ParseWithLocation { .. } => "ParseWithLocation",
-                    Error::Serialize(_) => "Serialize",
-                    Error::Deserialize(_) => "Deserialize",
-                    Error::DeserializeWithLocation { .. } => "DeserializeWithLocation",
-                    Error::Invalid(_) => "Invalid",
                     Error::TypeMismatch { .. } => "TypeMismatch",
                     Error::MissingField(_) => "MissingField",
-                    Error::UnknownField(_) => "UnknownField",
-                    Error::RecursionLimitExceeded { .. } => "RecursionLimitExceeded",
                     Error::Custom(_) => "Custom",
-                    Error::Io(_) => "Io",
-                    Error::RepetitionLimitExceeded => "RepetitionLimitExceeded",
-                    Error::UnknownAnchor(_) => "UnknownAnchor",
-                    Error::ScalarInMerge => "ScalarInMerge",
-                    Error::TaggedInMerge => "TaggedInMerge",
-                    Error::ScalarInMergeElement => "ScalarInMergeElement",
-                    Error::SequenceInMergeElement => "SequenceInMergeElement",
-                    Error::EmptyTag => "EmptyTag",
-                    Error::FailedToParseNumber(_) => "FailedToParseNumber",
-                    Error::EndOfStream => "EndOfStream",
-                    Error::MoreThanOneDocument => "MoreThanOneDocument",
-                    _ => "Unknown",
+                    _ => "Other",
                 };
-                format!("{kind}: {error}")
+                format!("{kind:<13} -> {e}")
             })
             .collect()
     });
 
-    support::task_with_output("Graceful error handling pattern", || {
-        let yaml_sources = vec![
-            ("valid", "name: test\nvalue: 42\n"),
-            ("invalid", "name: test\n  bad indent\n"),
+    // ── Graceful error recovery ──────────────────────────────────────
+    support::task_with_output("Graceful error recovery pattern", || {
+        let inputs = vec![
+            ("valid", "name: app\nport: 8080\n"),
+            ("broken", "key: {unclosed\n"),
             ("empty", ""),
         ];
-
-        yaml_sources
+        inputs
             .into_iter()
             .map(|(label, yaml)| match from_str::<Value>(yaml) {
-                Ok(value) => format!("Parsing '{label}': Success - {value:?}"),
-                Err(Error::Parse(msg)) => format!("Parsing '{label}': Parse error - {msg}"),
-                Err(Error::ParseWithLocation {
-                    message, location, ..
-                }) => {
-                    format!(
-                        "Parsing '{label}': Parse error at line {}, col {}: {message}",
-                        location.line(),
-                        location.column(),
-                    )
-                }
-                Err(e) => format!("Parsing '{label}': Other error - {e}"),
+                Ok(v) => format!("{label:<7} -> ok ({} nodes)", count_nodes(&v)),
+                Err(e) => format!("{label:<7} -> err ({e})"),
             })
             .collect()
     });
 
     support::summary(7);
+}
+
+fn count_nodes(v: &Value) -> usize {
+    match v {
+        Value::Sequence(s) => 1 + s.iter().map(count_nodes).sum::<usize>(),
+        Value::Mapping(m) => 1 + m.values().map(count_nodes).sum::<usize>(),
+        Value::Tagged(t) => 1 + count_nodes(t.value()),
+        _ => 1,
+    }
 }
