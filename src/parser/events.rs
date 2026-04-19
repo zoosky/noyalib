@@ -140,7 +140,12 @@ impl<'a> Parser<'a> {
             self.current_span = t.span;
             self.has_current = true;
         }
-        Ok((self.current_kind.as_ref().unwrap(), self.current_span))
+        Ok((
+            self.current_kind
+                .as_ref()
+                .expect("internal: current_kind set by peek"),
+            self.current_span,
+        ))
     }
 
     /// Peek just the kind (for matching).
@@ -164,7 +169,12 @@ impl<'a> Parser<'a> {
     fn take(&mut self) -> Result<(TokenKind, Span), ScanError> {
         if self.has_current {
             self.has_current = false;
-            Ok((self.current_kind.take().unwrap(), self.current_span))
+            Ok((
+                self.current_kind
+                    .take()
+                    .expect("internal: current_kind set when has_current"),
+                self.current_span,
+            ))
         } else {
             let t = self.scanner.next_token()?;
             Ok((t.kind, t.span))
@@ -306,7 +316,10 @@ impl<'a> Parser<'a> {
         // Main node dispatch — take() for Scalar to move the String.
         let _ = self.peek()?;
         let tok_span = self.current_span;
-        let kind_ref = self.current_kind.as_ref().unwrap();
+        let kind_ref = self
+            .current_kind
+            .as_ref()
+            .expect("internal: peek() above guarantees current_kind");
 
         match kind_ref {
             TokenKind::Scalar(_, _) => {

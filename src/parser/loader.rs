@@ -78,7 +78,11 @@ pub(crate) fn load_one(input: &str, config: &ParseConfig) -> Result<(Value, Span
         return Err(Error::Parse("empty YAML document".to_string()));
     }
 
-    Ok(docs.into_iter().next().unwrap())
+    // SAFETY: docs.is_empty() checked above — at least one document exists.
+    Ok(docs
+        .into_iter()
+        .next()
+        .expect("internal: docs verified non-empty"))
 }
 
 enum LoaderState {
@@ -377,7 +381,11 @@ impl<'a> Loader<'a> {
                         merge_values,
                         start_offset,
                     };
-                    *self.stack.last_mut().unwrap() = frame;
+                    // SAFETY: stack is non-empty during event processing — pushed at Document/Sequence/Mapping start.
+                    *self
+                        .stack
+                        .last_mut()
+                        .expect("internal: stack non-empty during event processing") = frame;
                     return Ok(());
                 }
 
@@ -402,7 +410,11 @@ impl<'a> Loader<'a> {
                     merge_values,
                     start_offset,
                 };
-                *self.stack.last_mut().unwrap() = frame;
+                // SAFETY: stack is non-empty during event processing — pushed at Document/Sequence/Mapping start.
+                *self
+                    .stack
+                    .last_mut()
+                    .expect("internal: stack non-empty during event processing") = frame;
             }
             Some(Frame::MappingValue {
                 map,
@@ -453,7 +465,11 @@ impl<'a> Loader<'a> {
                     merge_values,
                     start_offset,
                 };
-                *self.stack.last_mut().unwrap() = frame;
+                // SAFETY: stack is non-empty during event processing — pushed at Document/Sequence/Mapping start.
+                *self
+                    .stack
+                    .last_mut()
+                    .expect("internal: stack non-empty during event processing") = frame;
             }
         }
         Ok(())

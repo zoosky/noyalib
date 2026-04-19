@@ -68,7 +68,7 @@ fn validate_failsafe_recursive(value: &Value, path: &mut String) -> Result<()> {
         Value::Sequence(seq) => {
             let base_len = path.len();
             for (i, item) in seq.iter().enumerate() {
-                write!(path, "[{i}]").unwrap();
+                let _ = write!(path, "[{i}]");
                 validate_failsafe_recursive(item, path)?;
                 path.truncate(base_len);
             }
@@ -77,7 +77,7 @@ fn validate_failsafe_recursive(value: &Value, path: &mut String) -> Result<()> {
         Value::Mapping(map) => {
             let base_len = path.len();
             for (key, val) in map.iter() {
-                write!(path, ".{key}").unwrap();
+                let _ = write!(path, ".{key}");
                 validate_failsafe_recursive(val, path)?;
                 path.truncate(base_len);
             }
@@ -147,7 +147,7 @@ fn validate_json_recursive(value: &Value, path: &mut String) -> Result<()> {
         Value::Sequence(seq) => {
             let base_len = path.len();
             for (i, item) in seq.iter().enumerate() {
-                write!(path, "[{i}]").unwrap();
+                let _ = write!(path, "[{i}]");
                 validate_json_recursive(item, path)?;
                 path.truncate(base_len);
             }
@@ -156,7 +156,7 @@ fn validate_json_recursive(value: &Value, path: &mut String) -> Result<()> {
         Value::Mapping(map) => {
             let base_len = path.len();
             for (key, val) in map.iter() {
-                write!(path, ".{key}").unwrap();
+                let _ = write!(path, ".{key}");
                 validate_json_recursive(val, path)?;
                 path.truncate(base_len);
             }
@@ -202,7 +202,7 @@ fn validate_core_recursive(value: &Value, path: &mut String) -> Result<()> {
         Value::Sequence(seq) => {
             let base_len = path.len();
             for (i, item) in seq.iter().enumerate() {
-                write!(path, "[{i}]").unwrap();
+                let _ = write!(path, "[{i}]");
                 validate_core_recursive(item, path)?;
                 path.truncate(base_len);
             }
@@ -211,7 +211,7 @@ fn validate_core_recursive(value: &Value, path: &mut String) -> Result<()> {
         Value::Mapping(map) => {
             let base_len = path.len();
             for (key, val) in map.iter() {
-                write!(path, ".{key}").unwrap();
+                let _ = write!(path, ".{key}");
                 validate_core_recursive(val, path)?;
                 path.truncate(base_len);
             }
@@ -219,7 +219,7 @@ fn validate_core_recursive(value: &Value, path: &mut String) -> Result<()> {
         }
         Value::Tagged(tagged) => {
             let base_len = path.len();
-            write!(path, "!{}", tagged.tag()).unwrap();
+            let _ = write!(path, "!{}", tagged.tag());
             let result = validate_core_recursive(tagged.value(), path);
             path.truncate(base_len);
             result

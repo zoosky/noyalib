@@ -260,6 +260,7 @@ impl Index<&str> for Mapping {
     /// # Panics
     ///
     /// Panics if the key is not present in the mapping.
+    #[track_caller]
     fn index(&self, key: &str) -> &Self::Output {
         self.0.get(key).expect("key not found in mapping")
     }
@@ -271,6 +272,7 @@ impl IndexMut<&str> for Mapping {
     /// # Panics
     ///
     /// Panics if the key is not present in the mapping.
+    #[track_caller]
     fn index_mut(&mut self, key: &str) -> &mut Self::Output {
         self.0.get_mut(key).expect("key not found in mapping")
     }
@@ -713,6 +715,7 @@ impl Index<&Value> for MappingAny {
     /// # Panics
     ///
     /// Panics if the key is not present in the mapping.
+    #[track_caller]
     fn index(&self, key: &Value) -> &Self::Output {
         self.0.get(key).expect("key not found in mapping")
     }
@@ -724,6 +727,7 @@ impl IndexMut<&Value> for MappingAny {
     /// # Panics
     ///
     /// Panics if the key is not present in the mapping.
+    #[track_caller]
     fn index_mut(&mut self, key: &Value) -> &mut Self::Output {
         self.0.get_mut(key).expect("key not found in mapping")
     }
@@ -2510,6 +2514,7 @@ impl ValueIndex for usize {
         }
     }
 
+    #[track_caller]
     fn index_or_insert(self, value: &mut Value) -> &mut Value {
         match value {
             Value::Sequence(s) => {
@@ -2548,6 +2553,7 @@ impl ValueIndex for &str {
         }
     }
 
+    #[track_caller]
     fn index_or_insert(self, value: &mut Value) -> &mut Value {
         // If the value is null, convert it to an empty mapping
         if let Value::Null = value {
@@ -2578,6 +2584,7 @@ impl ValueIndex for String {
         self.as_str().index_into_mut(value)
     }
 
+    #[track_caller]
     fn index_or_insert(self, value: &mut Value) -> &mut Value {
         self.as_str().index_or_insert(value)
     }
@@ -2592,6 +2599,7 @@ impl ValueIndex for &String {
         self.as_str().index_into_mut(value)
     }
 
+    #[track_caller]
     fn index_or_insert(self, value: &mut Value) -> &mut Value {
         self.as_str().index_or_insert(value)
     }
@@ -2618,6 +2626,7 @@ impl ValueIndex for &Value {
         }
     }
 
+    #[track_caller]
     fn index_or_insert(self, value: &mut Value) -> &mut Value {
         match self {
             Value::String(s) => s.as_str().index_or_insert(value),
@@ -3083,6 +3092,7 @@ impl Index<usize> for Value {
     /// assert_eq!(value[0].as_str(), Some("a"));
     /// assert_eq!(value[1].as_str(), Some("b"));
     /// ```
+    #[track_caller]
     fn index(&self, index: usize) -> &Self::Output {
         self.get(index)
             .expect("index out of bounds or not a sequence")
@@ -3095,6 +3105,7 @@ impl IndexMut<usize> for Value {
     /// # Panics
     ///
     /// Panics if the value is not a sequence or if the index is out of bounds.
+    #[track_caller]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index)
             .expect("index out of bounds or not a sequence")
@@ -3120,6 +3131,7 @@ impl Index<&str> for Value {
     /// assert_eq!(value["name"].as_str(), Some("test"));
     /// assert_eq!(value["version"].as_i64(), Some(1));
     /// ```
+    #[track_caller]
     fn index(&self, key: &str) -> &Self::Output {
         self.get(key).expect("key not found or not a mapping")
     }
@@ -3131,6 +3143,7 @@ impl IndexMut<&str> for Value {
     /// # Panics
     ///
     /// Panics if the value is not a mapping or if the key is not found.
+    #[track_caller]
     fn index_mut(&mut self, key: &str) -> &mut Self::Output {
         self.get_mut(key).expect("key not found or not a mapping")
     }

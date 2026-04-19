@@ -509,7 +509,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::String(s) if s.chars().count() == 1 => {
-                visitor.visit_char(s.chars().next().unwrap())
+                // SAFETY: count() == 1 guarantees next() returns Some.
+                visitor.visit_char(s.chars().next().expect("internal: count verified"))
             }
             _ => Err(Error::TypeMismatch {
                 expected: "char",
@@ -671,7 +672,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         match self.value {
             Value::String(s) => visitor.visit_enum(s.as_str().into_deserializer()),
             Value::Mapping(map) if map.len() == 1 => {
-                let (key, value) = map.iter().next().unwrap();
+                // SAFETY: len() == 1 guarantees next() returns Some.
+                let (key, value) = map.iter().next().expect("internal: len verified");
                 visitor.visit_enum(EnumDeserializer {
                     variant: key,
                     value,
