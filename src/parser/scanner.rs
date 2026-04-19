@@ -820,6 +820,75 @@ impl<'a> Scanner<'a> {
         self.simple_key_allowed = false;
         self.mark = self.pos;
 
+        // ── Fast path: single-line plain scalar (no line folding) ────
+        // Most scalars in real YAML are single-line values like `key: value`.
+        // Detect this case and emit directly from the input slice without
+        // allocating `whitespace` or entering the multiline folding loop.
+        {
+            let remaining = &self.input[self.pos..];
+            let in_flow = self.flow_level > 0;
+            let mut len = 0;
+            let mut is_single_line = true;
+
+            while len < remaining.len() {
+                let c = remaining[len];
+                if c == b':' {
+                    let next = if len + 1 < remaining.len() {
+                        remaining[len + 1]
+                    } else {
+                        0
+                    };
+                    if Self::is_blank_or_break(next)
+                        || (in_flow && (next == b',' || next == b']' || next == b'}'))
+                    {
+                        break;
+                    }
+                }
+                if in_flow && (c == b',' || c == b'[' || c == b']' || c == b'{' || c == b'}') {
+                    break;
+                }
+                if c == b'#' {
+                    break;
+                }
+                if Self::is_break(c) {
+                    is_single_line = false;
+                    break;
+                }
+                if c == b' ' || c == b'\t' {
+                    // Check if this is trailing whitespace before a break or terminator.
+                    // If so, we can still use the fast path (trim trailing blanks).
+                    let mut j = len + 1;
+                    while j < remaining.len() && (remaining[j] == b' ' || remaining[j] == b'\t') {
+                        j += 1;
+                    }
+                    if j >= remaining.len() || Self::is_break(remaining[j]) || remaining[j] == b'#'
+                    {
+                        // Trailing whitespace — trim and break
+                        break;
+                    }
+                    if remaining[j] == b':'
+                        && (j + 1 >= remaining.len()
+                            || Self::is_blank_or_break(remaining[j + 1])
+                            || (in_flow
+                                && (remaining[j + 1] == b','
+                                    || remaining[j + 1] == b']'
+                                    || remaining[j + 1] == b'}')))
+                    {
+                        break;
+                    }
+                }
+                len += 1;
+            }
+
+            if is_single_line && len > 0 {
+                let s = self.slice_str(self.pos, self.pos + len).to_owned();
+                self.advance_by(len);
+                self.emit(TokenKind::Scalar(ScalarStyle::Plain, s));
+                return Ok(());
+            }
+        }
+
+        // ── Slow path: multiline plain scalar with line folding ──────
         let mut string = String::new();
         let mut leading_blanks = false;
         let mut whitespace = String::new();

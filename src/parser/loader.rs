@@ -518,18 +518,28 @@ fn resolve_plain_scalar(
         ".nan" | ".NaN" | ".NAN" => Ok(Value::Number(Number::Float(f64::NAN))),
 
         _ => {
+            // Fast reject: if the first byte isn't a digit, sign, or dot,
+            // this can't be a number — skip numeric parsing entirely.
+            let first = value.as_bytes()[0];
+            let could_be_number =
+                first.is_ascii_digit() || first == b'+' || first == b'-' || first == b'.';
+
             // Try integer patterns.
-            if let Some(n) = try_parse_integer(value) {
-                return Ok(Value::Number(Number::Integer(n)));
+            if could_be_number {
+                if let Some(n) = try_parse_integer(value) {
+                    return Ok(Value::Number(Number::Integer(n)));
+                }
             }
 
             // Try float patterns.
-            if let Some(f) = try_parse_float(value) {
-                return Ok(Value::Number(Number::Float(f)));
+            if could_be_number {
+                if let Some(f) = try_parse_float(value) {
+                    return Ok(Value::Number(Number::Float(f)));
+                }
             }
 
             // Large integers that overflow i64 — store as float (matches YAML convention).
-            if looks_like_integer(value) {
+            if could_be_number && looks_like_integer(value) {
                 if let Ok(f) = value.parse::<f64>() {
                     return Ok(Value::Number(Number::Float(f)));
                 }

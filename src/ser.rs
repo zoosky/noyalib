@@ -17,6 +17,7 @@ use crate::value::{Mapping, Number, Sequence, Tag, TaggedValue, Value};
 /// Controls whether sequences and mappings should use inline (flow) or
 /// multi-line (block) style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum FlowStyle {
     /// Always use block style (multi-line).
     #[default]
@@ -31,6 +32,7 @@ pub enum FlowStyle {
 ///
 /// Controls how string values should be quoted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum ScalarStyle {
     /// Automatic quoting based on content.
     #[default]
@@ -61,6 +63,7 @@ pub enum ScalarStyle {
 ///     .document_start(true);
 /// ```
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct SerializerConfig {
     /// Number of spaces per indentation level (default: 2).
     pub indent: usize,

@@ -62,6 +62,7 @@ pub enum DuplicateKeyPolicy {
 /// let value: Value = from_str_with_config(yaml, &config).unwrap();
 /// ```
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ParserConfig {
     /// Maximum nesting depth allowed (default: 128).
     pub max_depth: usize,
