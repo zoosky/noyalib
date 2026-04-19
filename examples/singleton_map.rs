@@ -1,9 +1,9 @@
-//! Singleton map serialization example for noyalib.
-//!
-//! Demonstrates using the singleton_map module for enum serialization.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Singleton map enum serialization: singleton_map, optional, recursive.
+//!
+//! Run: `cargo run --example singleton_map`
 
 #[path = "support.rs"]
 mod support;
@@ -11,7 +11,6 @@ mod support;
 use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
 
-// Enum with various variant types
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 enum Status {
     Pending,
@@ -20,7 +19,6 @@ enum Status {
     Error(String),
 }
 
-// Container using singleton_map for cleaner YAML
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Task {
     name: String,
@@ -28,7 +26,6 @@ struct Task {
     status: Status,
 }
 
-// Container with optional status using singleton_map_optional
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct OptionalTask {
     name: String,
@@ -40,7 +37,6 @@ struct OptionalTask {
     status: Option<Status>,
 }
 
-// Nested enum structure using singleton_map_recursive
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 enum Action {
     Simple,
@@ -57,137 +53,119 @@ struct Workflow {
 fn main() {
     support::header("noyalib -- singleton_map");
 
-    support::task_with_output("Basic singleton_map usage", || {
-        let task_pending = Task {
-            name: "Task 1".to_string(),
-            status: Status::Pending,
-        };
-
-        let task_active = Task {
-            name: "Task 2".to_string(),
-            status: Status::Active,
-        };
-
-        let task_completed = Task {
-            name: "Task 3".to_string(),
-            status: Status::Completed {
-                at: "2024-01-15".to_string(),
-            },
-        };
-
-        let task_error = Task {
-            name: "Task 4".to_string(),
-            status: Status::Error("Connection failed".to_string()),
-        };
-
-        let mut lines = vec!["Pending task:".to_string()];
-        lines.extend(
-            to_string(&task_pending)
-                .unwrap()
-                .lines()
-                .map(|l| l.to_string()),
-        );
-        lines.push("Active task:".to_string());
-        lines.extend(
-            to_string(&task_active)
-                .unwrap()
-                .lines()
-                .map(|l| l.to_string()),
-        );
-        lines.push("Completed task:".to_string());
-        lines.extend(
-            to_string(&task_completed)
-                .unwrap()
-                .lines()
-                .map(|l| l.to_string()),
-        );
-        lines.push("Error task:".to_string());
-        lines.extend(
-            to_string(&task_error)
-                .unwrap()
-                .lines()
-                .map(|l| l.to_string()),
-        );
-        lines
+    // ── Basic: each variant type ─────────────────────────────────────
+    support::task_with_output("Serialize enum variants as singleton maps", || {
+        let tasks = [
+            (
+                "Pending",
+                Task {
+                    name: "Task 1".into(),
+                    status: Status::Pending,
+                },
+            ),
+            (
+                "Active",
+                Task {
+                    name: "Task 2".into(),
+                    status: Status::Active,
+                },
+            ),
+            (
+                "Completed",
+                Task {
+                    name: "Task 3".into(),
+                    status: Status::Completed {
+                        at: "2024-01-15".into(),
+                    },
+                },
+            ),
+            (
+                "Error",
+                Task {
+                    name: "Task 4".into(),
+                    status: Status::Error("Connection failed".into()),
+                },
+            ),
+        ];
+        tasks
+            .iter()
+            .map(|(label, task)| {
+                let yaml = to_string(task).unwrap();
+                // Extract the status block (everything after "status:")
+                let status: String = yaml
+                    .lines()
+                    .skip_while(|l| !l.starts_with("status"))
+                    .map(|l| l.trim().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{label:<9} -> {status}")
+            })
+            .collect()
     });
 
+    // ── Roundtrip ────────────────────────────────────────────────────
     support::task_with_output("Roundtrip verification", || {
-        let task_completed = Task {
-            name: "Task 3".to_string(),
+        let original = Task {
+            name: "Task 3".into(),
             status: Status::Completed {
-                at: "2024-01-15".to_string(),
+                at: "2024-01-15".into(),
             },
         };
-
-        let yaml = to_string(&task_completed).unwrap();
+        let yaml = to_string(&original).unwrap();
         let parsed: Task = from_str(&yaml).unwrap();
-        assert_eq!(task_completed, parsed);
-
+        assert_eq!(original, parsed);
         vec![
-            format!("Original: {task_completed:?}"),
-            format!("Parsed:   {parsed:?}"),
-            "Roundtrip successful!".to_string(),
+            format!("Original = {:?}", original),
+            format!("Parsed   = {:?}", parsed),
+            "Status   = match".to_string(),
         ]
     });
 
-    support::task_with_output("Optional singleton_map", || {
-        let with_status = OptionalTask {
-            name: "Has status".to_string(),
+    // ── Optional ─────────────────────────────────────────────────────
+    support::task_with_output("Optional singleton_map (Some vs None)", || {
+        let with = OptionalTask {
+            name: "Has status".into(),
             status: Some(Status::Active),
         };
-
-        let without_status = OptionalTask {
-            name: "No status".to_string(),
+        let without = OptionalTask {
+            name: "No status".into(),
             status: None,
         };
-
-        let mut lines = vec!["With status:".to_string()];
-        lines.extend(
-            to_string(&with_status)
-                .unwrap()
-                .lines()
-                .map(|l| l.to_string()),
-        );
-        lines.push("Without status:".to_string());
-        lines.extend(
-            to_string(&without_status)
-                .unwrap()
-                .lines()
-                .map(|l| l.to_string()),
-        );
-        lines
+        let with_yaml = to_string(&with).unwrap();
+        let without_yaml = to_string(&without).unwrap();
+        vec![
+            format!("Some(Active) -> {} lines", with_yaml.lines().count()),
+            format!(
+                "None         -> {} lines (status omitted)",
+                without_yaml.lines().count()
+            ),
+        ]
     });
 
-    support::task_with_output("Recursive singleton_map", || {
+    // ── Recursive ────────────────────────────────────────────────────
+    support::task_with_output("Recursive singleton_map (nested enums)", || {
         let workflow = Workflow {
-            name: "My Workflow".to_string(),
+            name: "My Workflow".into(),
             actions: vec![
                 Action::Simple,
                 Action::WithData { value: 42 },
                 Action::Simple,
             ],
         };
-
-        let mut lines = vec!["Workflow:".to_string()];
-        lines.extend(to_string(&workflow).unwrap().lines().map(|l| l.to_string()));
-
         let yaml = to_string(&workflow).unwrap();
         let parsed: Workflow = from_str(&yaml).unwrap();
         assert_eq!(workflow, parsed);
-        lines.push("Recursive roundtrip successful!".to_string());
-        lines
+        yaml.lines().map(|l| l.to_string()).collect()
     });
 
-    support::task_with_output("Parsing singleton map format", || {
-        let yaml_input = r#"
-name: Parsed Task
-status:
-  Completed:
-    at: "2024-12-01"
-"#;
-
-        let parsed: Task = from_str(yaml_input).unwrap();
-        vec![format!("Parsed task: {parsed:?}")]
+    // ── Parse singleton map YAML ─────────────────────────────────────
+    support::task_with_output("Parse singleton map format", || {
+        let yaml = "name: Parsed Task\nstatus:\n  Completed:\n    at: \"2024-12-01\"\n";
+        let parsed: Task = from_str(yaml).unwrap();
+        vec![
+            format!("Task   = {}", parsed.name),
+            format!("Status = Completed (at: 2024-12-01)"),
+        ]
     });
 
     support::summary(5);
