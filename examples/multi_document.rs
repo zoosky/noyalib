@@ -3,6 +3,9 @@
 //! Demonstrates parsing and working with multiple YAML documents in a single
 //! file.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{load_all, load_all_as, try_load_all, Value};
 use serde::Deserialize;
 

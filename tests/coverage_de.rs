@@ -1,5 +1,8 @@
 //! Deserializer coverage tests — security limits, config paths, edge cases.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::io::Cursor;
 
 use noyalib::{

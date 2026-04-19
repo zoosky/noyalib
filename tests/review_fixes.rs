@@ -1,5 +1,8 @@
 //! Tests verifying all fixes from the repo review.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{
     from_str, from_str_with_config, to_string, to_string_with_config, to_value, DuplicateKeyPolicy,
     Mapping, Number, ParserConfig, SerializerConfig, Value,

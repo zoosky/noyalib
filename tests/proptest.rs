@@ -3,6 +3,9 @@
 //! These tests verify invariants and properties that should hold for all
 //! inputs.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str, from_value, to_string, to_value, Mapping, Number, Value};
 use proptest::prelude::*;
 

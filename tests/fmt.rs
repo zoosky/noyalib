@@ -1,5 +1,8 @@
 //! Formatting wrapper tests.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::collections::BTreeMap;
 
 use noyalib::fmt::{

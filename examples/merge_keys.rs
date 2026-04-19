@@ -4,6 +4,9 @@
 //! (`<<`). This is useful when working with YAML files that use anchors and
 //! merge keys for DRY (Don't Repeat Yourself) configuration.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str, to_string, Value};
 
 fn main() -> Result<(), noyalib::Error> {

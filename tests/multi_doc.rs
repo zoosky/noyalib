@@ -1,5 +1,8 @@
 //! Multi-document serialization tests.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{load_all, to_string_multi, to_writer_multi, Value};
 
 #[test]

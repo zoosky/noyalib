@@ -1,6 +1,9 @@
 //! Tests targeting every remaining uncovered line.
 //! Each test includes the exact file:line it covers.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![allow(
     unused_comparisons,
     unused_results,

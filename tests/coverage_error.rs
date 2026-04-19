@@ -1,6 +1,9 @@
 //! Error module coverage tests — all Error variants, Location,
 //! format_with_source edge cases.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::sync::Arc;
 
 use noyalib::{Error, Location};

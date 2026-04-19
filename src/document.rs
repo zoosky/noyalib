@@ -18,6 +18,9 @@
 //! assert_eq!(docs.len(), 2);
 //! ```
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use crate::de::ParserConfig;
 use crate::error::Result;
 use crate::parser;

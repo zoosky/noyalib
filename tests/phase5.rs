@@ -1,5 +1,8 @@
 //! Phase 5 feature tests: Value merge utilities and error context.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str, Error, Location, Value};
 
 // ============================================================================

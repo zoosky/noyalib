@@ -37,6 +37,9 @@
 //! - **Three dependencies** — [`serde`], [`indexmap`], [`thiserror`]. That's
 //!   it.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

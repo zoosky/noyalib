@@ -4,6 +4,9 @@
 //! `Value` trees directly, with full control over security limits, duplicate
 //! key handling, and alias expansion tracking.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 mod events;
 mod loader;
 mod scanner;

@@ -1,6 +1,9 @@
 //! Coverage tests for the loader module — load_all, load_all_with_config,
 //! try_load_all, load_all_as.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::document::{load_all, load_all_as, load_all_with_config, try_load_all};
 use noyalib::{ParserConfig, Value};
 use serde::Deserialize;

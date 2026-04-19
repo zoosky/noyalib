@@ -3,6 +3,9 @@
 //! Validates that serialized output re-parses to an equivalent Value.
 //! Catches serialization bugs that produce invalid YAML.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

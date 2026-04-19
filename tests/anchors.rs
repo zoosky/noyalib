@@ -1,5 +1,8 @@
 //! Smart pointer anchor type tests.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::sync::Arc;
 
 use noyalib::{from_str, to_string, ArcAnchor, ArcWeakAnchor, RcAnchor, RcWeakAnchor};

@@ -2,6 +2,9 @@
 //!
 //! Run: `cargo bench --bench comparison`
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![allow(missing_docs, unused_results)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};

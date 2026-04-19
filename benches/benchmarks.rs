@@ -7,6 +7,9 @@
 //!
 //! Run with: cargo bench
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![allow(missing_docs, unused_results)]
 
 use std::io::Cursor;

@@ -26,6 +26,9 @@
 //! assert!(validate_core_schema(&value).is_ok());
 //! ```
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use crate::error::{Error, Result};
 use crate::value::{Number, Value};
 

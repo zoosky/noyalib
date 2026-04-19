@@ -3,6 +3,9 @@
 //! These tests exercise internal parser paths by feeding specific YAML patterns
 //! that trigger rare code branches in the scanner and event parser.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str, Value};
 
 // ── Complex key/value handling ──────────────────────────────────────────

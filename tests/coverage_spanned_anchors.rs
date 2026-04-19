@@ -1,6 +1,9 @@
 //! Coverage tests for Spanned<T> and anchor types (RcAnchor, ArcAnchor,
 //! RcWeakAnchor, ArcWeakAnchor).
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::rc::Rc;
 use std::sync::Arc;
 

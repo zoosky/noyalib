@@ -2,6 +2,9 @@
 //!
 //! Run with: `cargo run --example fmt_wrappers`
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::collections::BTreeMap;
 
 use noyalib::fmt::{Commented, FlowMap, FlowSeq, LitString, SpaceAfter};

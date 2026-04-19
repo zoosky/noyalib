@@ -2,6 +2,9 @@
 //!
 //! Run with: `cargo run --example parser_config`
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str_with_config, DuplicateKeyPolicy, ParserConfig, Value};
 
 fn main() {

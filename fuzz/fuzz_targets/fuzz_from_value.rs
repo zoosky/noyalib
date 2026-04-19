@@ -2,6 +2,9 @@
 //!
 //! Exercises the `from_value` deserializer and type coercion logic.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

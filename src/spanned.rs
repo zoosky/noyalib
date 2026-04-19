@@ -3,6 +3,9 @@
 //! `Spanned<T>` wraps a deserialized value and records the start/end
 //! [`Location`](crate::Location) in the original YAML source.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::fmt;
 use std::ops::Deref;
 

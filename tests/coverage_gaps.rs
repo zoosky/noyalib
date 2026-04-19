@@ -1,5 +1,8 @@
 //! Coverage gap tests — fills every identified P0/P1 coverage hole.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![allow(missing_docs)]
 
 use std::collections::BTreeMap;

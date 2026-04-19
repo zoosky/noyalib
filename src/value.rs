@@ -1,5 +1,8 @@
 //! YAML value types.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;

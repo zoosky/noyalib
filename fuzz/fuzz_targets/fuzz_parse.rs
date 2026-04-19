@@ -3,6 +3,9 @@
 //! Exercises the scanner, event parser, and loader on untrusted input.
 //! Panics are bugs; errors are expected.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

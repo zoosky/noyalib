@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 // YAML spec: Null and boolean representations
 // Note: yaml-rust2 follows YAML 1.2 Core Schema strictly:
 //   - Only "null" and "~" are null (not "Null" or "NULL")

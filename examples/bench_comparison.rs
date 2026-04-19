@@ -5,6 +5,9 @@
 //!
 //! Run with: cargo run --example benchmarks-comparison --release
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![allow(unused_results)]
 
 use std::time::{Duration, Instant};

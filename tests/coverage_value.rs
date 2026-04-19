@@ -1,6 +1,9 @@
 //! Value module coverage tests — Mapping utilities, consuming conversions,
 //! Number, MappingAny, Tag, etc.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::str::FromStr;
 
 use noyalib::{

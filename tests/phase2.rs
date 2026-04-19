@@ -1,5 +1,8 @@
 //! Phase 2 feature tests: anchors/aliases, merge keys, multi-document support.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::collections::BTreeMap;
 
 use noyalib::{from_str, load_all, load_all_as, try_load_all, Value};

@@ -2,6 +2,9 @@
 //!
 //! Converts a UTF-8 input string into a stream of [`Token`]s.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 // VecDeque replaced with Vec + consumed index for better cache locality.
 
 /// Byte-offset span in the source input.

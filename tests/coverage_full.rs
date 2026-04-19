@@ -3,6 +3,9 @@
 //! Organized by source module. Each test includes a comment referencing
 //! the file and line(s) it covers.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 #![allow(
     unused_comparisons,
     unused_results,

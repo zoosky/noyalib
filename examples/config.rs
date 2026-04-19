@@ -2,6 +2,9 @@
 //!
 //! Demonstrates using SerializerConfig to customize YAML output.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{to_string, to_string_with_config, SerializerConfig, Value};
 use serde::Serialize;
 

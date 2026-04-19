@@ -2,6 +2,9 @@
 //!
 //! Converts a stream of [`Token`]s into parsing [`Event`]s.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::collections::HashMap;
 
 use super::scanner::{ScalarStyle, ScanError, Scanner, Span, TokenKind};

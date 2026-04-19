@@ -28,6 +28,9 @@
 //! assert_eq!(version.to_string(), "dependencies.serde.version");
 //! ```
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::fmt::{self, Display};
 
 /// Represents a path to a location within a YAML document structure.

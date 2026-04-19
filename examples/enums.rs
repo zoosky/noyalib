@@ -2,6 +2,9 @@
 //!
 //! Demonstrates serializing various enum types.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
 

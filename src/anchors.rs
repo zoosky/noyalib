@@ -3,6 +3,9 @@
 //! These wrappers provide anchor semantics for `Rc` and `Arc` pointers,
 //! allowing YAML serialization of shared data structures.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;

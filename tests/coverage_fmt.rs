@@ -1,6 +1,9 @@
 //! Formatting wrapper coverage tests — into_inner, Deref, From, Debug, empty
 //! collections, edge cases.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use std::collections::BTreeMap;
 
 use noyalib::fmt::{

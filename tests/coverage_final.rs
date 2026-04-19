@@ -2,6 +2,9 @@
 //!
 //! Each test is named: `[module]_[scenario]_[expected_behavior]`.
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 use noyalib::{from_str, from_value, to_string, Mapping, Value};
 use serde::{Deserialize, Serialize};
 

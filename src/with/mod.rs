@@ -40,6 +40,9 @@
 //! //     delay: 5
 //! ```
 
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 pub mod singleton_map;
 pub mod singleton_map_optional;
 pub mod singleton_map_recursive;
