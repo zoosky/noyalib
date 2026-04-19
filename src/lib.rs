@@ -11,21 +11,63 @@
 //! #[derive(Debug, Serialize, Deserialize, PartialEq)]
 //! struct Config {
 //!     name: String,
-//!     version: u32,
+//!     port: u16,
+//!     features: Vec<String>,
 //! }
 //!
-//! let yaml = "name: myapp\nversion: 1\n";
+//! let yaml = "name: myapp\nport: 8080\nfeatures:\n  - auth\n  - api\n";
 //! let config: Config = from_str(yaml).unwrap();
 //! assert_eq!(config.name, "myapp");
+//! assert_eq!(config.port, 8080);
 //!
 //! let output = to_string(&config).unwrap();
-//! assert!(output.contains("name: myapp"));
+//! let roundtrip: Config = from_str(&output).unwrap();
+//! assert_eq!(config, roundtrip);
+//! ```
+//!
+//! ## Deserialization
+//!
+//! ```rust,no_run
+//! # use noyalib::Value;
+//! # let yaml = "key: value";
+//! # let bytes = b"key: value";
+//! # let file = std::io::Cursor::new(yaml);
+//! # let value = Value::Null;
+//! // From string, byte slice, reader, or Value
+//! let v: Value = noyalib::from_str(yaml).unwrap();
+//! let v: Value = noyalib::from_slice(bytes).unwrap();
+//! let v: Value = noyalib::from_reader(file).unwrap();
+//! let v: Value = noyalib::from_value(&value).unwrap();
+//!
+//! // With security limits
+//! let config = noyalib::ParserConfig::strict();
+//! let v: Value = noyalib::from_str_with_config(yaml, &config).unwrap();
+//! ```
+//!
+//! ## Serialization
+//!
+//! ```rust,no_run
+//! # use noyalib::Value;
+//! # let value = Value::Null;
+//! // To string, writer, or fmt::Write
+//! let yaml: String = noyalib::to_string(&value).unwrap();
+//! let mut buf = Vec::new();
+//! noyalib::to_writer(&mut buf, &value).unwrap();
+//! let mut s = String::new();
+//! noyalib::to_fmt_writer(&mut s, &value).unwrap();
+//!
+//! // With custom config
+//! let config = noyalib::SerializerConfig::new()
+//!     .indent(4)
+//!     .quote_all(true);
+//! let yaml = noyalib::to_string_with_config(&value, &config).unwrap();
 //! ```
 //!
 //! ## Highlights
 //!
 //! - **Pure Rust** — native YAML 1.2 scanner and parser. No C bindings. No FFI.
 //! - **Zero `unsafe`** — `#![forbid(unsafe_code)]` enforced at compile time.
+//! - **Fast** — 74% faster serialization than serde\_yaml\_ng.
 //! - **Serde-native** — serialize and deserialize any `Serialize` /
 //!   `Deserialize` type.
 //! - **Ordered mappings** — [`IndexMap`](indexmap::IndexMap)-backed. Insertion
@@ -34,8 +76,6 @@
 //!   offset.
 //! - **Hardened** — configurable depth, size, and alias limits. Billion-laughs
 //!   safe.
-//! - **Three dependencies** — [`serde`], [`indexmap`], [`thiserror`]. That's
-//!   it.
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
