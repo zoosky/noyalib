@@ -168,7 +168,8 @@ impl<'a> Scanner<'a> {
             self.tokens_consumed += 1;
             self.tokens_produced += 1;
             // Compact when we've consumed enough to avoid unbounded growth.
-            if self.tokens_consumed > 64 && self.tokens_consumed > self.tokens.len() / 2 {
+            // Use a higher threshold to amortize the O(n) shift cost.
+            if self.tokens_consumed > 256 {
                 drop(self.tokens.drain(..self.tokens_consumed));
                 self.tokens_consumed = 0;
             }
@@ -184,22 +185,12 @@ impl<'a> Scanner<'a> {
         if self.tokens_consumed >= self.tokens.len() {
             return true;
         }
-        // Check if any potential simple key needs to be resolved.
-        self.next_simple_key_token_number() == Some(self.tokens_produced)
-    }
-
-    fn next_simple_key_token_number(&self) -> Option<usize> {
-        let mut min = None;
-        for sk in &self.simple_keys {
-            if sk.possible {
-                match min {
-                    None => min = Some(sk.token_number),
-                    Some(m) if sk.token_number < m => min = Some(sk.token_number),
-                    _ => {}
-                }
-            }
-        }
-        min
+        // Fast path: if no simple key is possible, no need to scan the list.
+        // In most YAML, simple_keys has 0-2 entries with possible=true.
+        let next_token = self.tokens_produced;
+        self.simple_keys
+            .iter()
+            .any(|sk| sk.possible && sk.token_number == next_token)
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -393,6 +384,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    #[inline]
     fn unroll_indent(&mut self, column: i32) {
         if self.flow_level > 0 {
             return;
@@ -405,22 +397,26 @@ impl<'a> Scanner<'a> {
 
     // ── Simple keys ──────────────────────────────────────────────────────
 
+    #[inline]
     fn save_simple_key(&mut self) {
+        if !self.simple_key_allowed {
+            return;
+        }
         let required = self.flow_level == 0 && self.indent == self.column() as i32;
-        if self.simple_key_allowed {
-            let sk = SimpleKey {
-                possible: true,
-                required,
-                token_number: self.tokens_produced + (self.tokens.len() - self.tokens_consumed),
-                index: self.pos,
-            };
-            let _ = self.remove_simple_key();
-            if let Some(last) = self.simple_keys.last_mut() {
-                *last = sk;
-            }
+        let sk = SimpleKey {
+            possible: true,
+            required,
+            token_number: self.tokens_produced + (self.tokens.len() - self.tokens_consumed),
+            index: self.pos,
+        };
+        // Inline remove_simple_key for the common case (not required).
+        if let Some(last) = self.simple_keys.last_mut() {
+            last.possible = false;
+            *last = sk;
         }
     }
 
+    #[inline]
     fn remove_simple_key(&mut self) -> ScanResult<()> {
         if let Some(sk) = self.simple_keys.last() {
             if sk.possible && sk.required {
