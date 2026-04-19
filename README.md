@@ -91,12 +91,13 @@ features:
 
 noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde integration. No C bindings. No FFI. No unsafe blocks. The parser is hardened against denial-of-service attacks with configurable depth, size, and alias expansion limits.
 
-- **74% faster serialization** than serde\_yaml\_ng
-- **22% faster deserialization** on simple documents
+- **75% faster serialization** than serde\_yaml\_ng
+- **50% faster deserialization** on simple documents (streaming deserializer)
 - **201 KB WASM binary** -- runs in browsers via wasm-bindgen
 - **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu
 - **2,206 tests** -- unit, integration, doc-tests, property-based
 - **5 fuzz targets** -- adversarial input coverage
+- **42 branded examples** with animated spinner UI
 
 ---
 
@@ -106,18 +107,21 @@ Benchmarked on Apple M4, Rust 1.94 stable (lower is better):
 
 | Operation | noyalib | serde\_yaml\_ng | Improvement |
 | :--- | ---: | ---: | ---: |
-| **Serialize (simple)** | 366 ns | 1.43 us | **74% faster** |
-| **Serialize (nested)** | 2.93 us | 8.50 us | **66% faster** |
-| **Deserialize (simple)** | 2.20 us | 2.82 us | **22% faster** |
-| **Deserialize (nested)** | 14.3 us | 17.0 us | **16% faster** |
-| **Deserialize (large)** | 1.31 ms | 1.48 ms | **11% faster** |
+| **Serialize (simple)** | 358 ns | 1.41 us | **75% faster** |
+| **Serialize (nested)** | 2.80 us | 8.32 us | **66% faster** |
+| **Deserialize (simple)** | 1.39 us | 2.79 us | **50% faster** |
+| **Deserialize (nested)** | 9.16 us | 17.3 us | **47% faster** |
+| **Deserialize (large)** | 0.83 ms | 1.49 ms | **44% faster** |
+| **Typed deser (simple)** | 1.13 us | 2.31 us | **51% faster** |
+| **Typed deser (nested)** | 6.70 us | 12.5 us | **46% faster** |
 
 Reproduce: `cargo bench --bench comparison`.
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 20,481 lines across 21 modules |
+| **Source** | 23,384 lines across 22 modules |
 | **Test suite** | 2,206 tests + 69 doc-tests |
+| **Examples** | 42 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
 | **Dependencies** | 5 runtime |
 | **WASM binary** | 201 KB (release, LTO) |
@@ -129,7 +133,7 @@ Reproduce: `cargo bench --bench comparison`.
 
 | | |
 | :--- | :--- |
-| **Serde** | `from_str`, `from_slice`, `from_reader`, `to_string`, `to_writer`, `to_fmt_writer` -- all with `_with_config` variants. `to_value`, `from_value` for Value conversion. Multi-document: `load_all`, `load_all_as`, `to_string_multi`. |
+| **Serde** | `from_str`, `from_slice`, `from_reader`, `to_string`, `to_writer`, `to_fmt_writer` -- all with `_with_config` variants. `to_value`, `from_value` for Value conversion. Multi-document: `load_all`, `load_all_as`, `to_string_multi`. Streaming deserializer bypasses Value AST for typed targets. |
 | **Values** | 7-variant `Value` enum: Null, Bool, Number, String, Sequence, Mapping, Tagged. Path traversal via `get_path("server.host")`. Deep merge via `merge()` and `merge_concat()`. `MappingAny` for non-string keys. |
 | **Spans** | `Spanned<T>` tracks line, column, and byte offset for every deserialized field. Serializes transparently as `T`. |
 | **Formatting** | Per-value output control: `FlowSeq<T>`, `FlowMap<T>`, `LitStr`, `FoldStr`, `Commented<T>`, `SpaceAfter<T>`. |
@@ -373,7 +377,7 @@ let yaml = to_string_with_config(&value, &config)?;
 
 ## Examples
 
-Run all 40 examples:
+Run all 42 examples:
 
 ```bash
 cargo run --example all
@@ -423,6 +427,8 @@ cargo run --example all
 | | `comments` | Comment handling |
 | | `async_io` | Async integration |
 | | `recursive` | Self-referential types |
+| **Runtime** | `async_io` | Async integration (spawn\_blocking pattern) |
+| | `recursive` | Self-referential types (trees, org charts) |
 | **Bench** | `bench` | Performance overview |
 
 </details>
@@ -436,7 +442,7 @@ make              # check + clippy + test
 make test         # run all tests
 make clippy       # lint with Clippy
 make fmt          # check formatting
-make examples     # run all 40 examples
+make examples     # run all 42 examples
 make doc          # build API documentation
 make deny         # supply-chain audit
 make miri         # Miri memory checking (requires nightly)

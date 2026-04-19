@@ -67,7 +67,8 @@
 //!
 //! - **Pure Rust** — native YAML 1.2 scanner and parser. No C bindings. No FFI.
 //! - **Zero `unsafe`** — `#![forbid(unsafe_code)]` enforced at compile time.
-//! - **Fast** — 74% faster serialization than serde\_yaml\_ng.
+//! - **Fast** — 75% faster serialization, 50% faster deserialization than
+//!   serde\_yaml\_ng. Streaming deserializer bypasses the Value AST.
 //! - **Serde-native** — serialize and deserialize any `Serialize` /
 //!   `Deserialize` type.
 //! - **Ordered mappings** — [`IndexMap`](indexmap::IndexMap)-backed. Insertion
