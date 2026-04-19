@@ -71,28 +71,40 @@ logging:
 
         vec![
             format!(
-                "server.host: {:?}",
-                base.get_path("server.host").and_then(|v| v.as_str())
+                "server.host     = {}",
+                base.get_path("server.host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
             ),
             format!(
-                "server.port: {:?}",
-                base.get_path("server.port").and_then(|v| v.as_i64())
+                "server.port     = {}",
+                base.get_path("server.port")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
             ),
             format!(
-                "server.timeout: {:?}",
-                base.get_path("server.timeout").and_then(|v| v.as_i64())
+                "server.timeout  = {}",
+                base.get_path("server.timeout")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
             ),
             format!(
-                "server.ssl: {:?}",
-                base.get_path("server.ssl").and_then(|v| v.as_bool())
+                "server.ssl      = {}",
+                base.get_path("server.ssl")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
             ),
             format!(
-                "database.pool_size: {:?}",
-                base.get_path("database.pool_size").and_then(|v| v.as_i64())
+                "database.pool   = {}",
+                base.get_path("database.pool_size")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
             ),
             format!(
-                "logging.level: {:?}",
-                base.get_path("logging.level").and_then(|v| v.as_str())
+                "logging.level   = {}",
+                base.get_path("logging.level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
             ),
         ]
     });
@@ -101,21 +113,41 @@ logging:
         let mut list1: Value = from_str("items:\n  - a\n  - b\n").unwrap();
         let list2: Value = from_str("items:\n  - c\n  - d\n").unwrap();
 
-        let before1 = format!("List 1: {list1:?}");
-        let before2 = format!("List 2: {list2:?}");
+        let fmt_seq = |v: &Value| -> String {
+            v.get("items")
+                .and_then(|s| s.as_sequence())
+                .map(|seq| {
+                    let items: Vec<&str> = seq.iter().filter_map(|v| v.as_str()).collect();
+                    format!("[{}]", items.join(", "))
+                })
+                .unwrap_or_default()
+        };
 
+        let base = format!("base     = {}", fmt_seq(&list1));
+        let other = format!("other    = {}", fmt_seq(&list2));
         list1.merge_concat(list2);
+        let merged = format!("merged   = {}", fmt_seq(&list1));
 
-        vec![before1, before2, format!("After merge_concat: {list1:?}")]
+        vec![base, other, merged]
     });
 
     support::task_with_output("Sequence merge (replace)", || {
-        let mut base_seq: Value = from_str("tags:\n  - old1\n  - old2\n").unwrap();
-        let new_seq: Value = from_str("tags:\n  - new1\n  - new2\n  - new3\n").unwrap();
+        let mut base: Value = from_str("tags:\n  - old1\n  - old2\n").unwrap();
+        let new: Value = from_str("tags:\n  - new1\n  - new2\n  - new3\n").unwrap();
 
-        let before = format!("Before: {:?}", base_seq.get("tags"));
-        base_seq.merge(new_seq);
-        let after = format!("After merge: {:?}", base_seq.get("tags"));
+        let fmt_seq = |v: &Value| -> String {
+            v.get("tags")
+                .and_then(|s| s.as_sequence())
+                .map(|seq| {
+                    let items: Vec<&str> = seq.iter().filter_map(|v| v.as_str()).collect();
+                    format!("[{}]", items.join(", "))
+                })
+                .unwrap_or_default()
+        };
+
+        let before = format!("before = {}", fmt_seq(&base));
+        base.merge(new);
+        let after = format!("after  = {}", fmt_seq(&base));
 
         vec![before, after]
     });
