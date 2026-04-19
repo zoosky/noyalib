@@ -93,7 +93,7 @@ pub(crate) struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub(super) fn new(input: &'a str) -> Self {
+    pub(crate) fn new(input: &'a str) -> Self {
         Parser {
             scanner: Scanner::new(input),
             states: Vec::new(),
@@ -106,7 +106,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn next_event(&mut self) -> Result<Event<'a>, ScanError> {
+    pub(crate) fn next_event(&mut self) -> Result<Event<'a>, ScanError> {
         match self.state {
             State::StreamStart => self.parse_stream_start(),
             State::ImplicitDocumentStart => self.parse_document_start(true),

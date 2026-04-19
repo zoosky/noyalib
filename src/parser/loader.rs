@@ -496,7 +496,7 @@ fn value_into_key(value: Value) -> Result<String> {
 ///
 /// Accepts `Cow<str>` so that borrowed scalars (from the scanner fast path)
 /// avoid allocation when they resolve to a non-String type (null, bool, number).
-fn resolve_plain_scalar(
+pub(crate) fn resolve_plain_scalar(
     value: Cow<'_, str>,
     tag: &Option<(String, String)>,
     strict_booleans: bool,
@@ -559,7 +559,7 @@ fn resolve_plain_scalar(
 }
 
 /// Resolve a quoted scalar.
-fn resolve_quoted_scalar(
+pub(crate) fn resolve_quoted_scalar(
     value: Cow<'_, str>,
     tag: &Option<(String, String)>,
 ) -> std::result::Result<Value, String> {

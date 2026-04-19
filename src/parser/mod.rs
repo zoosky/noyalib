@@ -11,7 +11,9 @@ mod events;
 mod loader;
 mod scanner;
 
+pub(crate) use events::{Event, Parser};
 pub(crate) use loader::ParseConfig;
+pub(crate) use scanner::ScalarStyle;
 
 use crate::error::Result;
 use crate::span_context::SpanTree;

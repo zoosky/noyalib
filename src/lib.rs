@@ -97,6 +97,7 @@ mod schema;
 mod ser;
 pub(crate) mod span_context;
 pub(crate) mod spanned;
+mod streaming;
 mod value;
 pub mod with;
 

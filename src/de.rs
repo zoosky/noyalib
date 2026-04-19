@@ -216,7 +216,14 @@ pub fn from_str<T>(s: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    from_str_with_config(s, &ParserConfig::default())
+    let config = ParserConfig::default();
+    let parse_config = parser::ParseConfig::from(&config);
+    // Try the streaming path first — zero intermediate allocations.
+    if let Some(result) = crate::streaming::from_str_streaming(s, &parse_config) {
+        return result;
+    }
+    // Fallback: Value-based path (handles anchors, aliases, tags, Spanned<T>).
+    from_str_with_config(s, &config)
 }
 
 /// Deserialize a YAML string into a Rust type with custom configuration.
@@ -264,6 +271,11 @@ where
 {
     let s = std::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
     let parse_config = parser::ParseConfig::from(&ParserConfig::default());
+    // Try the streaming path first.
+    if let Some(result) = crate::streaming::from_str_streaming(s, &parse_config) {
+        return result;
+    }
+    // Fallback: Value-based path.
     let value = parser::parse_one_value(s, &parse_config)?;
     T::deserialize(Deserializer::new(&value))
 }
@@ -296,6 +308,11 @@ where
     let mut s = String::new();
     let _ = reader.read_to_string(&mut s)?;
     let parse_config = parser::ParseConfig::from(&ParserConfig::default());
+    // Try the streaming path first.
+    if let Some(result) = crate::streaming::from_str_streaming(&s, &parse_config) {
+        return result;
+    }
+    // Fallback: Value-based path.
     let value = parser::parse_one_value(&s, &parse_config)?;
     T::deserialize(Deserializer::new(&value))
 }
