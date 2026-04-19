@@ -74,7 +74,10 @@ fn main() {
     });
 
     support::task_with_output("Using builder pattern", || {
-        let builder_config = SerializerConfig::default().indent(3).document_start(true);
+        let builder_config = SerializerConfig::default()
+            .indent(2)
+            .document_start(true)
+            .block_scalars(true);
         let yaml = to_string_with_config(&config, &builder_config).unwrap();
         yaml.lines().map(|l| l.to_string()).collect()
     });
