@@ -12,6 +12,7 @@ readme = "README.md"
 keywords = ["yaml", "serde", "serialization", "parser", "safe"]
 categories = ["encoding", "parser-implementations", "config"]
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
+autoexamples = false
 include = [
     "/benches/**",
     "/Cargo.toml",

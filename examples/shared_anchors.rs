@@ -5,24 +5,25 @@
 //!
 //! Run: `cargo run --example shared_anchors`
 
+#[path = "support.rs"]
+mod support;
+
 use std::sync::Arc;
 
 use noyalib::{from_str, to_string, ArcAnchor, RcAnchor, Value};
 
-fn done(msg: &str) {
-    println!("  \x1b[32m+\x1b[0m {msg}");
-}
-
 fn main() {
-    println!("\n  \x1b[1mnoyalib shared anchors\x1b[0m\n");
+    support::header("noyalib -- shared_anchors");
 
-    let shared: RcAnchor<String> = RcAnchor::from("shared-config".to_string());
-    let _ = to_string(&shared).unwrap();
-    done("RcAnchor: serialize via Rc<T>");
+    support::task("RcAnchor: serialize via Rc<T>", || {
+        let shared: RcAnchor<String> = RcAnchor::from("shared-config".to_string());
+        let _ = to_string(&shared).unwrap();
+    });
 
-    let shared: ArcAnchor<i64> = ArcAnchor::from(42i64);
-    let _ = to_string(&shared).unwrap();
-    done("ArcAnchor: serialize via Arc<T>");
+    support::task("ArcAnchor: serialize via Arc<T>", || {
+        let shared: ArcAnchor<i64> = ArcAnchor::from(42i64);
+        let _ = to_string(&shared).unwrap();
+    });
 
     let yaml = r#"
 defaults: &defaults
@@ -39,25 +40,27 @@ production:
   host: db.example.com
 "#;
     let config: Value = from_str(yaml).unwrap();
-    assert_eq!(
-        config["development"]["adapter"],
-        Value::String("postgres".to_string())
-    );
-    done("anchor/alias merge: development inherits defaults");
 
-    assert_eq!(
-        config["production"]["host"],
-        Value::String("db.example.com".to_string())
-    );
-    done("anchor/alias merge: production overrides host");
+    support::task("anchor/alias merge: development inherits defaults", || {
+        assert_eq!(
+            config["development"]["adapter"],
+            Value::String("postgres".to_string())
+        );
+    });
 
-    let data = Arc::new("thread-safe".to_string());
-    let anchor: ArcAnchor<String> = ArcAnchor::from(data.clone());
-    assert_eq!(*anchor, "thread-safe");
-    done(&format!(
-        "ArcAnchor from Arc: strong_count={}",
-        Arc::strong_count(&data)
-    ));
+    support::task("anchor/alias merge: production overrides host", || {
+        assert_eq!(
+            config["production"]["host"],
+            Value::String("db.example.com".to_string())
+        );
+    });
 
-    println!("\n  \x1b[90mAll shared anchor patterns verified.\x1b[0m\n");
+    support::task("ArcAnchor from Arc", || {
+        let data = Arc::new("thread-safe".to_string());
+        let anchor: ArcAnchor<String> = ArcAnchor::from(data.clone());
+        assert_eq!(*anchor, "thread-safe");
+        assert_eq!(Arc::strong_count(&data), 2);
+    });
+
+    support::summary(5);
 }

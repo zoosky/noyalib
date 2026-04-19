@@ -6,13 +6,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
+#[path = "support.rs"]
+mod support;
+
 use noyalib::{load_all, load_all_as, try_load_all, Value};
 use serde::Deserialize;
 
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib multi-document example\n");
+fn main() {
+    support::header("noyalib -- multi_document");
 
-    // Multi-document YAML (documents separated by ---)
     let yaml = r#"---
 name: document1
 value: 100
@@ -24,47 +26,51 @@ name: document3
 value: 300
 "#;
 
-    // Using load_all to iterate over documents as Value
-    println!("=== Using load_all ===");
-    for (i, result) in load_all(yaml).unwrap().enumerate() {
-        match result {
-            Ok(doc) => {
-                println!("Document {}: {:?}", i + 1, doc);
-                if let Some(name) = doc.get("name") {
-                    println!("  Name: {}", name.as_str().unwrap_or("unknown"));
+    support::task_with_output("Using load_all to iterate documents", || {
+        let mut lines = Vec::new();
+        for (i, result) in load_all(yaml).unwrap().enumerate() {
+            match result {
+                Ok(doc) => {
+                    lines.push(format!("Document {}: {doc:?}", i + 1));
+                    if let Some(name) = doc.get("name") {
+                        lines.push(format!("  Name: {}", name.as_str().unwrap_or("unknown")));
+                    }
                 }
+                Err(e) => lines.push(format!("Error parsing document {}: {e}", i + 1)),
             }
-            Err(e) => println!("Error parsing document {}: {}", i + 1, e),
         }
-    }
+        lines
+    });
 
-    // Using try_load_all for early error detection
-    println!("\n=== Using try_load_all ===");
-    let iter = try_load_all(yaml)?;
-    println!("Found {} documents", iter.len());
-    println!("Is empty: {}", iter.is_empty());
+    support::task_with_output("Using try_load_all for early error detection", || {
+        let iter = try_load_all(yaml).unwrap();
+        let mut lines = vec![
+            format!("Found {} documents", iter.len()),
+            format!("Is empty: {}", iter.is_empty()),
+        ];
 
-    for value in iter.flatten() {
-        println!("Document: {:?}", value);
-    }
+        for value in iter.flatten() {
+            lines.push(format!("Document: {value:?}"));
+        }
+        lines
+    });
 
-    // Using load_all_as for typed deserialization
-    println!("\n=== Using load_all_as with typed structs ===");
+    support::task_with_output("Using load_all_as with typed structs", || {
+        #[derive(Debug, Deserialize)]
+        struct Document {
+            name: String,
+            value: i32,
+        }
 
-    #[derive(Debug, Deserialize)]
-    struct Document {
-        name: String,
-        value: i32,
-    }
+        let documents: Vec<Document> = load_all_as(yaml).unwrap();
+        documents
+            .iter()
+            .map(|doc| format!("Document: {} = {}", doc.name, doc.value))
+            .collect()
+    });
 
-    let documents: Vec<Document> = load_all_as(yaml)?;
-    for doc in &documents {
-        println!("Document: {} = {}", doc.name, doc.value);
-    }
-
-    // Multi-document with different types
-    println!("\n=== Different document types ===");
-    let mixed_yaml = r#"---
+    support::task_with_output("Different document types", || {
+        let mixed_yaml = r#"---
 42
 ---
 hello world
@@ -79,22 +85,23 @@ nested:
   b: 2
 "#;
 
-    for (i, result) in load_all(mixed_yaml).unwrap().enumerate() {
-        if let Ok(doc) = result {
-            let type_name = match &doc {
-                Value::Null => "null",
-                Value::Bool(_) => "bool",
-                Value::Number(_) => "number",
-                Value::String(_) => "string",
-                Value::Sequence(_) => "sequence",
-                Value::Mapping(_) => "mapping",
-                Value::Tagged(_) => "tagged",
-            };
-            println!("Document {} is a {}: {:?}", i + 1, type_name, doc);
+        let mut lines = Vec::new();
+        for (i, result) in load_all(mixed_yaml).unwrap().enumerate() {
+            if let Ok(doc) = result {
+                let type_name = match &doc {
+                    Value::Null => "null",
+                    Value::Bool(_) => "bool",
+                    Value::Number(_) => "number",
+                    Value::String(_) => "string",
+                    Value::Sequence(_) => "sequence",
+                    Value::Mapping(_) => "mapping",
+                    Value::Tagged(_) => "tagged",
+                };
+                lines.push(format!("Document {} is a {type_name}: {doc:?}", i + 1));
+            }
         }
-    }
+        lines
+    });
 
-    println!("\nMulti-document example completed successfully!");
-
-    Ok(())
+    support::summary(4);
 }

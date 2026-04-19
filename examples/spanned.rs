@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
+#[path = "support.rs"]
+mod support;
+
 use noyalib::{from_str, Spanned};
 use serde::Deserialize;
 
@@ -14,26 +17,31 @@ struct Config {
     port: Spanned<u16>,
 }
 
-fn main() -> Result<(), noyalib::Error> {
-    let yaml = "host: localhost\nport: 8080\n";
+fn main() {
+    support::header("noyalib -- spanned");
 
-    let config: Config = from_str(yaml)?;
+    support::task_with_output("Parse and inspect spanned values", || {
+        let yaml = "host: localhost\nport: 8080\n";
 
-    println!("host = {:?}", *config.host);
-    println!(
-        "  location: line {}, column {}, byte {}",
-        config.host.start.line(),
-        config.host.start.column(),
-        config.host.start.index(),
-    );
+        let config: Config = from_str(yaml).unwrap();
 
-    println!("port = {}", *config.port);
-    println!(
-        "  location: line {}, column {}, byte {}",
-        config.port.start.line(),
-        config.port.start.column(),
-        config.port.start.index(),
-    );
+        vec![
+            format!("host = {:?}", *config.host),
+            format!(
+                "  location: line {}, column {}, byte {}",
+                config.host.start.line(),
+                config.host.start.column(),
+                config.host.start.index(),
+            ),
+            format!("port = {}", *config.port),
+            format!(
+                "  location: line {}, column {}, byte {}",
+                config.port.start.line(),
+                config.port.start.column(),
+                config.port.start.index(),
+            ),
+        ]
+    });
 
-    Ok(())
+    support::summary(1);
 }

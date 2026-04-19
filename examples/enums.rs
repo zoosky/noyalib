@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
+#[path = "support.rs"]
+mod support;
+
 use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
 
@@ -29,53 +32,61 @@ enum Message {
     Data { id: u32, payload: String },
 }
 
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib enums example\n");
+fn main() {
+    support::header("noyalib -- enums");
 
-    // Struct variants
-    let shapes = vec![
-        Shape::Rectangle {
-            width: 10,
-            height: 20,
-        },
-        Shape::Circle { radius: 5.0 },
-        Shape::Triangle {
-            base: 8,
-            height: 12,
-        },
-    ];
+    support::task_with_output("Serialize and roundtrip struct variants", || {
+        let shapes = vec![
+            Shape::Rectangle {
+                width: 10,
+                height: 20,
+            },
+            Shape::Circle { radius: 5.0 },
+            Shape::Triangle {
+                base: 8,
+                height: 12,
+            },
+        ];
 
-    let yaml = to_string(&shapes)?;
-    println!("Shapes serialized:\n{}\n", yaml);
+        let yaml = to_string(&shapes).unwrap();
 
-    let parsed: Vec<Shape> = from_str(&yaml)?;
-    assert_eq!(shapes, parsed);
+        let parsed: Vec<Shape> = from_str(&yaml).unwrap();
+        assert_eq!(shapes, parsed);
 
-    // Unit variants
-    let status = Status::Active;
-    let yaml = to_string(&status)?;
-    println!("Status serialized: {}", yaml);
+        let mut lines = vec!["Shapes serialized:".to_string()];
+        lines.extend(yaml.lines().map(|l| l.to_string()));
+        lines
+    });
 
-    let parsed: Status = from_str(&yaml)?;
-    assert_eq!(status, parsed);
+    support::task_with_output("Serialize and roundtrip unit variants", || {
+        let status = Status::Active;
+        let yaml = to_string(&status).unwrap();
 
-    // Mixed variants
-    let messages = vec![
-        Message::Text("Hello".to_string()),
-        Message::Number(42),
-        Message::Data {
-            id: 1,
-            payload: "test".to_string(),
-        },
-    ];
+        let parsed: Status = from_str(&yaml).unwrap();
+        assert_eq!(status, parsed);
 
-    let yaml = to_string(&messages)?;
-    println!("\nMessages serialized:\n{}\n", yaml);
+        vec![format!("Status serialized: {}", yaml.trim_end())]
+    });
 
-    let parsed: Vec<Message> = from_str(&yaml)?;
-    assert_eq!(messages, parsed);
+    support::task_with_output("Serialize and roundtrip mixed variants", || {
+        let messages = vec![
+            Message::Text("Hello".to_string()),
+            Message::Number(42),
+            Message::Data {
+                id: 1,
+                payload: "test".to_string(),
+            },
+        ];
 
-    println!("All enum tests passed!");
+        let yaml = to_string(&messages).unwrap();
 
-    Ok(())
+        let parsed: Vec<Message> = from_str(&yaml).unwrap();
+        assert_eq!(messages, parsed);
+
+        let mut lines = vec!["Messages serialized:".to_string()];
+        lines.extend(yaml.lines().map(|l| l.to_string()));
+        lines
+    });
+
+    support::summary(3);
 }

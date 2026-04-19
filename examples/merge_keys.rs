@@ -7,18 +7,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
+#[path = "support.rs"]
+mod support;
+
 use noyalib::{from_str, to_string, Value};
 
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib merge keys example\n");
+fn main() {
+    support::header("noyalib -- merge_keys");
 
-    // =========================================================================
-    // Example 1: Basic merge key usage
-    // =========================================================================
-    println!("=== Example 1: Basic merge key ===\n");
-
-    // YAML with anchors and merge keys
-    let yaml = r#"
+    support::task_with_output("Basic merge key", || {
+        let yaml = r#"
 defaults: &defaults
   timeout: 30
   retries: 3
@@ -35,54 +33,52 @@ production:
   replicas: 5
 "#;
 
-    println!("Original YAML:");
-    println!("{}", yaml);
+        let mut lines = vec!["Original YAML:".to_string()];
+        lines.extend(yaml.trim().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    let mut value: Value = from_str(yaml)?;
+        let mut value: Value = from_str(yaml).unwrap();
 
-    // Before apply_merge, the merge key is present as a literal
-    println!("Before apply_merge:");
-    println!("{}\n", to_string(&value)?);
+        lines.push("Before apply_merge:".to_string());
+        lines.extend(to_string(&value).unwrap().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    // Apply merge to expand all merge keys
-    value.apply_merge()?;
+        value.apply_merge().unwrap();
 
-    println!("After apply_merge:");
-    println!("{}", to_string(&value)?);
+        lines.push("After apply_merge:".to_string());
+        lines.extend(to_string(&value).unwrap().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    // Verify values are merged correctly
-    println!("Verification:");
-    println!(
-        "  development.timeout: {:?} (overridden from 30 to 60)",
-        value
-            .get_path("development.timeout")
-            .and_then(|v| v.as_i64())
-    );
-    println!(
-        "  development.retries: {:?} (inherited)",
-        value
-            .get_path("development.retries")
-            .and_then(|v| v.as_i64())
-    );
-    println!(
-        "  development.debug: {:?} (local)",
-        value
-            .get_path("development.debug")
-            .and_then(|v| v.as_bool())
-    );
-    println!(
-        "  production.replicas: {:?} (local)",
-        value
-            .get_path("production.replicas")
-            .and_then(|v| v.as_i64())
-    );
+        lines.push("Verification:".to_string());
+        lines.push(format!(
+            "  development.timeout: {:?} (overridden from 30 to 60)",
+            value
+                .get_path("development.timeout")
+                .and_then(|v| v.as_i64())
+        ));
+        lines.push(format!(
+            "  development.retries: {:?} (inherited)",
+            value
+                .get_path("development.retries")
+                .and_then(|v| v.as_i64())
+        ));
+        lines.push(format!(
+            "  development.debug: {:?} (local)",
+            value
+                .get_path("development.debug")
+                .and_then(|v| v.as_bool())
+        ));
+        lines.push(format!(
+            "  production.replicas: {:?} (local)",
+            value
+                .get_path("production.replicas")
+                .and_then(|v| v.as_i64())
+        ));
+        lines
+    });
 
-    // =========================================================================
-    // Example 2: Multiple merge sources
-    // =========================================================================
-    println!("\n=== Example 2: Multiple merge sources ===\n");
-
-    let yaml = r#"
+    support::task_with_output("Multiple merge sources", || {
+        let yaml = r#"
 base: &base
   adapter: postgres
 
@@ -99,31 +95,30 @@ database:
   database: myapp
 "#;
 
-    println!("YAML with multiple merge sources:");
-    println!("{}", yaml);
+        let mut lines = vec!["YAML with multiple merge sources:".to_string()];
+        lines.extend(yaml.trim().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    let mut value: Value = from_str(yaml)?;
-    value.apply_merge()?;
+        let mut value: Value = from_str(yaml).unwrap();
+        value.apply_merge().unwrap();
 
-    println!("After apply_merge:");
-    println!("{}", to_string(&value)?);
+        lines.push("After apply_merge:".to_string());
+        lines.extend(to_string(&value).unwrap().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    // Show all merged values
-    println!("Database config after merge:");
-    if let Some(db) = value.get("database") {
-        if let Some(map) = db.as_mapping() {
-            for (k, v) in map.iter() {
-                println!("  {}: {}", k, v);
+        lines.push("Database config after merge:".to_string());
+        if let Some(db) = value.get("database") {
+            if let Some(map) = db.as_mapping() {
+                for (k, v) in map.iter() {
+                    lines.push(format!("  {k}: {v}"));
+                }
             }
         }
-    }
+        lines
+    });
 
-    // =========================================================================
-    // Example 3: Nested merge keys
-    // =========================================================================
-    println!("\n=== Example 3: Nested merge keys ===\n");
-
-    let yaml = r#"
+    support::task_with_output("Nested merge keys", || {
+        let yaml = r#"
 shared: &shared
   logging:
     level: info
@@ -140,21 +135,20 @@ service_b:
   name: service-b
 "#;
 
-    println!("YAML with nested structures:");
-    println!("{}", yaml);
+        let mut lines = vec!["YAML with nested structures:".to_string()];
+        lines.extend(yaml.trim().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    let mut value: Value = from_str(yaml)?;
-    value.apply_merge()?;
+        let mut value: Value = from_str(yaml).unwrap();
+        value.apply_merge().unwrap();
 
-    println!("After apply_merge:");
-    println!("{}", to_string(&value)?);
+        lines.push("After apply_merge:".to_string());
+        lines.extend(to_string(&value).unwrap().lines().map(|l| l.to_string()));
+        lines
+    });
 
-    // =========================================================================
-    // Example 4: Merge in sequences
-    // =========================================================================
-    println!("\n=== Example 4: Merge within sequences ===\n");
-
-    let yaml = r#"
+    support::task_with_output("Merge within sequences", || {
+        let yaml = r#"
 defaults: &defaults
   type: worker
   replicas: 1
@@ -171,21 +165,20 @@ services:
     replicas: 2
 "#;
 
-    println!("YAML with merge keys in sequences:");
-    println!("{}", yaml);
+        let mut lines = vec!["YAML with merge keys in sequences:".to_string()];
+        lines.extend(yaml.trim().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    let mut value: Value = from_str(yaml)?;
-    value.apply_merge()?;
+        let mut value: Value = from_str(yaml).unwrap();
+        value.apply_merge().unwrap();
 
-    println!("After apply_merge:");
-    println!("{}", to_string(&value)?);
+        lines.push("After apply_merge:".to_string());
+        lines.extend(to_string(&value).unwrap().lines().map(|l| l.to_string()));
+        lines
+    });
 
-    // =========================================================================
-    // Example 5: Merge precedence
-    // =========================================================================
-    println!("\n=== Example 5: Merge precedence ===\n");
-
-    let yaml = r#"
+    support::task_with_output("Merge precedence", || {
+        let yaml = r#"
 first: &first
   a: 1
   b: 2
@@ -201,30 +194,32 @@ result:
   c: 300
 "#;
 
-    println!("YAML demonstrating merge precedence:");
-    println!("{}", yaml);
+        let mut lines = vec!["YAML demonstrating merge precedence:".to_string()];
+        lines.extend(yaml.trim().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    let mut value: Value = from_str(yaml)?;
-    value.apply_merge()?;
+        let mut value: Value = from_str(yaml).unwrap();
+        value.apply_merge().unwrap();
 
-    println!("After apply_merge:");
-    println!("{}", to_string(&value)?);
+        lines.push("After apply_merge:".to_string());
+        lines.extend(to_string(&value).unwrap().lines().map(|l| l.to_string()));
+        lines.push(String::new());
 
-    println!("Result values:");
-    println!(
-        "  a: {:?} (from first)",
-        value.get_path("result.a").and_then(|v| v.as_i64())
-    );
-    println!(
-        "  b: {:?} (from first, not second)",
-        value.get_path("result.b").and_then(|v| v.as_i64())
-    );
-    println!(
-        "  c: {:?} (local override)",
-        value.get_path("result.c").and_then(|v| v.as_i64())
-    );
+        lines.push("Result values:".to_string());
+        lines.push(format!(
+            "  a: {:?} (from first)",
+            value.get_path("result.a").and_then(|v| v.as_i64())
+        ));
+        lines.push(format!(
+            "  b: {:?} (from first, not second)",
+            value.get_path("result.b").and_then(|v| v.as_i64())
+        ));
+        lines.push(format!(
+            "  c: {:?} (local override)",
+            value.get_path("result.c").and_then(|v| v.as_i64())
+        ));
+        lines
+    });
 
-    println!("\nMerge keys example completed successfully!");
-
-    Ok(())
+    support::summary(5);
 }

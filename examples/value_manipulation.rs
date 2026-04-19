@@ -5,12 +5,11 @@
 //!
 //! Run: `cargo run --example value_manipulation`
 
+#[path = "support.rs"]
+mod support;
+
 use noyalib::{from_str, from_value, to_value, Mapping, MappingAny, Value};
 use serde::{Deserialize, Serialize};
-
-fn done(msg: &str) {
-    println!("  \x1b[32m+\x1b[0m {msg}");
-}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Server {
@@ -19,51 +18,57 @@ struct Server {
 }
 
 fn main() {
-    println!("\n  \x1b[1mnoyalib value manipulation\x1b[0m\n");
+    support::header("noyalib -- value_manipulation");
 
     let server = Server {
         host: "localhost".to_string(),
         port: 8080,
     };
-    let value = to_value(&server).unwrap();
-    done("to_value: struct -> Value");
 
-    let parsed: Server = from_value(&value).unwrap();
-    assert_eq!(parsed, server);
-    done("from_value: Value -> struct");
+    support::task("to_value: struct -> Value", || {
+        let _value = to_value(&server).unwrap();
+    });
+
+    let value = to_value(&server).unwrap();
+
+    support::task("from_value: Value -> struct", || {
+        let parsed: Server = from_value(&value).unwrap();
+        assert_eq!(parsed, server);
+    });
 
     let yaml = "servers:\n  - host: alpha\n    port: 80\n  - host: beta\n    port: 443\n";
-    let doc: Value = from_str(yaml).unwrap();
-    let host = doc.get_path("servers[1].host").unwrap();
-    done(&format!("get_path: servers[1].host = {host}"));
 
-    let mut doc: Value = from_str(yaml).unwrap();
-    if let Some(port) = doc.get_path_mut("servers[0].port") {
-        *port = Value::from(9090);
-    }
-    done(&format!(
-        "get_path_mut: port changed to {}",
-        doc.get_path("servers[0].port").unwrap()
-    ));
+    support::task("get_path: servers[1].host", || {
+        let doc: Value = from_str(yaml).unwrap();
+        let _host = doc.get_path("servers[1].host").unwrap();
+    });
 
-    let val = &doc["servers"][0]["host"];
-    done(&format!("ValueIndex: servers[0].host = {val}"));
+    support::task("get_path_mut: change port to 9090", || {
+        let mut doc: Value = from_str(yaml).unwrap();
+        if let Some(port) = doc.get_path_mut("servers[0].port") {
+            *port = Value::from(9090);
+        }
+        assert_eq!(doc.get_path("servers[0].port").unwrap(), &Value::from(9090));
+    });
 
-    let yaml = "1: one\n2: two\n3: three\n";
-    let map: MappingAny = from_str(yaml).unwrap();
-    done(&format!(
-        "MappingAny: {} entries with numeric keys",
-        map.len()
-    ));
+    support::task("ValueIndex: servers[0].host", || {
+        let doc: Value = from_str(yaml).unwrap();
+        let _val = &doc["servers"][0]["host"];
+    });
 
-    let mut m = Mapping::new();
-    let _ = m.insert("zebra", Value::from(1));
-    let _ = m.insert("alpha", Value::from(2));
-    m.sort_keys();
-    done(&format!(
-        "Mapping.sort_keys: first key = {:?}",
-        m.first().unwrap().0
-    ));
+    support::task("MappingAny: numeric keys", || {
+        let yaml = "1: one\n2: two\n3: three\n";
+        let map: MappingAny = from_str(yaml).unwrap();
+        assert_eq!(map.len(), 3);
+    });
 
-    println!("\n  \x1b[90mAll value manipulations verified.\x1b[0m\n");
+    support::task("Mapping.sort_keys", || {
+        let mut m = Mapping::new();
+        let _ = m.insert("zebra", Value::from(1));
+        let _ = m.insert("alpha", Value::from(2));
+        m.sort_keys();
+        assert_eq!(m.first().unwrap().0, "alpha");
+    });
+
+    support::summary(7);
 }

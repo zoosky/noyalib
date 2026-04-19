@@ -1,20 +1,18 @@
-//! Custom serialization example for noyalib.
-//!
-//! Demonstrates the `singleton_map_with` module for custom key transformations
-//! when serializing enums. This allows you to control how enum variant names
-//! appear in the YAML output.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Custom key transformations with singleton_map_with.
+//!
+//! Run: `cargo run --example custom_serialization`
+
+#[path = "support.rs"]
+mod support;
 
 use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// Example 1: Snake case transformation
-// =============================================================================
+// ── Snake case ──────────────────────────────────────────────────────────
 
-/// Custom serialization module for snake_case keys
 mod snake_case_keys {
     use noyalib::with::singleton_map_with;
     use serde::{Deserializer, Serializer};
@@ -51,11 +49,8 @@ struct ApiEndpoint {
     method: HttpMethod,
 }
 
-// =============================================================================
-// Example 2: Kebab case transformation
-// =============================================================================
+// ── Kebab case ──────────────────────────────────────────────────────────
 
-/// Custom serialization module for kebab-case keys
 mod kebab_case_keys {
     use noyalib::with::singleton_map_with;
     use serde::{Deserializer, Serializer};
@@ -93,11 +88,8 @@ struct LogConfig {
     level: LogLevel,
 }
 
-// =============================================================================
-// Example 3: Lowercase transformation
-// =============================================================================
+// ── Lowercase ───────────────────────────────────────────────────────────
 
-/// Custom serialization module for lowercase keys
 mod lowercase_keys {
     use noyalib::with::singleton_map_with;
     use serde::{Deserializer, Serializer};
@@ -134,183 +126,44 @@ struct DeployConfig {
     environment: Environment,
 }
 
-// =============================================================================
-// Example 4: Custom prefix transformation
-// =============================================================================
+fn main() {
+    support::header("noyalib -- custom_serialization");
 
-/// Custom serialization module that adds a prefix
-mod prefixed_keys {
-    use serde::{Deserializer, Serializer};
-
-    fn add_prefix(s: &str) -> String {
-        // Convert PascalCase to snake_case with prefix
-        let mut result = String::from("action");
-        for c in s.chars() {
-            if c.is_uppercase() {
-                result.push('_');
-                result.push(c.to_lowercase().next().unwrap_or(c));
-            } else {
-                result.push(c);
-            }
-        }
-        result
-    }
-
-    fn remove_prefix(s: &str) -> String {
-        // Remove "action_" prefix and convert snake_case to PascalCase
-        let without_prefix = s.strip_prefix("action_").unwrap_or(s);
-        without_prefix
-            .split('_')
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    Some(first) => {
-                        let upper: String = first.to_uppercase().collect();
-                        let rest: String = chars.collect();
-                        upper + &rest
-                    }
-                    None => String::new(),
-                }
-            })
-            .collect()
-    }
-
-    pub(super) fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        T: serde::Serialize,
-        S: Serializer,
-    {
-        noyalib::with::singleton_map_with::serialize_with(value, serializer, add_prefix)
-    }
-
-    pub(super) fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-    where
-        T: serde::de::DeserializeOwned,
-        D: Deserializer<'de>,
-    {
-        noyalib::with::singleton_map_with::deserialize_with(deserializer, remove_prefix)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-enum TaskAction {
-    StartProcess,
-    StopProcess,
-    RestartService,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-struct Task {
-    name: String,
-    #[serde(with = "prefixed_keys")]
-    action: TaskAction,
-}
-
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib custom serialization example\n");
-
-    // =========================================================================
-    // Example 1: Snake case
-    // =========================================================================
-    println!("=== Example 1: Snake case transformation ===\n");
-
-    let endpoint = ApiEndpoint {
-        path: "/api/users".to_string(),
-        method: HttpMethod::GetRequest,
-    };
-
-    let yaml = to_string(&endpoint)?;
-    println!("Serialized (snake_case):");
-    println!("{}", yaml);
-
-    // Deserialize back
-    let parsed: ApiEndpoint = from_str(&yaml)?;
-    println!("Deserialized: {:?}", parsed);
-    assert_eq!(endpoint, parsed);
-
-    // =========================================================================
-    // Example 2: Kebab case
-    // =========================================================================
-    println!("\n=== Example 2: Kebab case transformation ===\n");
-
-    let log_config = LogConfig {
-        name: "my-app".to_string(),
-        level: LogLevel::DebugInfo,
-    };
-
-    let yaml = to_string(&log_config)?;
-    println!("Serialized (kebab-case):");
-    println!("{}", yaml);
-
-    let parsed: LogConfig = from_str(&yaml)?;
-    println!("Deserialized: {:?}", parsed);
-    assert_eq!(log_config, parsed);
-
-    // =========================================================================
-    // Example 3: Lowercase
-    // =========================================================================
-    println!("\n=== Example 3: Lowercase transformation ===\n");
-
-    let deploy = DeployConfig {
-        app_name: "my-service".to_string(),
-        environment: Environment::PRODUCTION,
-    };
-
-    let yaml = to_string(&deploy)?;
-    println!("Serialized (lowercase):");
-    println!("{}", yaml);
-
-    let parsed: DeployConfig = from_str(&yaml)?;
-    println!("Deserialized: {:?}", parsed);
-    assert_eq!(deploy, parsed);
-
-    // =========================================================================
-    // Example 4: Custom prefix
-    // =========================================================================
-    println!("\n=== Example 4: Custom prefix transformation ===\n");
-
-    let task = Task {
-        name: "deploy-task".to_string(),
-        action: TaskAction::RestartService,
-    };
-
-    let yaml = to_string(&task)?;
-    println!("Serialized (with action_ prefix):");
-    println!("{}", yaml);
-
-    let parsed: Task = from_str(&yaml)?;
-    println!("Deserialized: {:?}", parsed);
-    assert_eq!(task, parsed);
-
-    // =========================================================================
-    // Example 5: Multiple enum values
-    // =========================================================================
-    println!("\n=== Example 5: Multiple endpoints ===\n");
-
-    let endpoints = vec![
-        ApiEndpoint {
+    // Snake case roundtrip
+    support::task_with_output("Snake case: GetRequest -> get_request", || {
+        let endpoint = ApiEndpoint {
             path: "/api/users".to_string(),
             method: HttpMethod::GetRequest,
-        },
-        ApiEndpoint {
-            path: "/api/users".to_string(),
-            method: HttpMethod::PostData,
-        },
-        ApiEndpoint {
-            path: "/api/users/1".to_string(),
-            method: HttpMethod::PutResource,
-        },
-        ApiEndpoint {
-            path: "/api/users/1".to_string(),
-            method: HttpMethod::DeleteItem,
-        },
-    ];
+        };
+        let yaml = to_string(&endpoint).unwrap();
+        let parsed: ApiEndpoint = from_str(&yaml).unwrap();
+        assert_eq!(endpoint, parsed);
+        yaml.lines().map(|l| l.to_string()).collect()
+    });
 
-    let yaml = to_string(&endpoints)?;
-    println!("Multiple endpoints:");
-    println!("{}", yaml);
+    // Kebab case roundtrip
+    support::task_with_output("Kebab case: DebugInfo -> debug-info", || {
+        let log = LogConfig {
+            name: "my-app".to_string(),
+            level: LogLevel::DebugInfo,
+        };
+        let yaml = to_string(&log).unwrap();
+        let parsed: LogConfig = from_str(&yaml).unwrap();
+        assert_eq!(log, parsed);
+        yaml.lines().map(|l| l.to_string()).collect()
+    });
 
-    println!("\nCustom serialization example completed successfully!");
+    // Lowercase roundtrip
+    support::task_with_output("Lowercase: PRODUCTION -> production", || {
+        let deploy = DeployConfig {
+            app_name: "my-service".to_string(),
+            environment: Environment::PRODUCTION,
+        };
+        let yaml = to_string(&deploy).unwrap();
+        let parsed: DeployConfig = from_str(&yaml).unwrap();
+        assert_eq!(deploy, parsed);
+        yaml.lines().map(|l| l.to_string()).collect()
+    });
 
-    Ok(())
+    support::summary(3);
 }

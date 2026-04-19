@@ -1,16 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 //! Value type example for noyalib.
 //!
 //! Demonstrates working with the dynamic Value type.
 
-// SPDX-License-Identifier: MIT OR Apache-2.0
-// Copyright (c) 2026 Noyalib. All rights reserved.
+#[path = "support.rs"]
+mod support;
 
 use noyalib::{from_str, to_string, Value};
 
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib Value type example\n");
+fn main() {
+    support::header("noyalib -- value");
 
-    // Parse YAML into a Value
     let yaml = r#"
 name: my-config
 version: 1
@@ -26,52 +28,61 @@ settings:
   debug: false
 "#;
 
-    let value: Value = from_str(yaml)?;
-    println!("Parsed Value: {:?}\n", value);
+    let value: Value = support::task("Parse YAML into Value", || from_str(yaml).unwrap());
 
-    // Access fields dynamically
-    if let Some(name) = value.get("name") {
-        println!("Name: {}", name.as_str().unwrap_or("unknown"));
-    }
+    support::task_with_output("Access fields dynamically", || {
+        vec![
+            format!(
+                "name    = {}",
+                value.get("name").and_then(|v| v.as_str()).unwrap_or("?")
+            ),
+            format!(
+                "version = {}",
+                value.get("version").and_then(|v| v.as_i64()).unwrap_or(0)
+            ),
+            format!(
+                "enabled = {}",
+                value
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            ),
+            format!(
+                "ratio   = {}",
+                value.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.0)
+            ),
+        ]
+    });
 
-    if let Some(version) = value.get("version") {
-        println!("Version: {}", version.as_i64().unwrap_or(0));
-    }
-
-    if let Some(enabled) = value.get("enabled") {
-        println!("Enabled: {}", enabled.as_bool().unwrap_or(false));
-    }
-
-    if let Some(ratio) = value.get("ratio") {
-        println!("Ratio: {}", ratio.as_f64().unwrap_or(0.0));
-    }
-
-    // Access nested values
-    if let Some(tags) = value.get("tags") {
-        println!("\nTags:");
-        if let Some(seq) = tags.as_sequence() {
-            for (i, tag) in seq.iter().enumerate() {
-                println!("  [{}]: {}", i, tag.as_str().unwrap_or(""));
+    support::task_with_output("Access nested values", || {
+        let mut lines = Vec::new();
+        if let Some(tags) = value.get("tags").and_then(|v| v.as_sequence()) {
+            for (i, tag) in tags.iter().enumerate() {
+                lines.push(format!("tags[{i}] = {}", tag.as_str().unwrap_or("?")));
             }
         }
-    }
-
-    if let Some(settings) = value.get("settings") {
-        println!("\nSettings:");
-        if let Some(timeout) = settings.get("timeout") {
-            println!("  timeout: {}", timeout.as_i64().unwrap_or(0));
+        if let Some(settings) = value.get("settings") {
+            lines.push(format!(
+                "settings.timeout = {}",
+                settings
+                    .get("timeout")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+            ));
         }
-        if let Some(retries) = settings.get("retries") {
-            println!("  retries: {}", retries.as_i64().unwrap_or(0));
-        }
-    }
+        lines
+    });
 
-    // Serialize Value back to YAML
-    println!("\nSerialized back to YAML:");
-    let output = to_string(&value)?;
-    println!("{}", output);
+    support::task_with_output("Missing key returns None (no panic)", || {
+        vec![
+            format!("value.get(\"missing\") = {:?}", value.get("missing")),
+            format!("value.get_path(\"a.b.c\") = {:?}", value.get_path("a.b.c")),
+        ]
+    });
 
-    println!("Value type test passed!");
+    support::task("Serialize Value back to YAML", || {
+        let _ = to_string(&value).unwrap();
+    });
 
-    Ok(())
+    support::summary(5);
 }

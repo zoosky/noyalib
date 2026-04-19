@@ -1,9 +1,12 @@
-//! Basic usage example for noyalib.
-//!
-//! Demonstrates simple serialization and deserialization of structs.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Basic usage: serialize and deserialize structs.
+//!
+//! Run: `cargo run --example basic`
+
+#[path = "support.rs"]
+mod support;
 
 use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
@@ -15,27 +18,20 @@ struct Person {
     city: String,
 }
 
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib basic example\n");
+fn main() {
+    support::header("noyalib -- basic");
 
-    // Create a person
     let person = Person {
         name: "John Doe".to_string(),
         age: 30,
         city: "New York".to_string(),
     };
 
-    // Serialize to YAML
-    let yaml = to_string(&person)?;
-    println!("Serialized YAML:\n{}\n", yaml);
+    let yaml = support::task("Serialize struct to YAML", || to_string(&person).unwrap());
 
-    // Deserialize back
-    let parsed: Person = from_str(&yaml)?;
-    println!("Deserialized: {:?}\n", parsed);
+    let parsed: Person = support::task("Deserialize YAML to struct", || from_str(&yaml).unwrap());
 
-    // Verify round-trip
-    assert_eq!(person, parsed);
-    println!("Round-trip successful!");
+    support::task("Verify round-trip", || assert_eq!(person, parsed));
 
-    Ok(())
+    support::summary(3);
 }

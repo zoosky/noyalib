@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
+#[path = "support.rs"]
+mod support;
+
 use noyalib::{from_str, to_string};
 use serde::{Deserialize, Serialize};
 
@@ -41,67 +44,67 @@ struct Company {
     headquarters: Address,
 }
 
-fn main() -> Result<(), noyalib::Error> {
-    println!("noyalib nested structures example\n");
+fn main() {
+    support::header("noyalib -- nested");
 
-    let company = Company {
-        name: "TechCorp".to_string(),
-        founded: 2020,
-        headquarters: Address {
-            street: "123 Main St".to_string(),
-            city: "San Francisco".to_string(),
-            country: "USA".to_string(),
-            zip: Some("94102".to_string()),
-        },
-        employees: vec![
-            Employee {
-                id: 1,
-                name: "Alice Smith".to_string(),
-                title: "CEO".to_string(),
-                address: Address {
-                    street: "456 Oak Ave".to_string(),
-                    city: "San Francisco".to_string(),
-                    country: "USA".to_string(),
-                    zip: Some("94103".to_string()),
-                },
-                contact: Contact {
-                    email: "alice@techcorp.com".to_string(),
-                    phone: Some("+1-555-0100".to_string()),
-                },
-                skills: vec!["leadership".to_string(), "strategy".to_string()],
-                active: true,
+    support::task("Serialize and roundtrip nested structures", || {
+        let company = Company {
+            name: "TechCorp".to_string(),
+            founded: 2020,
+            headquarters: Address {
+                street: "123 Main St".to_string(),
+                city: "San Francisco".to_string(),
+                country: "USA".to_string(),
+                zip: Some("94102".to_string()),
             },
-            Employee {
-                id: 2,
-                name: "Bob Jones".to_string(),
-                title: "CTO".to_string(),
-                address: Address {
-                    street: "789 Pine Rd".to_string(),
-                    city: "Oakland".to_string(),
-                    country: "USA".to_string(),
-                    zip: None,
+            employees: vec![
+                Employee {
+                    id: 1,
+                    name: "Alice Smith".to_string(),
+                    title: "CEO".to_string(),
+                    address: Address {
+                        street: "456 Oak Ave".to_string(),
+                        city: "San Francisco".to_string(),
+                        country: "USA".to_string(),
+                        zip: Some("94103".to_string()),
+                    },
+                    contact: Contact {
+                        email: "alice@techcorp.com".to_string(),
+                        phone: Some("+1-555-0100".to_string()),
+                    },
+                    skills: vec!["leadership".to_string(), "strategy".to_string()],
+                    active: true,
                 },
-                contact: Contact {
-                    email: "bob@techcorp.com".to_string(),
-                    phone: None,
+                Employee {
+                    id: 2,
+                    name: "Bob Jones".to_string(),
+                    title: "CTO".to_string(),
+                    address: Address {
+                        street: "789 Pine Rd".to_string(),
+                        city: "Oakland".to_string(),
+                        country: "USA".to_string(),
+                        zip: None,
+                    },
+                    contact: Contact {
+                        email: "bob@techcorp.com".to_string(),
+                        phone: None,
+                    },
+                    skills: vec![
+                        "rust".to_string(),
+                        "systems".to_string(),
+                        "architecture".to_string(),
+                    ],
+                    active: true,
                 },
-                skills: vec![
-                    "rust".to_string(),
-                    "systems".to_string(),
-                    "architecture".to_string(),
-                ],
-                active: true,
-            },
-        ],
-    };
+            ],
+        };
 
-    let yaml = to_string(&company)?;
-    println!("Company serialized:\n{}\n", yaml);
+        let yaml = to_string(&company).unwrap();
+        println!("Company serialized:\n{}\n", yaml);
 
-    let parsed: Company = from_str(&yaml)?;
-    assert_eq!(company, parsed);
+        let parsed: Company = from_str(&yaml).unwrap();
+        assert_eq!(company, parsed);
+    });
 
-    println!("Nested structure test passed!");
-
-    Ok(())
+    support::summary(1);
 }
