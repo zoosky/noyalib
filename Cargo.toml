@@ -125,6 +125,26 @@ name = "shared_anchors"
 path = "examples/shared_anchors.rs"
 
 [[example]]
+name = "custom_tags"
+path = "examples/custom_tags.rs"
+
+[[example]]
+name = "binary_data"
+path = "examples/binary_data.rs"
+
+[[example]]
+name = "serde_interop"
+path = "examples/serde_interop.rs"
+
+[[example]]
+name = "flattened_data"
+path = "examples/flattened_data.rs"
+
+[[example]]
+name = "env_expansion"
+path = "examples/env_expansion.rs"
+
+[[example]]
 name = "run_all"
 path = "examples/run_all.rs"
 

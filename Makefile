@@ -47,8 +47,9 @@ examples:
 	           value_manipulation config serializer_config \
 	           strict_parsing parser_config error_handling \
 	           error_paths schema_validation anchors shared_anchors \
-	           merge merge_keys multi_document spanned \
-	           fmt_wrappers singleton_map custom_serialization; do \
+	           merge merge_keys multi_document custom_tags \
+	           binary_data serde_interop flattened_data env_expansion \
+	           spanned fmt_wrappers singleton_map custom_serialization; do \
 	    printf "\033[90m%-25s\033[0m" "$$ex" ; \
 	    if cargo run --example $$ex --quiet 2>/dev/null 1>/dev/null; then \
 	        printf "\033[32m[ok]\033[0m\n" ; \
