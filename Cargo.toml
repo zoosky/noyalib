@@ -103,6 +103,30 @@ path = "examples/parser_config.rs"
 name = "fmt_wrappers"
 path = "examples/fmt_wrappers.rs"
 
+[[example]]
+name = "io_formats"
+path = "examples/io_formats.rs"
+
+[[example]]
+name = "value_manipulation"
+path = "examples/value_manipulation.rs"
+
+[[example]]
+name = "serializer_config"
+path = "examples/serializer_config.rs"
+
+[[example]]
+name = "strict_parsing"
+path = "examples/strict_parsing.rs"
+
+[[example]]
+name = "shared_anchors"
+path = "examples/shared_anchors.rs"
+
+[[example]]
+name = "run_all"
+path = "examples/run_all.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 indexmap = { version = "2.14", features = ["serde"] }
