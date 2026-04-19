@@ -1,3 +1,6 @@
+[workspace]
+exclude = ["examples/wasm", "fuzz"]
+
 [package]
 name = "noyalib"
 version = "0.0.1"
@@ -125,6 +128,9 @@ path = "examples/global.rs"
 name = "bench"
 path = "examples/bench.rs"
 ## ── Future-Proof ──
+[[example]]
+name = "portable"
+path = "examples/portable.rs"
 [[example]]
 name = "mask"
 path = "examples/mask.rs"

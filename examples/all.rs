@@ -40,6 +40,7 @@ const EXAMPLES: &[&str] = &[
     "pipes",
     "global",
     // Future-Proof
+    "portable",
     "mask",
     "patch",
     "suggest",
