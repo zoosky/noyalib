@@ -124,6 +124,20 @@ path = "examples/global.rs"
 [[example]]
 name = "bench"
 path = "examples/bench.rs"
+## ── Future-Proof ──
+[[example]]
+name = "mask"
+path = "examples/mask.rs"
+[[example]]
+name = "patch"
+path = "examples/patch.rs"
+[[example]]
+name = "suggest"
+path = "examples/suggest.rs"
+[[example]]
+name = "schema_ext"
+path = "examples/schema_ext.rs"
+
 [[example]]
 name = "all"
 path = "examples/all.rs"

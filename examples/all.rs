@@ -10,12 +10,42 @@ use std::time::Instant;
 
 const EXAMPLES: &[&str] = &[
     // Core
-    "hello", "std", "variants", "deep", "dynamic", "modify", "tags", // Spec
-    "alias", "smart", "overlay", "inherit", "stream", "types", "binary",
+    "hello",
+    "std",
+    "variants",
+    "deep",
+    "dynamic",
+    "modify",
+    "tags", // Spec
+    "alias",
+    "smart",
+    "overlay",
+    "inherit",
+    "stream",
+    "types",
+    "binary",
     // Logic & Security
-    "strict", "secure", "schema", "env", // DX
-    "errors", "trace", "source", "style", // Advanced
-    "emit", "rename", "flatten", "bridge", "pipes", "global", "bench",
+    "strict",
+    "secure",
+    "schema",
+    "env", // DX
+    "errors",
+    "trace",
+    "source",
+    "style", // Advanced
+    "emit",
+    "rename",
+    "flatten",
+    "bridge",
+    "pipes",
+    "global",
+    // Future-Proof
+    "mask",
+    "patch",
+    "suggest",
+    "schema_ext",
+    // Bench (last — longest)
+    "bench",
 ];
 
 fn main() {

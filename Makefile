@@ -47,7 +47,8 @@ examples:
 	           alias smart overlay inherit stream types binary \
 	           strict secure schema env \
 	           errors trace source style \
-	           emit rename flatten bridge pipes global bench; do \
+	           emit rename flatten bridge pipes global \
+	           mask patch suggest schema_ext bench; do \
 	    printf "\033[90m%-25s\033[0m" "$$ex" ; \
 	    if cargo run --example $$ex --quiet 2>/dev/null 1>/dev/null; then \
 	        printf "\033[32m[ok]\033[0m\n" ; \
