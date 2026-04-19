@@ -807,16 +807,18 @@ fn write_mapping(
             write_indent(output, config.indent * indent);
         }
         write_string(output, key, indent, config);
-        output.push_str(": ");
 
         match value {
             Value::Mapping(m) if !m.is_empty() => {
+                output.push(':');
                 write_value(output, value, indent + 1, false, config)?;
             }
             Value::Sequence(s) if !s.is_empty() => {
+                output.push(':');
                 write_value(output, value, indent + 1, false, config)?;
             }
             _ => {
+                output.push_str(": ");
                 write_value(output, value, indent, false, config)?;
             }
         }
