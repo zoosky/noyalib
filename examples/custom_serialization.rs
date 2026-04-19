@@ -126,11 +126,51 @@ struct DeployConfig {
     environment: Environment,
 }
 
+// ── Comparison: default vs singleton_map vs singleton_map_with ────────
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+enum Status {
+    Active,
+    Inactive,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct DefaultStyle {
+    status: Status,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct SingletonStyle {
+    #[serde(with = "noyalib::with::singleton_map")]
+    status: Status,
+}
+
 fn main() {
     support::header("noyalib -- custom_serialization");
 
+    // Show the three enum representation styles
+    support::task_with_output("Default enum: status: Active (simple string)", || {
+        let v = DefaultStyle {
+            status: Status::Active,
+        };
+        let yaml = to_string(&v).unwrap();
+        let parsed: DefaultStyle = from_str(&yaml).unwrap();
+        assert_eq!(v, parsed);
+        yaml.lines().map(|l| l.to_string()).collect()
+    });
+
+    support::task_with_output("Singleton map: status: {Active: null} (tagged)", || {
+        let v = SingletonStyle {
+            status: Status::Active,
+        };
+        let yaml = to_string(&v).unwrap();
+        let parsed: SingletonStyle = from_str(&yaml).unwrap();
+        assert_eq!(v, parsed);
+        yaml.lines().map(|l| l.to_string()).collect()
+    });
+
     // Snake case roundtrip
-    support::task_with_output("Snake case: GetRequest -> get_request", || {
+    support::task_with_output("With transform: get_request (snake_case key)", || {
         let endpoint = ApiEndpoint {
             path: "/api/users".to_string(),
             method: HttpMethod::GetRequest,
@@ -165,5 +205,5 @@ fn main() {
         yaml.lines().map(|l| l.to_string()).collect()
     });
 
-    support::summary(3);
+    support::summary(5);
 }
