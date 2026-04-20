@@ -115,6 +115,8 @@ noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde
 
 Benchmarked on Apple M4, Rust 1.94 stable (lower is better):
 
+### vs serde\_yaml\_ng
+
 | Operation | noyalib | serde\_yaml\_ng | Improvement |
 | :--- | ---: | ---: | ---: |
 | **Serialize (simple)** | 358 ns | 1.41 us | **75% faster** |
@@ -125,7 +127,25 @@ Benchmarked on Apple M4, Rust 1.94 stable (lower is better):
 | **Typed deser (simple)** | 1.13 us | 2.31 us | **51% faster** |
 | **Typed deser (nested)** | 6.70 us | 12.5 us | **46% faster** |
 
-Reproduce: `cargo bench --bench comparison`.
+### Competitor matrix (Kubernetes-style payload)
+
+| Library | Time | vs noyalib |
+| :--- | ---: | ---: |
+| **noyalib** | **18.0 us** | — |
+| yaml-rust2 | 27.7 us | 35% slower |
+| serde\_yaml\_ng | 32.6 us | 45% slower |
+| serde-saphyr | 39.0 us | 54% slower |
+
+### Architecture validation
+
+| Benchmark | Result |
+| :--- | :--- |
+| **Streaming vs AST** (K8s typed) | 12.0 us vs 18.7 us — **36% faster** bypassing Value |
+| **Zero-copy scalars** (plain payload) | 4.87 us vs 6.58 us — **26% fewer allocations** |
+| **Span overhead** (typed, no spans) | 4.83 us vs 8.57 us — **77% overhead saved** when spans disabled |
+| **Security rejection** (billion laughs) | Rejected in **<3 us** with `ParserConfig::strict()` |
+
+Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architecture`.
 
 | Metric | Value |
 | :--- | :--- |
