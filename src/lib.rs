@@ -77,6 +77,8 @@
 //!   offset.
 //! - **Hardened** — configurable depth, size, and alias limits. Billion-laughs
 //!   safe.
+//! - **`no_std`** — works with `alloc` only (`default-features = false`).
+//! - **`miette`** — optional rich terminal diagnostics (`--features miette`).
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.

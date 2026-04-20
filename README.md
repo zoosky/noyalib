@@ -97,7 +97,8 @@ noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde
 - **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu
 - **2,206 tests** -- unit, integration, doc-tests, property-based
 - **5 fuzz targets** -- adversarial input coverage
-- **42 branded examples** with animated spinner UI
+- **45 branded examples** with animated spinner UI
+- **`#![no_std]` support** -- works with `alloc` only for embedded/WASM
 
 ---
 
@@ -119,9 +120,9 @@ Reproduce: `cargo bench --bench comparison`.
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 23,384 lines across 22 modules |
+| **Source** | 23,866 lines across 22 modules |
 | **Test suite** | 2,206 tests + 69 doc-tests |
-| **Examples** | 42 branded examples + WASM demo |
+| **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
 | **Dependencies** | 5 runtime |
 | **WASM binary** | 201 KB (release, LTO) |
@@ -144,6 +145,7 @@ Reproduce: `cargo bench --bench comparison`.
 | **Compat** | YAML 1.1 legacy boolean mode (`legacy_booleans`): resolves `yes`/`no`/`on`/`off`/`y`/`n` as booleans for Docker Compose, GitHub Actions, and other YAML 1.1 tooling. Solves the "Norway problem". |
 | **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
 | **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. Optional `miette::Diagnostic` integration (`--features miette`) for rich terminal diagnostics with error codes, help text, and source spans. |
+| **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without std. I/O functions (`from_reader`, `to_writer`) require `std` feature. |
 
 ---
 
@@ -378,7 +380,7 @@ let yaml = to_string_with_config(&value, &config)?;
 
 ## Examples
 
-Run all 42 examples:
+Run all 45 examples:
 
 ```bash
 cargo run --example all
@@ -428,6 +430,9 @@ cargo run --example all
 | | `comments` | Comment handling |
 | | `async_io` | Async integration |
 | | `recursive` | Self-referential types |
+| **Platform** | `diagnostic` | miette::Diagnostic integration |
+| | `nostd` | #![no\_std] compatibility guide |
+| | `preserve` | CST preservation foundations |
 | **Runtime** | `async_io` | Async integration (spawn\_blocking pattern) |
 | | `recursive` | Self-referential types (trees, org charts) |
 | **Bench** | `bench` | Performance overview |
@@ -443,7 +448,7 @@ make              # check + clippy + test
 make test         # run all tests
 make clippy       # lint with Clippy
 make fmt          # check formatting
-make examples     # run all 42 examples
+make examples     # run all 45 examples
 make doc          # build API documentation
 make deny         # supply-chain audit
 make miri         # Miri memory checking (requires nightly)
