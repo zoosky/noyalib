@@ -102,6 +102,12 @@ fn bench_deserialize(c: &mut Criterion) {
                 let _ = yaml_rust2::YamlLoader::load_from_str(black_box(input)).unwrap();
             });
         });
+
+        group.bench_with_input(BenchmarkId::new("serde-saphyr", name), yaml, |b, input| {
+            b.iter(|| {
+                let _: serde_json::Value = serde_saphyr::from_str(black_box(input)).unwrap();
+            });
+        });
     }
 
     group.finish();

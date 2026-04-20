@@ -196,6 +196,7 @@ criterion = "0.5"
 proptest = "1.11"
 serde_yaml_ng = "0.10"
 yaml-rust2 = "0.9"
+serde-saphyr = "0.0.24"
 
 [[bench]]
 name = "benchmarks"
@@ -203,6 +204,10 @@ harness = false
 
 [[bench]]
 name = "comparison"
+harness = false
+
+[[bench]]
+name = "architecture"
 harness = false
 
 [features]
