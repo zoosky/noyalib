@@ -42,6 +42,15 @@
 noyalib = "0.0.1"
 ```
 
+### `no_std` support
+
+```toml
+[dependencies]
+noyalib = { version = "0.0.1", default-features = false }
+```
+
+Requires `alloc`. Only `from_reader` and `to_writer` require the `std` feature.
+
 ### Build from source
 
 ```bash
@@ -144,7 +153,7 @@ Reproduce: `cargo bench --bench comparison`.
 | **Security** | 7 configurable limits in `ParserConfig`: depth, document size, alias expansions, mapping keys, sequence length, duplicate key policy, strict booleans. `ParserConfig::strict()` for untrusted input. Billion-laughs safe via `max_alias_expansions` with `saturating_add` overflow protection. |
 | **Compat** | YAML 1.1 legacy boolean mode (`legacy_booleans`): resolves `yes`/`no`/`on`/`off`/`y`/`n` as booleans for Docker Compose, GitHub Actions, and other YAML 1.1 tooling. Solves the "Norway problem". |
 | **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
-| **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. Optional `miette::Diagnostic` integration (`--features miette`) for rich terminal diagnostics with error codes, help text, and source spans. |
+| **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. `miette::Diagnostic` integration included (`--features miette`) for rich terminal reports with error codes, actionable help text, and source spans. |
 | **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without std. I/O functions (`from_reader`, `to_writer`) require `std` feature. |
 
 ---
