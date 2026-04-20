@@ -3,11 +3,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::fmt;
-use std::sync::Arc;
+use crate::prelude::*;
 
 /// A specialized `Result` type for noyalib operations.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// A location within a YAML document.
 ///
@@ -124,7 +123,8 @@ pub enum Error {
         location: Location,
     },
 
-    /// I/O error.
+    /// I/O error (requires std feature).
+    #[cfg(feature = "std")]
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -308,7 +308,7 @@ impl Error {
         let line_num_width = (location.line).to_string().len().max(3);
         let column = location.column.saturating_sub(1);
 
-        use std::fmt::Write;
+        use core::fmt::Write;
         let mut output = String::new();
 
         // Write directly into the buffer to avoid intermediate String allocations.
@@ -467,7 +467,7 @@ impl serde::ser::Error for Error {
 // standard Rust diagnostics ecosystem. CLI tools using `miette::Report` get
 // rich terminal output with source spans for free.
 
-#[cfg(feature = "miette")]
+#[cfg(all(feature = "miette", feature = "std"))]
 impl miette::Diagnostic for Error {
     fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
         let code = match self {

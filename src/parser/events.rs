@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::borrow::Cow;
-use std::collections::HashMap;
+use crate::prelude::*;
+use indexmap::IndexMap;
 
 use super::scanner::{ScalarStyle, ScanError, Scanner, Span, TokenKind};
 
@@ -88,7 +88,7 @@ pub(crate) struct Parser<'a> {
     current_span: Span,
     has_current: bool,
     /// Anchor name registry.
-    marks: HashMap<String, usize>,
+    marks: IndexMap<String, usize>,
     next_anchor_id: usize,
 }
 
@@ -101,7 +101,7 @@ impl<'a> Parser<'a> {
             current_kind: None,
             current_span: Span::default(),
             has_current: false,
-            marks: HashMap::new(),
+            marks: IndexMap::new(),
             next_anchor_id: 0,
         }
     }

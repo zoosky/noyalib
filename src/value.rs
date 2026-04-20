@@ -3,12 +3,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::borrow::Cow;
-use std::cmp::Ordering;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::{Index, IndexMut};
-use std::str::FromStr;
+use crate::prelude::*;
+use core::cmp::Ordering;
+use core::hash::{Hash, Hasher};
+use core::ops::{Index, IndexMut};
+use core::str::FromStr;
 
 use indexmap::map::{IntoIter, Iter, IterMut, Keys, Values, ValuesMut};
 use indexmap::IndexMap;
@@ -1013,6 +1012,7 @@ impl fmt::Display for ParseNumberError {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for ParseNumberError {}
 
 impl FromStr for Number {
@@ -1367,10 +1367,10 @@ impl Ord for Tag {
 }
 
 impl TryFrom<&[u8]> for Tag {
-    type Error = std::str::Utf8Error;
+    type Error = core::str::Utf8Error;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        std::str::from_utf8(bytes).map(Tag::new)
+        core::str::from_utf8(bytes).map(Tag::new)
     }
 }
 
@@ -2239,12 +2239,12 @@ fn parse_path(path: &str) -> Vec<PathSegment> {
         match c {
             '.' => {
                 if !current.is_empty() {
-                    segments.push(PathSegment::Key(std::mem::take(&mut current)));
+                    segments.push(PathSegment::Key(core::mem::take(&mut current)));
                 }
             }
             '[' => {
                 if !current.is_empty() {
-                    segments.push(PathSegment::Key(std::mem::take(&mut current)));
+                    segments.push(PathSegment::Key(core::mem::take(&mut current)));
                 }
                 // Parse the index
                 let mut index_str = String::new();
@@ -2296,7 +2296,7 @@ impl Eq for Value {}
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Discriminant for variant type
-        std::mem::discriminant(self).hash(state);
+        core::mem::discriminant(self).hash(state);
         match self {
             Value::Null => {}
             Value::Bool(b) => b.hash(state),
@@ -2772,7 +2772,7 @@ impl<'de> serde::de::IntoDeserializer<'de, crate::Error> for &'de Value {
 }
 
 struct ValueSeqAccess<'de> {
-    iter: std::slice::Iter<'de, Value>,
+    iter: core::slice::Iter<'de, Value>,
 }
 
 impl<'de> serde::de::SeqAccess<'de> for ValueSeqAccess<'de> {
@@ -2902,8 +2902,14 @@ impl<'de> serde::Deserializer<'de> for &'de Value {
         if name == crate::spanned::SPANNED_TYPE_NAME {
             let p: *const Value = self;
             let ptr = p as usize;
+            #[cfg(feature = "std")]
             let (start, end) = crate::span_context::lookup_span(ptr)
                 .unwrap_or((crate::Location::default(), crate::Location::default()));
+            #[cfg(not(feature = "std"))]
+            let (start, end) = {
+                let _ = ptr;
+                (crate::Location::default(), crate::Location::default())
+            };
             return visitor.visit_map(crate::de::SpannedMapAccess::new(start, end, self));
         }
         serde::Deserializer::deserialize_map(self, visitor)

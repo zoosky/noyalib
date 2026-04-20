@@ -3,14 +3,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::io::Read;
+use crate::prelude::*;
 
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 
 use crate::error::{Error, Location, Result};
+#[cfg(feature = "std")]
+use crate::span_context;
 use crate::value::{Mapping, Number, Sequence, Value};
-use crate::{parser, span_context, spanned};
+use crate::{parser, spanned};
 
 /// Policy for handling duplicate keys in YAML mappings.
 ///
@@ -271,14 +273,24 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let parse_config = parser::ParseConfig::from(config);
-    let (value, span_tree) = parser::parse_one(s, &parse_config)?;
-    let spans = span_context::build_span_map(&value, &span_tree);
-    let ctx = span_context::SpanContext {
-        spans,
-        source: s.into(),
-    };
-    let _guard = span_context::set_span_context(ctx);
-    T::deserialize(Deserializer::new(&value))
+
+    #[cfg(feature = "std")]
+    {
+        let (value, span_tree) = parser::parse_one(s, &parse_config)?;
+        let spans = span_context::build_span_map(&value, &span_tree);
+        let ctx = span_context::SpanContext {
+            spans,
+            source: s.into(),
+        };
+        let _guard = span_context::set_span_context(ctx);
+        T::deserialize(Deserializer::new(&value))
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        let value = parser::parse_one_value(s, &parse_config)?;
+        T::deserialize(Deserializer::new(&value))
+    }
 }
 
 /// Deserialize a YAML byte slice into a Rust type.
@@ -291,7 +303,7 @@ pub fn from_slice<T>(slice: &[u8]) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let s = std::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
+    let s = core::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
     let parse_config = parser::ParseConfig::from(&ParserConfig::default());
     // Try the streaming path first.
     if let Some(result) = crate::streaming::from_str_streaming(s, &parse_config) {
@@ -312,7 +324,7 @@ pub fn from_slice_with_config<T>(slice: &[u8], config: &ParserConfig) -> Result<
 where
     T: for<'de> Deserialize<'de>,
 {
-    let s = std::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
+    let s = core::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
     from_str_with_config(s, config)
 }
 
@@ -322,10 +334,11 @@ where
 ///
 /// Returns an error if reading fails, the YAML is invalid,
 /// or the data cannot be deserialized into the target type.
+#[cfg(feature = "std")]
 pub fn from_reader<T, R>(mut reader: R) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
-    R: Read,
+    R: std::io::Read,
 {
     let mut s = String::new();
     let _ = reader.read_to_string(&mut s)?;
@@ -362,11 +375,13 @@ where
 ///
 /// let value: Value = from_reader_with_config(reader, &config).unwrap();
 /// ```
+#[cfg(feature = "std")]
 pub fn from_reader_with_config<T, R>(reader: R, config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
-    R: Read,
+    R: std::io::Read,
 {
+    use std::io::Read as _;
     // Read with size limit
     let mut buffer = Vec::new();
     let bytes_read = reader
@@ -380,7 +395,7 @@ where
         )));
     }
 
-    let s = std::str::from_utf8(&buffer).map_err(|e| Error::Parse(e.to_string()))?;
+    let s = core::str::from_utf8(&buffer).map_err(|e| Error::Parse(e.to_string()))?;
     from_str_with_config(s, config)
 }
 
@@ -697,8 +712,14 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         if name == spanned::SPANNED_TYPE_NAME {
             let p: *const Value = self.value;
             let ptr = p as usize;
+            #[cfg(feature = "std")]
             let (start, end) = span_context::lookup_span(ptr)
                 .unwrap_or((Location::default(), Location::default()));
+            #[cfg(not(feature = "std"))]
+            let (start, end) = {
+                let _ = ptr;
+                (Location::default(), Location::default())
+            };
             return visitor.visit_map(SpannedMapAccess::new(start, end, self.value));
         }
         self.deserialize_map(visitor)
@@ -746,7 +767,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
 }
 
 struct SeqDeserializer<'de> {
-    iter: std::slice::Iter<'de, Value>,
+    iter: core::slice::Iter<'de, Value>,
 }
 
 impl<'de> SeqDeserializer<'de> {

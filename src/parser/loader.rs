@@ -5,14 +5,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::collections::HashMap;
-
-use std::borrow::Cow;
+use crate::prelude::*;
+use indexmap::IndexMap;
 
 use super::events::{Event, Parser};
 use super::scanner::ScalarStyle;
 use crate::de::{DuplicateKeyPolicy, ParserConfig};
 use crate::error::{Error, Result};
+#[cfg(feature = "std")]
 use crate::span_context::SpanTree;
 use crate::value::{Mapping, Number, Value};
 
@@ -47,6 +47,7 @@ impl From<&ParserConfig> for ParseConfig {
     }
 }
 
+#[cfg(feature = "std")]
 /// Build a `Vec<(Value, SpanTree)>` from a YAML input string.
 pub(crate) fn load(input: &str, config: &ParseConfig) -> Result<Vec<(Value, SpanTree)>> {
     // Check document length limit.
@@ -74,6 +75,7 @@ pub(crate) fn load(input: &str, config: &ParseConfig) -> Result<Vec<(Value, Span
     Ok(loader.into_docs())
 }
 
+#[cfg(feature = "std")]
 /// Build a single `(Value, SpanTree)` from a YAML input string.
 pub(crate) fn load_one(input: &str, config: &ParseConfig) -> Result<(Value, SpanTree)> {
     let docs = load(input, config)?;
@@ -94,6 +96,7 @@ enum LoaderState {
     Done,
 }
 
+#[cfg(feature = "std")]
 /// Stack frame for the tree builder.
 #[derive(Debug)]
 enum Frame {
@@ -121,12 +124,13 @@ enum Frame {
     },
 }
 
+#[cfg(feature = "std")]
 /// YAML tree builder with security limits.
 struct Loader<'a> {
     docs: Vec<(Value, SpanTree)>,
     stack: Vec<Frame>,
-    anchor_map: HashMap<String, Value>,
-    anchor_span_map: HashMap<String, SpanTree>,
+    anchor_map: IndexMap<String, Value>,
+    anchor_span_map: IndexMap<String, SpanTree>,
     alias_count: usize,
     alias_bytes: usize,
     config: &'a ParseConfig,
@@ -134,13 +138,14 @@ struct Loader<'a> {
     in_document: bool,
 }
 
+#[cfg(feature = "std")]
 impl<'a> Loader<'a> {
     fn new(config: &'a ParseConfig) -> Self {
         Loader {
             docs: Vec::new(),
             stack: Vec::new(),
-            anchor_map: HashMap::new(),
-            anchor_span_map: HashMap::new(),
+            anchor_map: IndexMap::new(),
+            anchor_span_map: IndexMap::new(),
             alias_count: 0,
             alias_bytes: 0,
             config,
@@ -376,10 +381,10 @@ impl<'a> Loader<'a> {
 
                 // Check for merge key.
                 if key == MERGE_KEY {
-                    let map = std::mem::replace(map, Mapping::new());
-                    let span_entries = std::mem::take(span_entries);
+                    let map = core::mem::replace(map, Mapping::new());
+                    let span_entries = core::mem::take(span_entries);
                     let anchor = anchor.clone();
-                    let merge_values = std::mem::take(merge_values);
+                    let merge_values = core::mem::take(merge_values);
                     let start_offset = *start_offset;
                     let frame = Frame::MappingValue {
                         map,
@@ -405,10 +410,10 @@ impl<'a> Loader<'a> {
                     return Err(Error::DuplicateKey(key));
                 }
 
-                let map = std::mem::replace(map, Mapping::new());
-                let span_entries = std::mem::take(span_entries);
+                let map = core::mem::replace(map, Mapping::new());
+                let span_entries = core::mem::take(span_entries);
                 let anchor = anchor.clone();
-                let merge_values = std::mem::take(merge_values);
+                let merge_values = core::mem::take(merge_values);
                 let start_offset = *start_offset;
                 let frame = Frame::MappingValue {
                     map,
@@ -462,10 +467,10 @@ impl<'a> Loader<'a> {
                 }
 
                 // Transition back to MappingKey.
-                let map = std::mem::replace(map, Mapping::new());
-                let span_entries = std::mem::take(span_entries);
+                let map = core::mem::replace(map, Mapping::new());
+                let span_entries = core::mem::take(span_entries);
                 let anchor = anchor.clone();
-                let merge_values = std::mem::take(merge_values);
+                let merge_values = core::mem::take(merge_values);
                 let start_offset = *start_offset;
                 let frame = Frame::MappingKey {
                     map,
@@ -508,7 +513,7 @@ pub(crate) fn resolve_plain_scalar(
     tag: &Option<(String, String)>,
     strict_booleans: bool,
     legacy_booleans: bool,
-) -> std::result::Result<Value, String> {
+) -> core::result::Result<Value, String> {
     // If there's a tag, handle it.
     if let Some((handle, suffix)) = tag {
         return resolve_tagged_scalar(&value, handle, suffix);
@@ -583,7 +588,7 @@ pub(crate) fn resolve_plain_scalar(
 pub(crate) fn resolve_quoted_scalar(
     value: Cow<'_, str>,
     tag: &Option<(String, String)>,
-) -> std::result::Result<Value, String> {
+) -> core::result::Result<Value, String> {
     if let Some((handle, suffix)) = tag {
         return resolve_tagged_scalar(&value, handle, suffix);
     }
@@ -596,7 +601,7 @@ fn resolve_tagged_scalar(
     value: &str,
     handle: &str,
     suffix: &str,
-) -> std::result::Result<Value, String> {
+) -> core::result::Result<Value, String> {
     // Build full tag URI.
     let full_tag = match handle {
         "!!" => format!("tag:yaml.org,2002:{suffix}"),
@@ -772,6 +777,33 @@ pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Val
     Ok(docs.swap_remove(0))
 }
 
+/// Build all `Value` documents from YAML input without constructing `SpanTree`s.
+#[cfg(not(feature = "std"))]
+pub(crate) fn load_all_no_spans(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
+    if input.len() > config.max_document_length {
+        return Err(Error::Parse(format!(
+            "document exceeds maximum length of {} bytes",
+            config.max_document_length
+        )));
+    }
+
+    let mut parser = Parser::new(input);
+    let mut loader = NoSpanLoader::new(config);
+
+    loop {
+        let event = parser
+            .next_event()
+            .map_err(|e| Error::parse_at(&*e.message, input, e.index))?;
+
+        match loader.process_event(event, input)? {
+            LoaderState::Continue => {}
+            LoaderState::Done => break,
+        }
+    }
+
+    Ok(loader.into_docs())
+}
+
 /// Stack frame for the span-free tree builder.
 #[derive(Debug)]
 enum NoSpanFrame {
@@ -797,7 +829,7 @@ enum NoSpanFrame {
 struct NoSpanLoader<'a> {
     docs: Vec<Value>,
     stack: Vec<NoSpanFrame>,
-    anchor_map: HashMap<String, Value>,
+    anchor_map: IndexMap<String, Value>,
     alias_count: usize,
     alias_bytes: usize,
     config: &'a ParseConfig,
@@ -810,7 +842,7 @@ impl<'a> NoSpanLoader<'a> {
         NoSpanLoader {
             docs: Vec::new(),
             stack: Vec::new(),
-            anchor_map: HashMap::new(),
+            anchor_map: IndexMap::new(),
             alias_count: 0,
             alias_bytes: 0,
             config,
@@ -997,9 +1029,9 @@ impl<'a> NoSpanLoader<'a> {
                 let key = value_into_key(value)?;
 
                 if key == MERGE_KEY {
-                    let map = std::mem::replace(map, Mapping::new());
+                    let map = core::mem::replace(map, Mapping::new());
                     let anchor = anchor.clone();
-                    let merge_values = std::mem::take(merge_values);
+                    let merge_values = core::mem::take(merge_values);
                     *self
                         .stack
                         .last_mut()
@@ -1019,9 +1051,9 @@ impl<'a> NoSpanLoader<'a> {
                     return Err(Error::DuplicateKey(key));
                 }
 
-                let map = std::mem::replace(map, Mapping::new());
+                let map = core::mem::replace(map, Mapping::new());
                 let anchor = anchor.clone();
-                let merge_values = std::mem::take(merge_values);
+                let merge_values = core::mem::take(merge_values);
                 *self
                     .stack
                     .last_mut()
@@ -1054,9 +1086,9 @@ impl<'a> NoSpanLoader<'a> {
                     }
                 }
 
-                let map = std::mem::replace(map, Mapping::new());
+                let map = core::mem::replace(map, Mapping::new());
                 let anchor = anchor.clone();
-                let merge_values = std::mem::take(merge_values);
+                let merge_values = core::mem::take(merge_values);
                 *self
                     .stack
                     .last_mut()

@@ -6,9 +6,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::fmt;
-use std::ops::Deref;
-use std::sync::Arc;
+use crate::prelude::*;
+use core::ops::Deref;
+
+#[cfg(not(feature = "std"))]
+use alloc::rc::{Rc, Weak as RcWeak};
+#[cfg(not(feature = "std"))]
+use alloc::sync::Weak as ArcWeak;
+#[cfg(feature = "std")]
+use std::rc::{Rc, Weak as RcWeak};
+#[cfg(feature = "std")]
+use std::sync::Weak as ArcWeak;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// Serializes by delegating to the inner `T`. Deserializes by wrapping the
 /// result in `Rc`.
 #[derive(Clone)]
-pub struct RcAnchor<T>(pub std::rc::Rc<T>);
+pub struct RcAnchor<T>(pub Rc<T>);
 
 impl<T: fmt::Debug> fmt::Debug for RcAnchor<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -34,19 +42,19 @@ impl<T> Deref for RcAnchor<T> {
 
 impl<T> From<T> for RcAnchor<T> {
     fn from(v: T) -> Self {
-        Self(std::rc::Rc::new(v))
+        Self(Rc::new(v))
     }
 }
 
-impl<T> From<std::rc::Rc<T>> for RcAnchor<T> {
-    fn from(v: std::rc::Rc<T>) -> Self {
+impl<T> From<Rc<T>> for RcAnchor<T> {
+    fn from(v: Rc<T>) -> Self {
         Self(v)
     }
 }
 
 impl<T> RcAnchor<T> {
     /// Unwrap into the inner `Rc`.
-    pub fn into_inner(self) -> std::rc::Rc<T> {
+    pub fn into_inner(self) -> Rc<T> {
         self.0
     }
 }
@@ -65,7 +73,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for RcAnchor<T> {
     where
         D: serde::Deserializer<'de>,
     {
-        T::deserialize(deserializer).map(|v| RcAnchor(std::rc::Rc::new(v)))
+        T::deserialize(deserializer).map(|v| RcAnchor(Rc::new(v)))
     }
 }
 
@@ -131,7 +139,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for ArcAnchor<T> {
 /// Serializes as `null` if the reference is dangling, otherwise serializes
 /// the inner value. Deserialization from `null` produces a dangling weak ref.
 #[derive(Clone)]
-pub struct RcWeakAnchor<T>(pub std::rc::Weak<T>);
+pub struct RcWeakAnchor<T>(pub RcWeak<T>);
 
 impl<T: fmt::Debug> fmt::Debug for RcWeakAnchor<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -145,22 +153,22 @@ impl<T: fmt::Debug> fmt::Debug for RcWeakAnchor<T> {
 impl<T> RcWeakAnchor<T> {
     /// Create a dangling weak anchor.
     pub fn dangling() -> Self {
-        Self(std::rc::Weak::new())
+        Self(RcWeak::new())
     }
 
     /// Unwrap into the inner `Weak`.
-    pub fn into_inner(self) -> std::rc::Weak<T> {
+    pub fn into_inner(self) -> RcWeak<T> {
         self.0
     }
 
     /// Attempt to upgrade to a strong `Rc`.
-    pub fn upgrade(&self) -> Option<std::rc::Rc<T>> {
+    pub fn upgrade(&self) -> Option<Rc<T>> {
         self.0.upgrade()
     }
 }
 
-impl<T> From<std::rc::Weak<T>> for RcWeakAnchor<T> {
-    fn from(v: std::rc::Weak<T>) -> Self {
+impl<T> From<RcWeak<T>> for RcWeakAnchor<T> {
+    fn from(v: RcWeak<T>) -> Self {
         Self(v)
     }
 }
@@ -185,7 +193,7 @@ impl<'de, T> Deserialize<'de> for RcWeakAnchor<T> {
         // Always deserialize as a dangling weak — there's no registry to look up.
         // We consume the value to avoid errors.
         let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
-        Ok(RcWeakAnchor(std::rc::Weak::new()))
+        Ok(RcWeakAnchor(RcWeak::new()))
     }
 }
 
@@ -194,7 +202,7 @@ impl<'de, T> Deserialize<'de> for RcWeakAnchor<T> {
 /// Serializes as `null` if the reference is dangling, otherwise serializes
 /// the inner value. Deserialization from `null` produces a dangling weak ref.
 #[derive(Clone)]
-pub struct ArcWeakAnchor<T>(pub std::sync::Weak<T>);
+pub struct ArcWeakAnchor<T>(pub ArcWeak<T>);
 
 impl<T: fmt::Debug> fmt::Debug for ArcWeakAnchor<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -208,11 +216,11 @@ impl<T: fmt::Debug> fmt::Debug for ArcWeakAnchor<T> {
 impl<T> ArcWeakAnchor<T> {
     /// Create a dangling weak anchor.
     pub fn dangling() -> Self {
-        Self(std::sync::Weak::new())
+        Self(ArcWeak::new())
     }
 
     /// Unwrap into the inner `Weak`.
-    pub fn into_inner(self) -> std::sync::Weak<T> {
+    pub fn into_inner(self) -> ArcWeak<T> {
         self.0
     }
 
@@ -222,8 +230,8 @@ impl<T> ArcWeakAnchor<T> {
     }
 }
 
-impl<T> From<std::sync::Weak<T>> for ArcWeakAnchor<T> {
-    fn from(v: std::sync::Weak<T>) -> Self {
+impl<T> From<ArcWeak<T>> for ArcWeakAnchor<T> {
+    fn from(v: ArcWeak<T>) -> Self {
         Self(v)
     }
 }
@@ -246,6 +254,6 @@ impl<'de, T> Deserialize<'de> for ArcWeakAnchor<T> {
         D: serde::Deserializer<'de>,
     {
         let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
-        Ok(ArcWeakAnchor(std::sync::Weak::new()))
+        Ok(ArcWeakAnchor(ArcWeak::new()))
     }
 }

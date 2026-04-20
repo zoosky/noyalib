@@ -16,15 +16,19 @@ pub(crate) use loader::ParseConfig;
 pub(crate) use scanner::ScalarStyle;
 
 use crate::error::Result;
+use crate::prelude::*;
+#[cfg(feature = "std")]
 use crate::span_context::SpanTree;
 use crate::value::Value;
 
 /// Parse a YAML string into a list of `(Value, SpanTree)` documents.
+#[cfg(feature = "std")]
 pub(crate) fn parse(input: &str, config: &ParseConfig) -> Result<Vec<(Value, SpanTree)>> {
     loader::load(input, config)
 }
 
 /// Parse a single YAML document from a string.
+#[cfg(feature = "std")]
 pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, SpanTree)> {
     loader::load_one(input, config)
 }
@@ -35,4 +39,10 @@ pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, Spa
 /// needed (the common case for [`crate::from_str`]).
 pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
     loader::load_one_no_spans(input, config)
+}
+
+/// Parse all YAML documents into `Value`s without building `SpanTree`s.
+#[cfg(not(feature = "std"))]
+pub(crate) fn parse_all_values(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
+    loader::load_all_no_spans(input, config)
 }

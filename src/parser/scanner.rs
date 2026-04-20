@@ -7,7 +7,7 @@
 
 // VecDeque replaced with Vec + consumed index for better cache locality.
 
-use std::borrow::Cow;
+use crate::prelude::*;
 
 /// Byte-offset span in the source input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,8 +69,8 @@ pub(crate) struct ScanError {
     pub index: usize,
 }
 
-impl std::fmt::Display for ScanError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ScanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} at byte offset {}", self.message, self.index)
     }
 }
@@ -164,7 +164,7 @@ impl<'a> Scanner<'a> {
         if self.tokens_consumed < self.tokens.len() {
             // Move the token out instead of cloning — avoids heap-allocating
             // copies of owned Strings inside Scalar/Anchor/Alias/Tag variants.
-            let t = std::mem::take(&mut self.tokens[self.tokens_consumed]);
+            let t = core::mem::take(&mut self.tokens[self.tokens_consumed]);
             self.tokens_consumed += 1;
             self.tokens_produced += 1;
             // Compact when we've consumed enough to avoid unbounded growth.

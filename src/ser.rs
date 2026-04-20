@@ -3,13 +3,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::fmt::Write as FmtWrite;
-use std::io::Write;
+use crate::prelude::*;
+use core::fmt::Write as _;
 
 use serde::ser::{self, Serialize};
 
 use crate::error::{Error, Result};
-use crate::fmt;
 use crate::value::{Mapping, Number, Sequence, Tag, TaggedValue, Value};
 
 /// Flow style preference for collections.
@@ -303,9 +302,10 @@ where
 /// # Errors
 ///
 /// Returns an error if the type cannot be serialized or writing fails.
+#[cfg(feature = "std")]
 pub fn to_writer<W, T>(writer: W, value: &T) -> Result<()>
 where
-    W: Write,
+    W: std::io::Write,
     T: ?Sized + Serialize,
 {
     to_writer_with_config(writer, value, &SerializerConfig::default())
@@ -316,9 +316,10 @@ where
 /// # Errors
 ///
 /// Returns an error if the type cannot be serialized or writing fails.
+#[cfg(feature = "std")]
 pub fn to_writer_with_config<W, T>(writer: W, value: &T, config: &SerializerConfig) -> Result<()>
 where
-    W: Write,
+    W: std::io::Write,
     T: ?Sized + Serialize,
 {
     let s = to_string_with_config(value, config)?;
@@ -334,7 +335,7 @@ where
 /// Returns an error if the type cannot be serialized or writing fails.
 pub fn to_fmt_writer<W, T>(writer: &mut W, value: &T) -> Result<()>
 where
-    W: std::fmt::Write,
+    W: fmt::Write,
     T: ?Sized + Serialize,
 {
     to_fmt_writer_with_config(writer, value, &SerializerConfig::default())
@@ -351,7 +352,7 @@ pub fn to_fmt_writer_with_config<W, T>(
     config: &SerializerConfig,
 ) -> Result<()>
 where
-    W: std::fmt::Write,
+    W: fmt::Write,
     T: ?Sized + Serialize,
 {
     let s = to_string_with_config(value, config)?;
@@ -838,35 +839,35 @@ fn write_internal_tag(
     config: &SerializerConfig,
 ) -> Result<()> {
     match tag {
-        fmt::MAGIC_FLOW_SEQ => {
+        crate::fmt::MAGIC_FLOW_SEQ => {
             if let Value::Sequence(seq) = value {
                 write_flow_sequence(output, seq, config)?;
             } else {
                 write_value(output, value, indent, is_root, config)?;
             }
         }
-        fmt::MAGIC_FLOW_MAP => {
+        crate::fmt::MAGIC_FLOW_MAP => {
             if let Value::Mapping(map) = value {
                 write_flow_mapping(output, map, config)?;
             } else {
                 write_value(output, value, indent, is_root, config)?;
             }
         }
-        fmt::MAGIC_LIT_STR => {
+        crate::fmt::MAGIC_LIT_STR => {
             if let Value::String(s) = value {
                 write_literal_block(output, s, indent, config);
             } else {
                 write_value(output, value, indent, is_root, config)?;
             }
         }
-        fmt::MAGIC_FOLD_STR => {
+        crate::fmt::MAGIC_FOLD_STR => {
             if let Value::String(s) = value {
                 write_folded_block(output, s, indent, config);
             } else {
                 write_value(output, value, indent, is_root, config)?;
             }
         }
-        fmt::MAGIC_COMMENTED => {
+        crate::fmt::MAGIC_COMMENTED => {
             // value is a sequence [inner_value, comment_string]
             if let Value::Sequence(seq) = value {
                 if seq.len() == 2 {
@@ -882,7 +883,7 @@ fn write_internal_tag(
                 write_value(output, value, indent, is_root, config)?;
             }
         }
-        fmt::MAGIC_SPACE_AFTER => {
+        crate::fmt::MAGIC_SPACE_AFTER => {
             write_value(output, value, indent, is_root, config)?;
             output.push('\n');
         }
@@ -1013,7 +1014,8 @@ pub fn to_string_multi_with_config<T: Serialize>(
 /// # Errors
 ///
 /// Returns an error if any value cannot be serialized or writing fails.
-pub fn to_writer_multi<W: Write, T: Serialize>(writer: W, values: &[T]) -> Result<()> {
+#[cfg(feature = "std")]
+pub fn to_writer_multi<W: std::io::Write, T: Serialize>(writer: W, values: &[T]) -> Result<()> {
     to_writer_multi_with_config(writer, values, &SerializerConfig::default())
 }
 
@@ -1023,7 +1025,8 @@ pub fn to_writer_multi<W: Write, T: Serialize>(writer: W, values: &[T]) -> Resul
 /// # Errors
 ///
 /// Returns an error if any value cannot be serialized or writing fails.
-pub fn to_writer_multi_with_config<W: Write, T: Serialize>(
+#[cfg(feature = "std")]
+pub fn to_writer_multi_with_config<W: std::io::Write, T: Serialize>(
     writer: W,
     values: &[T],
     config: &SerializerConfig,
@@ -1151,18 +1154,18 @@ impl ser::Serializer for Serializer {
     {
         // Intercept formatting hint magic names
         match name {
-            fmt::MAGIC_FLOW_SEQ
-            | fmt::MAGIC_FLOW_MAP
-            | fmt::MAGIC_LIT_STR
-            | fmt::MAGIC_FOLD_STR
-            | fmt::MAGIC_SPACE_AFTER => {
+            crate::fmt::MAGIC_FLOW_SEQ
+            | crate::fmt::MAGIC_FLOW_MAP
+            | crate::fmt::MAGIC_LIT_STR
+            | crate::fmt::MAGIC_FOLD_STR
+            | crate::fmt::MAGIC_SPACE_AFTER => {
                 let inner = value.serialize(Serializer)?;
                 Ok(Value::Tagged(Box::new(TaggedValue::new(
                     Tag::new(name),
                     inner,
                 ))))
             }
-            fmt::MAGIC_COMMENTED => {
+            crate::fmt::MAGIC_COMMENTED => {
                 // value is a tuple (inner_value, comment_string)
                 let inner = value.serialize(Serializer)?;
                 Ok(Value::Tagged(Box::new(TaggedValue::new(

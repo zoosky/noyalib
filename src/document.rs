@@ -24,15 +24,22 @@
 use crate::de::ParserConfig;
 use crate::error::Result;
 use crate::parser;
+use crate::prelude::*;
+#[cfg(feature = "std")]
 use crate::span_context::{self, SpanTree};
 use crate::value::Value;
+#[cfg(not(feature = "std"))]
+use alloc::vec::IntoIter;
+#[cfg(feature = "std")]
+use std::vec::IntoIter;
 
 /// An iterator over YAML documents in a string.
 ///
 /// Created by the [`load_all`] function.
 #[derive(Debug)]
 pub struct DocumentIterator {
-    docs: std::vec::IntoIter<Value>,
+    docs: IntoIter<Value>,
+    #[cfg(feature = "std")]
     _span_trees: Vec<SpanTree>,
     total: usize,
 }
@@ -100,14 +107,28 @@ pub fn load_all(input: &str) -> Result<DocumentIterator> {
 /// exceeds the configured limits.
 pub fn load_all_with_config(input: &str, config: &ParserConfig) -> Result<DocumentIterator> {
     let parse_config = parser::ParseConfig::from(config);
-    let pairs = parser::parse(input, &parse_config)?;
-    let (docs, span_trees): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
-    let total = docs.len();
-    Ok(DocumentIterator {
-        docs: docs.into_iter(),
-        _span_trees: span_trees,
-        total,
-    })
+
+    #[cfg(feature = "std")]
+    {
+        let pairs = parser::parse(input, &parse_config)?;
+        let (docs, span_trees): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        let total = docs.len();
+        Ok(DocumentIterator {
+            docs: docs.into_iter(),
+            _span_trees: span_trees,
+            total,
+        })
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        let docs = parser::parse_all_values(input, &parse_config)?;
+        let total = docs.len();
+        Ok(DocumentIterator {
+            docs: docs.into_iter(),
+            total,
+        })
+    }
 }
 
 /// Load all YAML documents from a string, returning an error if parsing fails.
@@ -171,20 +192,35 @@ where
     T: for<'de> serde::Deserialize<'de>,
 {
     let parse_config = parser::ParseConfig::from(&ParserConfig::default());
-    let pairs = parser::parse(input, &parse_config)?;
-    let mut results = Vec::with_capacity(pairs.len());
-    let source: std::sync::Arc<str> = input.into();
 
-    for (value, span_tree) in &pairs {
-        let spans = span_context::build_span_map(value, span_tree);
-        let ctx = span_context::SpanContext {
-            spans,
-            source: source.clone(),
-        };
-        let _guard = span_context::set_span_context(ctx);
-        let typed: T = crate::from_value(value)?;
-        results.push(typed);
+    #[cfg(feature = "std")]
+    {
+        let pairs = parser::parse(input, &parse_config)?;
+        let mut results = Vec::with_capacity(pairs.len());
+        let source: Arc<str> = input.into();
+
+        for (value, span_tree) in &pairs {
+            let spans = span_context::build_span_map(value, span_tree);
+            let ctx = span_context::SpanContext {
+                spans,
+                source: source.clone(),
+            };
+            let _guard = span_context::set_span_context(ctx);
+            let typed: T = crate::from_value(value)?;
+            results.push(typed);
+        }
+
+        Ok(results)
     }
 
-    Ok(results)
+    #[cfg(not(feature = "std"))]
+    {
+        let docs = parser::parse_all_values(input, &parse_config)?;
+        let mut results = Vec::with_capacity(docs.len());
+        for value in &docs {
+            let typed: T = crate::from_value(value)?;
+            results.push(typed);
+        }
+        Ok(results)
+    }
 }

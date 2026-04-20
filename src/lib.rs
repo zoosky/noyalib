@@ -89,6 +89,33 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+/// Internal prelude for no_std compatibility.
+/// Provides String, Vec, Box, etc. from alloc when std is absent.
+#[cfg(not(feature = "std"))]
+pub(crate) mod prelude {
+    pub(crate) use alloc::borrow::{Cow, ToOwned};
+    pub(crate) use alloc::boxed::Box;
+    pub(crate) use alloc::format;
+    pub(crate) use alloc::string::{String, ToString};
+    pub(crate) use alloc::sync::Arc;
+    pub(crate) use alloc::vec;
+    pub(crate) use alloc::vec::Vec;
+    pub(crate) use core::fmt;
+}
+
+/// Internal prelude for std compatibility.
+#[cfg(feature = "std")]
+pub(crate) mod prelude {
+    pub(crate) use std::borrow::{Cow, ToOwned};
+    pub(crate) use std::boxed::Box;
+    pub(crate) use std::fmt;
+    pub(crate) use std::format;
+    pub(crate) use std::string::{String, ToString};
+    pub(crate) use std::sync::Arc;
+    pub(crate) use std::vec;
+    pub(crate) use std::vec::Vec;
+}
+
 mod anchors;
 mod de;
 /// Multi-document loading and iteration.
@@ -100,6 +127,7 @@ mod parser;
 mod path;
 mod schema;
 mod ser;
+#[cfg(feature = "std")]
 pub(crate) mod span_context;
 pub(crate) mod spanned;
 mod streaming;
@@ -107,9 +135,11 @@ mod value;
 pub mod with;
 
 pub use anchors::{ArcAnchor, ArcWeakAnchor, RcAnchor, RcWeakAnchor};
+#[cfg(feature = "std")]
+pub use de::{from_reader, from_reader_with_config};
 pub use de::{
-    from_reader, from_reader_with_config, from_slice, from_slice_with_config, from_str,
-    from_str_with_config, from_value, Deserializer, DuplicateKeyPolicy, ParserConfig,
+    from_slice, from_slice_with_config, from_str, from_str_with_config, from_value, Deserializer,
+    DuplicateKeyPolicy, ParserConfig,
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
 pub use error::{Error, Location, Result};
@@ -121,10 +151,11 @@ pub use schema::{
 };
 pub use ser::{
     to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,
-    to_string_multi_with_config, to_string_with_config, to_value, to_writer, to_writer_multi,
-    to_writer_multi_with_config, to_writer_with_config, FlowStyle, ScalarStyle, Serializer,
-    SerializerConfig,
+    to_string_multi_with_config, to_string_with_config, to_value, FlowStyle, ScalarStyle,
+    Serializer, SerializerConfig,
 };
+#[cfg(feature = "std")]
+pub use ser::{to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_with_config};
 pub use spanned::Spanned;
 pub use value::{
     check_for_tag, nobang, Mapping, MappingAny, MaybeTag, Number, ParseNumberError, Sequence, Tag,

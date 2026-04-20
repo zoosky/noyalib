@@ -6,8 +6,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::fmt;
-use std::ops::Deref;
+use crate::prelude::*;
+use core::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
@@ -121,12 +121,12 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Spanned<T> {
         deserializer.deserialize_struct(
             SPANNED_TYPE_NAME,
             SPANNED_FIELDS,
-            SpannedVisitor(std::marker::PhantomData),
+            SpannedVisitor(core::marker::PhantomData),
         )
     }
 }
 
-struct SpannedVisitor<T>(std::marker::PhantomData<T>);
+struct SpannedVisitor<T>(core::marker::PhantomData<T>);
 
 impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for SpannedVisitor<T> {
     type Value = Spanned<T>;

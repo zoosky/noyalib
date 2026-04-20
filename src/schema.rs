@@ -30,6 +30,7 @@
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
 use crate::error::{Error, Result};
+use crate::prelude::*;
 use crate::value::{Number, Value};
 
 /// Validate a value against the YAML 1.2 Failsafe Schema.
@@ -62,7 +63,7 @@ pub fn validate_failsafe_schema(value: &Value) -> Result<()> {
 }
 
 fn validate_failsafe_recursive(value: &Value, path: &mut String) -> Result<()> {
-    use std::fmt::Write;
+    use core::fmt::Write;
     match value {
         Value::String(_) => Ok(()),
         Value::Sequence(seq) => {
@@ -130,7 +131,7 @@ pub fn validate_json_schema(value: &Value) -> Result<()> {
 }
 
 fn validate_json_recursive(value: &Value, path: &mut String) -> Result<()> {
-    use std::fmt::Write;
+    use core::fmt::Write;
     match value {
         Value::Null | Value::Bool(_) | Value::String(_) => Ok(()),
         Value::Number(n) => {
@@ -196,7 +197,7 @@ pub fn validate_core_schema(value: &Value) -> Result<()> {
 }
 
 fn validate_core_recursive(value: &Value, path: &mut String) -> Result<()> {
-    use std::fmt::Write;
+    use core::fmt::Write;
     match value {
         Value::Null | Value::Bool(_) | Value::String(_) | Value::Number(_) => Ok(()),
         Value::Sequence(seq) => {
