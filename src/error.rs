@@ -512,7 +512,7 @@ impl miette::Diagnostic for Error {
         let loc = self.location()?;
         // Byte offset → single-character span at the error point.
         let label = miette::LabeledSpan::at_offset(loc.index, "here");
-        Some(Box::new(std::iter::once(label)))
+        Some(Box::new(core::iter::once(label)))
     }
 }
 
