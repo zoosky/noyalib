@@ -98,16 +98,38 @@ features:
 
 ## Overview
 
-noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde integration. No C bindings. No FFI. No unsafe blocks. The parser is hardened against denial-of-service attacks with configurable depth, size, and alias expansion limits.
+noyalib is designed to be the **no-compromise** YAML library for Rust: fast, safe, and hardened — simultaneously. Most libraries trade one for the other (fast but unsafe, or safe but slow). noyalib achieves all three.
 
-- **75% faster serialization** than serde\_yaml\_ng
-- **50% faster deserialization** on simple documents (streaming deserializer)
+- **Pure Rust** -- no C bindings, no FFI, no `unsafe` blocks
+- **Streaming deserializer** -- bypasses the Value AST for typed targets
+- **Zero-copy scanner** -- `Cow<'a, str>` scalars borrow directly from input
+- **DoS hardened** -- 7 configurable limits, billion-laughs safe
+- **`#![no_std]`** -- works with `alloc` only for embedded and WASM
+- **`miette` diagnostics** -- rich terminal errors with source spans
 - **201 KB WASM binary** -- runs in browsers via wasm-bindgen
 - **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu
 - **2,206 tests** -- unit, integration, doc-tests, property-based
-- **5 fuzz targets** -- adversarial input coverage
 - **45 branded examples** with animated spinner UI
-- **`#![no_std]` support** -- works with `alloc` only for embedded/WASM
+
+---
+
+## Ecosystem Comparison
+
+noyalib competes across four categories of Rust YAML libraries:
+
+| | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes |
+| **Zero `unsafe`** | Yes | No | No | Yes | Yes |
+| **Serde integration** | Yes | Yes | Yes | Yes | No |
+| **Streaming deser** | Yes | No | No | No | No |
+| **`#![no_std]`** | Yes | No | No | No | No |
+| **Zero-copy scalars** | Yes | No | No | No | No |
+| **DoS hardened** | 7 limits | Basic | Basic | Yes | No |
+| **`miette` diagnostics** | Yes | No | No | No | No |
+| **WASM** | 201 KB | No | No | No | No |
+| **Source spans** | Yes | No | No | Yes | No |
+| **YAML 1.1 compat** | Yes | Yes | Yes | No | Yes |
 
 ---
 
@@ -115,41 +137,35 @@ noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde
 
 Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--release`.
 
-### Deserialization (Kubernetes-style payload, 60 lines)
+### Deserialization throughput
 
-| Library | Time | Throughput |
-| :--- | ---: | ---: |
-| **noyalib** | **18.0 us** | **fastest** |
-| yaml-rust2 | 27.7 us | 1.5x |
-| serde\_yaml\_ng | 32.6 us | 1.8x |
-| serde-saphyr | 39.0 us | 2.2x |
+| Library | K8s payload (60 lines) | Plain scalars (16 fields) | Large (500 items) |
+| :--- | ---: | ---: | ---: |
+| **noyalib** | **18.0 us** | **6.65 us** | **0.83 ms** |
+| yaml-rust2 | 27.7 us (1.5x) | — | 1.24 ms (1.5x) |
+| serde\_yaml\_ng | 32.6 us (1.8x) | 12.3 us (1.9x) | 1.49 ms (1.8x) |
+| serde-saphyr | 39.0 us (2.2x) | 14.7 us (2.2x) | — |
 
-### Deserialization (plain scalars, zero-copy optimized)
-
-| Library | Time | Throughput |
-| :--- | ---: | ---: |
-| **noyalib** | **6.65 us** | **fastest** |
-| serde\_yaml\_ng | 12.3 us | 1.9x |
-| serde-saphyr | 14.7 us | 2.2x |
-
-### Serialization
+### Serialization throughput
 
 | Library | Simple (3 fields) | Nested (20 fields) |
 | :--- | ---: | ---: |
 | **noyalib** | **358 ns** | **2.80 us** |
-| serde\_yaml\_ng | 1.41 us | 8.32 us |
+| serde\_yaml\_ng | 1.41 us (3.9x) | 8.32 us (3.0x) |
 
-### Architecture internals
+### Architecture validation
 
-| Benchmark | Result |
+| Capability | Measured Impact |
 | :--- | :--- |
-| Streaming deserializer (bypasses Value AST) | **36% faster** than AST path |
-| Zero-copy scanner (`Cow::Borrowed` scalars) | **26% fewer allocations** |
-| Span-free path (no line/column tracking) | **77% less overhead** |
-| Security: billion-laughs rejection | **<3 us** with `ParserConfig::strict()` |
-| Security: deep nesting (50 levels) rejection | **<3 us** |
+| Streaming deserializer (typed targets) | 36% faster than Value AST path |
+| Zero-copy scanner (`Cow::Borrowed`) | 26% fewer heap allocations |
+| Span-free path (`from_str` default) | 77% less overhead vs span tracking |
+| DoS rejection (billion laughs) | <3 us to reject with `ParserConfig::strict()` |
+| DoS rejection (50-level nesting) | <3 us to reject |
 
 Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architecture`.
+
+### Project metrics
 
 | Metric | Value |
 | :--- | :--- |
@@ -157,7 +173,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Test suite** | 2,206 tests + 69 doc-tests |
 | **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
-| **Dependencies** | 5 runtime |
+| **Dependencies** | 5 runtime + 1 optional (miette) |
 | **WASM binary** | 201 KB (release, LTO) |
 | **MSRV** | Rust 1.75.0 |
 
