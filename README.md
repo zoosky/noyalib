@@ -28,7 +28,7 @@
 - [Features](#features) -- capability matrix
 - [Library Usage](#library-usage) -- deserialization, serialization, values, spans
 - [Configuration](#configuration) -- parser and serializer options
-- [Examples](#examples) -- 40 branded examples
+- [Examples](#examples) -- 45 branded examples
 - [Development](#development) -- make targets, fuzzing, CI
 - [Security](#security) -- safety guarantees and compliance
 - [License](#license)
@@ -387,7 +387,7 @@ cargo run --example all
 ```
 
 <details>
-<summary><b>All 40 examples</b></summary>
+<summary><b>All 45 examples</b></summary>
 
 | Category | Example | Purpose |
 | :--- | :--- | :--- |
