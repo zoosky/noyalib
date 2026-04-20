@@ -50,6 +50,10 @@ const EXAMPLES: &[&str] = &[
     "borrow",
     "transcode",
     "comments",
+    // Platform
+    "diagnostic",
+    "nostd",
+    "preserve",
     // Final
     "async_io",
     "recursive",

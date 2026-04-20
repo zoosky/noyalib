@@ -50,6 +50,7 @@ examples:
 	           emit rename flatten bridge pipes global \
 	           portable mask patch suggest schema_ext \
 	           untagged borrow transcode comments \
+	           diagnostic nostd preserve \
 	           async_io recursive bench; do \
 	    printf "\033[90m%-25s\033[0m" "$$ex" ; \
 	    if cargo run --example $$ex --quiet 2>/dev/null 1>/dev/null; then \

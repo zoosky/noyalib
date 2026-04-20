@@ -166,6 +166,17 @@ path = "examples/async_io.rs"
 name = "recursive"
 path = "examples/recursive.rs"
 
+## ── Platform ──
+[[example]]
+name = "diagnostic"
+path = "examples/diagnostic.rs"
+[[example]]
+name = "nostd"
+path = "examples/nostd.rs"
+[[example]]
+name = "preserve"
+path = "examples/preserve.rs"
+
 [[example]]
 name = "all"
 path = "examples/all.rs"
