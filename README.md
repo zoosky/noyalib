@@ -113,37 +113,41 @@ noyalib parses and serializes YAML 1.2 with a native Rust scanner and full serde
 
 ## Benchmarks
 
-Benchmarked on Apple M4, Rust 1.94 stable (lower is better):
+Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--release`.
 
-### vs serde\_yaml\_ng
+### Deserialization (Kubernetes-style payload, 60 lines)
 
-| Operation | noyalib | serde\_yaml\_ng | Improvement |
-| :--- | ---: | ---: | ---: |
-| **Serialize (simple)** | 358 ns | 1.41 us | **75% faster** |
-| **Serialize (nested)** | 2.80 us | 8.32 us | **66% faster** |
-| **Deserialize (simple)** | 1.39 us | 2.79 us | **50% faster** |
-| **Deserialize (nested)** | 9.16 us | 17.3 us | **47% faster** |
-| **Deserialize (large)** | 0.83 ms | 1.49 ms | **44% faster** |
-| **Typed deser (simple)** | 1.13 us | 2.31 us | **51% faster** |
-| **Typed deser (nested)** | 6.70 us | 12.5 us | **46% faster** |
-
-### Competitor matrix (Kubernetes-style payload)
-
-| Library | Time | vs noyalib |
+| Library | Time | Throughput |
 | :--- | ---: | ---: |
-| **noyalib** | **18.0 us** | — |
-| yaml-rust2 | 27.7 us | 35% slower |
-| serde\_yaml\_ng | 32.6 us | 45% slower |
-| serde-saphyr | 39.0 us | 54% slower |
+| **noyalib** | **18.0 us** | **fastest** |
+| yaml-rust2 | 27.7 us | 1.5x |
+| serde\_yaml\_ng | 32.6 us | 1.8x |
+| serde-saphyr | 39.0 us | 2.2x |
 
-### Architecture validation
+### Deserialization (plain scalars, zero-copy optimized)
+
+| Library | Time | Throughput |
+| :--- | ---: | ---: |
+| **noyalib** | **6.65 us** | **fastest** |
+| serde\_yaml\_ng | 12.3 us | 1.9x |
+| serde-saphyr | 14.7 us | 2.2x |
+
+### Serialization
+
+| Library | Simple (3 fields) | Nested (20 fields) |
+| :--- | ---: | ---: |
+| **noyalib** | **358 ns** | **2.80 us** |
+| serde\_yaml\_ng | 1.41 us | 8.32 us |
+
+### Architecture internals
 
 | Benchmark | Result |
 | :--- | :--- |
-| **Streaming vs AST** (K8s typed) | 12.0 us vs 18.7 us — **36% faster** bypassing Value |
-| **Zero-copy scalars** (plain payload) | 4.87 us vs 6.58 us — **26% fewer allocations** |
-| **Span overhead** (typed, no spans) | 4.83 us vs 8.57 us — **77% overhead saved** when spans disabled |
-| **Security rejection** (billion laughs) | Rejected in **<3 us** with `ParserConfig::strict()` |
+| Streaming deserializer (bypasses Value AST) | **36% faster** than AST path |
+| Zero-copy scanner (`Cow::Borrowed` scalars) | **26% fewer allocations** |
+| Span-free path (no line/column tracking) | **77% less overhead** |
+| Security: billion-laughs rejection | **<3 us** with `ParserConfig::strict()` |
+| Security: deep nesting (50 levels) rejection | **<3 us** |
 
 Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architecture`.
 
