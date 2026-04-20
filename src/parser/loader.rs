@@ -29,6 +29,7 @@ pub(crate) struct ParseConfig {
     pub max_sequence_length: usize,
     pub duplicate_key_policy: DuplicateKeyPolicy,
     pub strict_booleans: bool,
+    pub legacy_booleans: bool,
 }
 
 impl From<&ParserConfig> for ParseConfig {
@@ -41,6 +42,7 @@ impl From<&ParserConfig> for ParseConfig {
             max_sequence_length: c.max_sequence_length,
             duplicate_key_policy: c.duplicate_key_policy,
             strict_booleans: c.strict_booleans,
+            legacy_booleans: c.legacy_booleans,
         }
     }
 }
@@ -175,7 +177,12 @@ impl<'a> Loader<'a> {
                 span,
             } => {
                 let resolved = if style == ScalarStyle::Plain {
-                    resolve_plain_scalar(value, &tag, self.config.strict_booleans)
+                    resolve_plain_scalar(
+                        value,
+                        &tag,
+                        self.config.strict_booleans,
+                        self.config.legacy_booleans,
+                    )
                 } else {
                     resolve_quoted_scalar(value, &tag)
                 };
@@ -500,10 +507,24 @@ pub(crate) fn resolve_plain_scalar(
     value: Cow<'_, str>,
     tag: &Option<(String, String)>,
     strict_booleans: bool,
+    legacy_booleans: bool,
 ) -> std::result::Result<Value, String> {
     // If there's a tag, handle it.
     if let Some((handle, suffix)) = tag {
         return resolve_tagged_scalar(&value, handle, suffix);
+    }
+
+    // YAML 1.1 legacy booleans (yes/no/on/off/y/n).
+    if legacy_booleans {
+        match &*value {
+            "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "y" | "Y" => {
+                return Ok(Value::Bool(true));
+            }
+            "no" | "No" | "NO" | "off" | "Off" | "OFF" | "n" | "N" => {
+                return Ok(Value::Bool(false));
+            }
+            _ => {}
+        }
     }
 
     // YAML 1.2 Core Schema resolution for plain scalars.
@@ -825,7 +846,12 @@ impl<'a> NoSpanLoader<'a> {
                 span,
             } => {
                 let resolved = if style == ScalarStyle::Plain {
-                    resolve_plain_scalar(value, &tag, self.config.strict_booleans)
+                    resolve_plain_scalar(
+                        value,
+                        &tag,
+                        self.config.strict_booleans,
+                        self.config.legacy_booleans,
+                    )
                 } else {
                     resolve_quoted_scalar(value, &tag)
                 };

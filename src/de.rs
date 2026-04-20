@@ -86,6 +86,15 @@ pub struct ParserConfig {
     /// booleans. Case variants like `"True"`, `"TRUE"`, `"False"`, `"FALSE"`
     /// are treated as strings. This matches the YAML 1.2 JSON Schema.
     pub strict_booleans: bool,
+    /// YAML 1.1 legacy boolean mode (default: false).
+    ///
+    /// When `true`, additional YAML 1.1 boolean forms are accepted:
+    /// `"yes"`, `"no"`, `"on"`, `"off"`, `"y"`, `"n"` (case-insensitive).
+    /// This resolves the "Norway problem" where `NO` (the country code)
+    /// is incorrectly parsed as `false`.
+    ///
+    /// Takes precedence over `strict_booleans` when enabled.
+    pub legacy_booleans: bool,
 }
 
 impl Default for ParserConfig {
@@ -98,6 +107,7 @@ impl Default for ParserConfig {
             max_sequence_length: 65536,
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
+            legacy_booleans: false,
         }
     }
 }
@@ -168,6 +178,7 @@ impl ParserConfig {
             max_sequence_length: 1024,
             duplicate_key_policy: DuplicateKeyPolicy::Error,
             strict_booleans: true,
+            legacy_booleans: false,
         }
     }
 
@@ -185,6 +196,17 @@ impl ParserConfig {
     #[must_use]
     pub fn duplicate_key_policy(mut self, policy: DuplicateKeyPolicy) -> Self {
         self.duplicate_key_policy = policy;
+        self
+    }
+
+    /// Enable YAML 1.1 legacy boolean mode.
+    ///
+    /// When enabled, `"yes"`, `"no"`, `"on"`, `"off"`, `"y"`, `"n"`
+    /// (case-insensitive) are resolved as booleans. This matches YAML 1.1
+    /// behavior used by older tools (GitHub Actions, Docker Compose, etc.).
+    #[must_use]
+    pub fn legacy_booleans(mut self, enabled: bool) -> Self {
+        self.legacy_booleans = enabled;
         self
     }
 }

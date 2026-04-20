@@ -29,7 +29,20 @@ enum Scalar<'a> {
 
 /// Resolve a plain scalar string into a typed `Scalar` without allocating
 /// a `Value`. Mirrors the YAML 1.2 Core Schema resolution from the loader.
-fn resolve_plain(s: &str, strict_booleans: bool) -> Scalar<'_> {
+fn resolve_plain(s: &str, strict_booleans: bool, legacy_booleans: bool) -> Scalar<'_> {
+    // YAML 1.1 legacy booleans (yes/no/on/off/y/n).
+    if legacy_booleans {
+        match s {
+            "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "y" | "Y" => {
+                return Scalar::Bool(true);
+            }
+            "no" | "No" | "NO" | "off" | "Off" | "OFF" | "n" | "N" => {
+                return Scalar::Bool(false);
+            }
+            _ => {}
+        }
+    }
+
     match s {
         "" | "~" | "null" | "Null" | "NULL" => Scalar::Null,
         "true" => Scalar::Bool(true),
@@ -262,7 +275,11 @@ impl<'a> StreamingDeserializer<'a> {
     /// Resolve a scalar event into a `Scalar` enum (no `Value` allocation).
     fn resolve_scalar<'s>(&self, value: &'s str, style: ScalarStyle) -> Scalar<'s> {
         if style == ScalarStyle::Plain {
-            resolve_plain(value, self.config.strict_booleans)
+            resolve_plain(
+                value,
+                self.config.strict_booleans,
+                self.config.legacy_booleans,
+            )
         } else {
             // Quoted scalars are always strings.
             Scalar::Str(Cow::Borrowed(value))

@@ -140,9 +140,10 @@ Reproduce: `cargo bench --bench comparison`.
 | **Enums** | `singleton_map`, `singleton_map_optional`, `singleton_map_recursive`, `singleton_map_with` -- custom key transforms (snake\_case, kebab-case, lowercase). |
 | **Schemas** | Validate against YAML schema levels: `validate_failsafe_schema`, `validate_json_schema`, `validate_core_schema`. |
 | **Anchors** | Anchors (`&`), aliases (`*`), and merge keys (`<<`). Smart pointer wrappers: `RcAnchor`, `ArcAnchor`, `RcWeakAnchor`, `ArcWeakAnchor`. |
-| **Security** | 6 configurable limits in `ParserConfig`: depth, document size, alias expansions, mapping keys, sequence length, duplicate key policy. `ParserConfig::strict()` for untrusted input. Billion-laughs safe. |
+| **Security** | 7 configurable limits in `ParserConfig`: depth, document size, alias expansions, mapping keys, sequence length, duplicate key policy, strict booleans. `ParserConfig::strict()` for untrusted input. Billion-laughs safe via `max_alias_expansions` with `saturating_add` overflow protection. |
+| **Compat** | YAML 1.1 legacy boolean mode (`legacy_booleans`): resolves `yes`/`no`/`on`/`off`/`y`/`n` as booleans for Docker Compose, GitHub Actions, and other YAML 1.1 tooling. Solves the "Norway problem". |
 | **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
-| **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. |
+| **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. miette/ariadne integration planned for v0.0.4 (#13). |
 
 ---
 
@@ -485,11 +486,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for signed commits and PR guidelines.
 - `#[must_use]` on 83 query methods
 - `#[track_caller]` on 13 Index/IndexMut panic paths
 - All internal invariant panics documented with `expect("internal: ...")`
-- 6 configurable DoS limits with `ParserConfig::strict()`
+- 7 configurable DoS limits with `ParserConfig::strict()`
+- **Billion-laughs protection**: `max_alias_expansions` with `saturating_add` overflow guard on alias byte tracking
 - `cargo audit` with zero advisories
 - `cargo deny` -- license, advisory, ban, and source checks
-- SPDX license headers on all 94 source files
+- SPDX license headers on all source files
 - Signed commits enforced via CI
+- Comment round-tripping: not supported (YAML spec excludes comments from data model). `Commented<T>` provides write-only comment injection. CST-based preservation tracked as future work
 
 </details>
 
