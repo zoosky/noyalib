@@ -461,6 +461,61 @@ impl serde::ser::Error for Error {
     }
 }
 
+// ── miette::Diagnostic integration ──────────────────────────────────────
+//
+// When the `miette` feature is enabled, noyalib errors participate in the
+// standard Rust diagnostics ecosystem. CLI tools using `miette::Report` get
+// rich terminal output with source spans for free.
+
+#[cfg(feature = "miette")]
+impl miette::Diagnostic for Error {
+    fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        let code = match self {
+            Error::Parse(_) | Error::ParseWithLocation { .. } => "noyalib::parse",
+            Error::Serialize(_) => "noyalib::serialize",
+            Error::Deserialize(_) | Error::DeserializeWithLocation { .. } => "noyalib::deserialize",
+            Error::TypeMismatch { .. } => "noyalib::type_mismatch",
+            Error::MissingField(_) => "noyalib::missing_field",
+            Error::UnknownField(_) => "noyalib::unknown_field",
+            Error::RecursionLimitExceeded { .. } => "noyalib::recursion_limit",
+            Error::RepetitionLimitExceeded => "noyalib::repetition_limit",
+            Error::UnknownAnchor(_) => "noyalib::unknown_anchor",
+            Error::DuplicateKey(_) => "noyalib::duplicate_key",
+            Error::EndOfStream => "noyalib::eof",
+            Error::MoreThanOneDocument => "noyalib::multi_document",
+            Error::Io(_) => "noyalib::io",
+            Error::Shared(inner) => return inner.code(),
+            _ => "noyalib::error",
+        };
+        Some(Box::new(code))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
+        let help = match self {
+            Error::RecursionLimitExceeded { .. } => {
+                Some("Increase ParserConfig::max_depth or simplify the document structure")
+            }
+            Error::RepetitionLimitExceeded => {
+                Some("Increase ParserConfig::max_alias_expansions or reduce alias usage")
+            }
+            Error::DuplicateKey(_) => Some("Use DuplicateKeyPolicy::Last to accept duplicate keys"),
+            Error::MoreThanOneDocument => {
+                Some("Use noyalib::load_all() to parse multi-document streams")
+            }
+            Error::UnknownAnchor(_) => Some("Define the anchor (&name) before referencing it"),
+            _ => None,
+        };
+        help.map(|s| -> Box<dyn fmt::Display + 'a> { Box::new(s) })
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        let loc = self.location()?;
+        // Byte offset → single-character span at the error point.
+        let label = miette::LabeledSpan::at_offset(loc.index, "here");
+        Some(Box::new(std::iter::once(label)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
