@@ -198,7 +198,6 @@ proptest = "1.11"
 serde_yaml_ng = "0.10"
 yaml-rust2 = "0.9"
 serde-saphyr = "0.0.24"
-serde_yml = "0.0.12"
 yaml_lib = "0.2"
 rust-yaml = "0.0.5"
 

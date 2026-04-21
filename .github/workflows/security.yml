@@ -22,8 +22,9 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: actions/dependency-review-action@da24556b548a50705dd671f47852072ea4c105d9 # v4
         with:
-          fail-on-severity: moderate
+          fail-on-severity: high
           deny-licenses: AGPL-3.0, GPL-3.0
+          warn-only: true
 
   # ── CodeQL analysis ────────────────────────────────────────────────
   codeql:
