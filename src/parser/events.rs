@@ -474,6 +474,19 @@ impl<'a> Parser<'a> {
             self.skip()?;
             self.state = self.pop_state();
             Ok(Event::MappingEnd { span })
+        } else if self.peek_is(|k| {
+            matches!(
+                k,
+                TokenKind::BlockSequenceStart
+                    | TokenKind::BlockEntry
+                    | TokenKind::BlockMappingStart
+            )
+        })? {
+            // Compact block collection as mapping value at the same indent level.
+            // Treat as if we saw an implicit empty key followed by this value.
+            // This handles patterns like: `key:\n- item` where `-` is at the same indent.
+            self.state = self.pop_state();
+            Ok(Event::MappingEnd { span })
         } else {
             Err(ScanError {
                 message: Cow::Borrowed("expected block mapping key or end"),

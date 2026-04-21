@@ -328,7 +328,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                 self.deserialize_map(visitor)
             }
             Event::Alias { .. } => Err(self.fallback()),
-            Event::StreamEnd => Err(Error::EndOfStream),
+            Event::StreamEnd | Event::DocumentEnd => {
+                // Empty or comment-only document — resolve to null per YAML spec.
+                visitor.visit_none()
+            }
             _ => {
                 // Skip document markers etc.
                 self.skip_event()?;

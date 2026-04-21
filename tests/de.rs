@@ -302,9 +302,9 @@ fn test_bool_tag_resolution() {
 // ============================================================================
 
 #[test]
-fn test_empty_document_error() {
+fn test_empty_document_null() {
     let result: Result<Value, _> = from_str("");
-    assert!(result.is_err());
+    assert_eq!(result.unwrap(), Value::Null);
 }
 
 #[test]
@@ -467,7 +467,7 @@ fn test_from_reader() {
 fn test_empty_yaml() {
     let yaml = "";
     let result: Result<Value, _> = from_str(yaml);
-    assert!(result.is_err());
+    assert_eq!(result.unwrap(), Value::Null);
 }
 
 #[test]

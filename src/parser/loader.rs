@@ -81,10 +81,10 @@ pub(crate) fn load_one(input: &str, config: &ParseConfig) -> Result<(Value, Span
     let docs = load(input, config)?;
 
     if docs.is_empty() {
-        return Err(Error::Parse("empty YAML document".to_string()));
+        // Empty/comment-only documents resolve to Null per YAML spec.
+        return Ok((Value::Null, SpanTree::Leaf(0, 0)));
     }
 
-    // SAFETY: docs.is_empty() checked above — at least one document exists.
     Ok(docs
         .into_iter()
         .next()
@@ -772,7 +772,8 @@ pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Val
 
     let mut docs = loader.into_docs();
     if docs.is_empty() {
-        return Err(Error::Parse("empty YAML document".to_owned()));
+        // Empty/comment-only documents resolve to Null per YAML spec.
+        return Ok(Value::Null);
     }
     Ok(docs.swap_remove(0))
 }
