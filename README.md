@@ -4,10 +4,10 @@
   <img src="https://cloudcdn.pro/noyalib/v1/logos/noyalib.svg" alt="Noyalib logo" width="128" />
 </p>
 
-<h1 align="center">noyalib</h1>
+<h1 align="center">Native Optimized YAML (noyalib)</h1>
 
 <p align="center">
-  <strong>Pure Rust YAML 1.2 library. Zero unsafe code. Full serde integration.</strong>
+  <strong>A Library In Bytes. Pure Rust YAML 1.2. Zero unsafe code.</strong>
 </p>
 
 <p align="center">
@@ -117,19 +117,21 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 
 noyalib competes across four categories of Rust YAML libraries:
 
-| | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes |
-| **Zero `unsafe`** | Yes | No | No | Yes | Yes |
-| **Serde integration** | Yes | Yes | Yes | Yes | No |
-| **Streaming deser** | Yes | No | No | No | No |
-| **`#![no_std]`** | Yes | No | No | No | No |
-| **Zero-copy scalars** | Yes | No | No | No | No |
-| **DoS hardened** | 7 limits | Basic | Basic | Yes | No |
-| **`miette` diagnostics** | Yes | No | No | No | No |
-| **WASM** | 201 KB | No | No | No | No |
-| **Source spans** | Yes | No | No | Yes | No |
-| **YAML 1.1 compat** | Yes | Yes | Yes | No | Yes |
+| | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes | Yes |
+| **Zero `unsafe`** | Yes | No | No | Yes | Yes | Yes |
+| **Serde integration** | Yes | Yes | Yes | Yes | No | Yes |
+| **Streaming deser** | Yes | No | No | No | No | No |
+| **`#![no_std]`** | Yes | No | No | No | No | No |
+| **Zero-copy scalars** | Yes | No | No | No | No | Yes |
+| **SIMD scanning** | Yes (memchr) | No | No | No | No | No |
+| **DoS hardened** | 7 limits | Basic | Basic | Yes | No | Yes |
+| **`miette` diagnostics** | Yes | No | No | No | No | No |
+| **WASM** | 201 KB | No | No | No | No | No |
+| **Source spans** | Yes | No | No | Yes | No | No |
+| **YAML 1.1 compat** | Yes | Yes | Yes | No | Yes | No |
+| **Serialization** | Yes | Yes | Yes | Yes | No | No |
 
 ---
 
@@ -139,12 +141,19 @@ Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--releas
 
 ### Deserialization throughput
 
-| Library | K8s payload (60 lines) | Plain scalars (16 fields) | Large (500 items) |
+| Library | Simple (3 fields) | Nested (20 fields) | Large (500 items) |
 | :--- | ---: | ---: | ---: |
-| **noyalib** | **18.0 us** | **6.65 us** | **0.83 ms** |
-| yaml-rust2 | 27.7 us (1.5x) | — | 1.24 ms (1.5x) |
-| serde\_yaml\_ng | 32.6 us (1.8x) | 12.3 us (1.9x) | 1.49 ms (1.8x) |
-| serde-saphyr | 39.0 us (2.2x) | 14.7 us (2.2x) | — |
+| **noyalib** | **1.53 us** | **10.3 us** | **0.90 ms** |
+| yaml-rust2 | 2.08 us (1.4x) | 13.5 us (1.3x) | 1.23 ms (1.4x) |
+| serde\_yaml\_ng | 2.79 us (1.8x) | 16.9 us (1.6x) | 1.47 ms (1.6x) |
+| serde-saphyr | 3.39 us (2.2x) | 20.0 us (1.9x) | 1.83 ms (2.0x) |
+
+### Typed deserialization (streaming, no Value AST)
+
+| Library | Simple struct | Nested struct |
+| :--- | ---: | ---: |
+| **noyalib** | **1.29 us** | **7.47 us** |
+| serde\_yaml\_ng | 2.30 us (1.8x) | 12.5 us (1.7x) |
 
 ### Serialization throughput
 
@@ -159,7 +168,9 @@ Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--releas
 | :--- | :--- |
 | Streaming deserializer (typed targets) | 36% faster than Value AST path |
 | Zero-copy scanner (`Cow::Borrowed`) | 26% fewer heap allocations |
+| SIMD-accelerated scanning (`memchr`) | Faster delimiter search on large inputs |
 | Span-free path (`from_str` default) | 77% less overhead vs span tracking |
+| Serialization recursion limit | `max_depth` enforced, prevents stack overflow |
 | DoS rejection (billion laughs) | <3 us to reject with `ParserConfig::strict()` |
 | DoS rejection (50-level nesting) | <3 us to reject |
 

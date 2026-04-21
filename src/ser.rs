@@ -92,6 +92,8 @@ pub struct SerializerConfig {
     pub folded_wrap_chars: usize,
     /// Minimum string length before block scalar style is considered (default: 80).
     pub min_fold_chars: usize,
+    /// Maximum nesting depth allowed during serialization (default: 128).
+    pub max_depth: usize,
 }
 
 impl Default for SerializerConfig {
@@ -109,6 +111,7 @@ impl Default for SerializerConfig {
             compact_list_indent: false,
             folded_wrap_chars: 80,
             min_fold_chars: 80,
+            max_depth: 128,
         }
     }
 }
@@ -221,6 +224,13 @@ impl SerializerConfig {
     #[must_use]
     pub fn min_fold_chars(mut self, chars: usize) -> Self {
         self.min_fold_chars = chars;
+        self
+    }
+
+    /// Set the maximum nesting depth for serialization.
+    #[must_use]
+    pub fn max_depth(mut self, depth: usize) -> Self {
+        self.max_depth = depth;
         self
     }
 }
@@ -378,7 +388,7 @@ fn value_to_string(value: &Value, config: &SerializerConfig) -> Result<String> {
     if config.document_start {
         output.push_str("---\n");
     }
-    write_value(&mut output, value, 0, true, config)?;
+    write_value(&mut output, value, 0, true, config, 0)?;
     if config.document_end {
         output.push_str("\n...");
     }
@@ -421,7 +431,11 @@ fn write_value(
     indent: usize,
     is_root: bool,
     config: &SerializerConfig,
+    depth: usize,
 ) -> Result<()> {
+    if depth > config.max_depth {
+        return Err(Error::RecursionLimitExceeded { depth });
+    }
     match value {
         Value::Null => output.push_str("null"),
         Value::Bool(b) => output.push_str(if *b { "true" } else { "false" }),
@@ -444,17 +458,25 @@ fn write_value(
             }
         }
         Value::String(s) => write_string(output, s, indent, config),
-        Value::Sequence(seq) => write_sequence(output, seq, indent, is_root, config)?,
-        Value::Mapping(map) => write_mapping(output, map, indent, is_root, config)?,
+        Value::Sequence(seq) => write_sequence(output, seq, indent, is_root, config, depth)?,
+        Value::Mapping(map) => write_mapping(output, map, indent, is_root, config, depth)?,
         Value::Tagged(tagged) => {
             let tag_str = tagged.tag().as_str();
             if tag_str.starts_with("__noya_") {
-                write_internal_tag(output, tag_str, tagged.value(), indent, is_root, config)?;
+                write_internal_tag(
+                    output,
+                    tag_str,
+                    tagged.value(),
+                    indent,
+                    is_root,
+                    config,
+                    depth,
+                )?;
             } else {
                 // Write tag followed by value
                 output.push_str(tag_str);
                 output.push(' ');
-                write_value(output, tagged.value(), indent, false, config)?;
+                write_value(output, tagged.value(), indent, false, config, depth + 1)?;
             }
         }
     }
@@ -743,6 +765,7 @@ fn write_sequence(
     indent: usize,
     is_root: bool,
     config: &SerializerConfig,
+    depth: usize,
 ) -> Result<()> {
     if seq.is_empty() {
         output.push_str("[]");
@@ -764,9 +787,9 @@ fn write_sequence(
                     write_string(output, k, indent + 1, config);
                     output.push_str(": ");
                     if matches!(v, Value::Mapping(_) | Value::Sequence(_)) {
-                        write_value(output, v, indent + 2, false, config)?;
+                        write_value(output, v, indent + 2, false, config, depth + 1)?;
                     } else {
-                        write_value(output, v, indent + 1, false, config)?;
+                        write_value(output, v, indent + 1, false, config, depth + 1)?;
                     }
                 }
                 // Write remaining key-values
@@ -776,17 +799,17 @@ fn write_sequence(
                     write_string(output, k, indent + 1, config);
                     output.push_str(": ");
                     if matches!(v, Value::Mapping(_) | Value::Sequence(_)) {
-                        write_value(output, v, indent + 2, false, config)?;
+                        write_value(output, v, indent + 2, false, config, depth + 1)?;
                     } else {
-                        write_value(output, v, indent + 1, false, config)?;
+                        write_value(output, v, indent + 1, false, config, depth + 1)?;
                     }
                 }
             }
             Value::Sequence(_) => {
-                write_value(output, value, indent + 1, false, config)?;
+                write_value(output, value, indent + 1, false, config, depth + 1)?;
             }
             _ => {
-                write_value(output, value, indent + 1, false, config)?;
+                write_value(output, value, indent + 1, false, config, depth + 1)?;
             }
         }
     }
@@ -799,6 +822,7 @@ fn write_mapping(
     indent: usize,
     is_root: bool,
     config: &SerializerConfig,
+    depth: usize,
 ) -> Result<()> {
     if map.is_empty() {
         output.push_str("{}");
@@ -815,15 +839,15 @@ fn write_mapping(
         match value {
             Value::Mapping(m) if !m.is_empty() => {
                 output.push(':');
-                write_value(output, value, indent + 1, false, config)?;
+                write_value(output, value, indent + 1, false, config, depth + 1)?;
             }
             Value::Sequence(s) if !s.is_empty() => {
                 output.push(':');
-                write_value(output, value, indent + 1, false, config)?;
+                write_value(output, value, indent + 1, false, config, depth + 1)?;
             }
             _ => {
                 output.push_str(": ");
-                write_value(output, value, indent, false, config)?;
+                write_value(output, value, indent, false, config, depth + 1)?;
             }
         }
     }
@@ -837,59 +861,60 @@ fn write_internal_tag(
     indent: usize,
     is_root: bool,
     config: &SerializerConfig,
+    depth: usize,
 ) -> Result<()> {
     match tag {
         crate::fmt::MAGIC_FLOW_SEQ => {
             if let Value::Sequence(seq) = value {
-                write_flow_sequence(output, seq, config)?;
+                write_flow_sequence(output, seq, config, depth)?;
             } else {
-                write_value(output, value, indent, is_root, config)?;
+                write_value(output, value, indent, is_root, config, depth)?;
             }
         }
         crate::fmt::MAGIC_FLOW_MAP => {
             if let Value::Mapping(map) = value {
-                write_flow_mapping(output, map, config)?;
+                write_flow_mapping(output, map, config, depth)?;
             } else {
-                write_value(output, value, indent, is_root, config)?;
+                write_value(output, value, indent, is_root, config, depth)?;
             }
         }
         crate::fmt::MAGIC_LIT_STR => {
             if let Value::String(s) = value {
                 write_literal_block(output, s, indent, config);
             } else {
-                write_value(output, value, indent, is_root, config)?;
+                write_value(output, value, indent, is_root, config, depth)?;
             }
         }
         crate::fmt::MAGIC_FOLD_STR => {
             if let Value::String(s) = value {
                 write_folded_block(output, s, indent, config);
             } else {
-                write_value(output, value, indent, is_root, config)?;
+                write_value(output, value, indent, is_root, config, depth)?;
             }
         }
         crate::fmt::MAGIC_COMMENTED => {
             // value is a sequence [inner_value, comment_string]
             if let Value::Sequence(seq) = value {
                 if seq.len() == 2 {
-                    write_value(output, &seq[0], indent, is_root, config)?;
+                    write_value(output, &seq[0], indent, is_root, config, depth)?;
                     if let Value::String(comment) = &seq[1] {
                         output.push_str(" # ");
                         output.push_str(comment);
                     }
                 } else {
-                    write_value(output, value, indent, is_root, config)?;
+                    write_value(output, value, indent, is_root, config, depth)?;
                 }
             } else {
-                write_value(output, value, indent, is_root, config)?;
+                write_value(output, value, indent, is_root, config, depth)?;
             }
         }
         crate::fmt::MAGIC_SPACE_AFTER => {
-            write_value(output, value, indent, is_root, config)?;
+            write_value(output, value, indent, is_root, config, depth)?;
             output.push('\n');
         }
         _ => {
             // Unknown internal tag — fall through to regular output
-            write_value(output, value, indent, is_root, config)?;
+            write_value(output, value, indent, is_root, config, depth)?;
         }
     }
     Ok(())
@@ -899,19 +924,25 @@ fn write_flow_sequence(
     output: &mut String,
     seq: &Sequence,
     config: &SerializerConfig,
+    depth: usize,
 ) -> Result<()> {
     output.push('[');
     for (i, value) in seq.iter().enumerate() {
         if i > 0 {
             output.push_str(", ");
         }
-        write_value(output, value, 0, false, config)?;
+        write_value(output, value, 0, false, config, depth + 1)?;
     }
     output.push(']');
     Ok(())
 }
 
-fn write_flow_mapping(output: &mut String, map: &Mapping, config: &SerializerConfig) -> Result<()> {
+fn write_flow_mapping(
+    output: &mut String,
+    map: &Mapping,
+    config: &SerializerConfig,
+    depth: usize,
+) -> Result<()> {
     output.push('{');
     for (i, (key, value)) in map.iter().enumerate() {
         if i > 0 {
@@ -919,7 +950,7 @@ fn write_flow_mapping(output: &mut String, map: &Mapping, config: &SerializerCon
         }
         write_string(output, key, 0, config);
         output.push_str(": ");
-        write_value(output, value, 0, false, config)?;
+        write_value(output, value, 0, false, config, depth + 1)?;
     }
     output.push('}');
     Ok(())
@@ -1003,7 +1034,7 @@ pub fn to_string_multi_with_config<T: Serialize>(
         }
         output.push_str("---\n");
         let v = to_value(value)?;
-        write_value(&mut output, &v, 0, true, config)?;
+        write_value(&mut output, &v, 0, true, config, 0)?;
         output.push('\n');
     }
     Ok(output)
@@ -1416,5 +1447,27 @@ impl ser::SerializeStructVariant for SerializeStructVariant {
         let mut map = Mapping::new();
         let _ = map.insert(self.name, Value::Mapping(self.map));
         Ok(Value::Mapping(map))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Value;
+
+    #[test]
+    fn test_serialization_recursion_limit() {
+        let mut root = Value::Sequence(vec![Value::Null]);
+        for _ in 0..200 {
+            root = Value::Sequence(vec![root]);
+        }
+
+        let config = SerializerConfig::default().max_depth(128);
+        let result = to_string_with_config(&root, &config);
+
+        match result {
+            Err(Error::RecursionLimitExceeded { depth }) => assert!(depth > 128),
+            _ => panic!("Expected RecursionLimitExceeded error, got {:?}", result),
+        }
     }
 }

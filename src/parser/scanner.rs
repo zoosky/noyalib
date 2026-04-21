@@ -569,8 +569,10 @@ impl<'a> Scanner<'a> {
         self.simple_key_allowed = false;
         // We don't really need to interpret %YAML or %TAG directives for
         // our purposes; just skip to the end of the line.
-        while !self.is_eof() && !Self::is_break(self.peek()) {
-            self.advance();
+        if let Some(pos) = memchr::memchr2(b'\n', b'\r', &self.input[self.pos..]) {
+            self.advance_by(pos);
+        } else {
+            self.pos = self.input.len();
         }
         Ok(())
     }
@@ -858,7 +860,32 @@ impl<'a> Scanner<'a> {
             let mut len = 0;
             let mut is_single_line = true;
 
-            while len < remaining.len() {
+            // Find first line break or comment. Use memchr for large
+            // remaining slices (>32 bytes) where SIMD pays off; fall back
+            // to a simple scan for short scalars to avoid setup overhead.
+            let mut search_end = remaining.len();
+            if remaining.len() > 32 {
+                if let Some(p) = memchr::memchr3(b'\n', b'\r', b'#', remaining) {
+                    search_end = p;
+                    if remaining[p] != b'#' {
+                        is_single_line = false;
+                    }
+                }
+            } else {
+                for (i, &b) in remaining.iter().enumerate() {
+                    if b == b'\n' || b == b'\r' {
+                        search_end = i;
+                        is_single_line = false;
+                        break;
+                    }
+                    if b == b'#' {
+                        search_end = i;
+                        break;
+                    }
+                }
+            }
+
+            while len < search_end {
                 let c = remaining[len];
                 if c == b':' {
                     let next = if len + 1 < remaining.len() {
@@ -875,16 +902,8 @@ impl<'a> Scanner<'a> {
                 if in_flow && (c == b',' || c == b'[' || c == b']' || c == b'{' || c == b'}') {
                     break;
                 }
-                if c == b'#' {
-                    break;
-                }
-                if Self::is_break(c) {
-                    is_single_line = false;
-                    break;
-                }
                 if c == b' ' || c == b'\t' {
                     // Check if this is trailing whitespace before a break or terminator.
-                    // If so, we can still use the fast path (trim trailing blanks).
                     let mut j = len + 1;
                     while j < remaining.len() && (remaining[j] == b' ' || remaining[j] == b'\t') {
                         j += 1;
@@ -904,6 +923,8 @@ impl<'a> Scanner<'a> {
                     {
                         break;
                     }
+                    len = j;
+                    continue;
                 }
                 len += 1;
             }
