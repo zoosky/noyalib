@@ -184,8 +184,8 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | | |
 | :--- | :--- |
 | **Serde** | `from_str`, `from_slice`, `from_reader`, `to_string`, `to_writer`, `to_fmt_writer` -- all with `_with_config` variants. `to_value`, `from_value` for Value conversion. Multi-document: `load_all`, `load_all_as`, `to_string_multi`. Streaming deserializer bypasses Value AST for typed targets. |
-| **Values** | 7-variant `Value` enum: Null, Bool, Number, String, Sequence, Mapping, Tagged. Path traversal via `get_path("server.host")`. Deep merge via `merge()` and `merge_concat()`. `MappingAny` for non-string keys. |
-| **Spans** | `Spanned<T>` tracks line, column, and byte offset for every deserialized field. Serializes transparently as `T`. |
+| **Values** | 7-variant `Value` enum: Null, Bool, Number, String, Sequence, Mapping, Tagged. Path traversal via `get_path("server.host")`. Deep merge via `merge()` and `merge_concat()`. `MappingAny` for non-string keys (any `Value` as key, including sequences and mappings). |
+| **Spans** | `Spanned<T>` tracks line, column, and byte offset for every deserialized field. Serializes transparently as `T`. Span tracking is opt-in — disabled by default in `from_str` for zero overhead. For large documents, consider the memory impact of the span HashMap. |
 | **Formatting** | Per-value output control: `FlowSeq<T>`, `FlowMap<T>`, `LitStr`, `FoldStr`, `Commented<T>`, `SpaceAfter<T>`. |
 | **Enums** | `singleton_map`, `singleton_map_optional`, `singleton_map_recursive`, `singleton_map_with` -- custom key transforms (snake\_case, kebab-case, lowercase). |
 | **Schemas** | Validate against YAML schema levels: `validate_failsafe_schema`, `validate_json_schema`, `validate_core_schema`. |

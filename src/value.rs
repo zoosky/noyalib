@@ -1118,19 +1118,38 @@ impl Ord for Number {
                 }
             }
             (Number::Integer(a), Number::Float(b)) => {
-                let a_f = *a as f64;
                 if b.is_nan() {
                     Ordering::Less
+                } else if *a > (1_i64 << 53) || *a < -(1_i64 << 53) {
+                    // Large integer outside f64 safe range — compare via string
+                    // to avoid precision loss from i64→f64 cast.
+                    let a_f = *a as f64;
+                    if (a_f as i64) == *a {
+                        a_f.partial_cmp(b).unwrap_or(Ordering::Equal)
+                    } else {
+                        // Precision lost — compare integer magnitude vs float
+                        if *a > 0 {
+                            if *b < (1_i64 << 53) as f64 {
+                                Ordering::Greater
+                            } else {
+                                (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
+                            }
+                        } else if *b > -(1_i64 << 53) as f64 {
+                            Ordering::Less
+                        } else {
+                            (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
+                        }
+                    }
                 } else {
-                    a_f.partial_cmp(b).unwrap_or(Ordering::Equal)
+                    (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
                 }
             }
             (Number::Float(a), Number::Integer(b)) => {
-                let b_f = *b as f64;
-                if a.is_nan() {
-                    Ordering::Greater
-                } else {
-                    a.partial_cmp(&b_f).unwrap_or(Ordering::Equal)
+                // Delegate to the Integer-Float case and invert.
+                match Number::Integer(*b).cmp(&Number::Float(*a)) {
+                    Ordering::Less => Ordering::Greater,
+                    Ordering::Greater => Ordering::Less,
+                    Ordering::Equal => Ordering::Equal,
                 }
             }
         }

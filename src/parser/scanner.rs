@@ -106,7 +106,14 @@ pub(crate) struct Scanner<'a> {
     pos: usize,
     /// The mark position for the current token start.
     mark: usize,
-    /// Current column (tracked incrementally to avoid O(n) backward scan).
+    /// Current column as **byte offset** from the last newline.
+    ///
+    /// This is a byte offset, not a character count. For ASCII-only content
+    /// (including YAML indentation, which is restricted to spaces), byte and
+    /// character columns are identical. For multi-byte UTF-8 scalars, the
+    /// column reported in `Location` may differ from what editors show.
+    /// `Location::from_index()` re-computes the correct character column
+    /// when needed (e.g., for error formatting).
     col: usize,
     /// Output token buffer (contiguous for cache locality).
     tokens: Vec<Token<'a>>,
