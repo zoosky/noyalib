@@ -16,6 +16,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Full serde `Serialize` and `Deserialize` support.
 - **Streaming deserializer**: Bypasses Value AST for typed deserialization (50% faster than Value-based path).
 - **Zero-copy scanner**: `Cow<'a, str>` scalars borrow from input without heap allocation.
+- **Zero-copy AST**: `BorrowedValue<'a>` borrows strings from input — 18% faster than owned `Value`.
+- **Path queries**: `value.query("items[*].name")` with wildcards (`*`) and recursive descent (`..`).
 - **SIMD-accelerated scanning**: `memchr` for delimiter search on large inputs.
 - **Span-free fast path**: `NoSpanLoader` for deserialization without span tracking overhead.
 - **Unicode escape sequences**: Full `\xNN`, `\uNNNN`, `\UNNNNNNNN` support in double-quoted scalars.

@@ -102,14 +102,15 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 
 - **Pure Rust** -- no C bindings, no FFI, no `unsafe` blocks
 - **Streaming deserializer** -- bypasses the Value AST for typed targets
-- **Zero-copy scanner** -- `Cow<'a, str>` scalars borrow directly from input
+- **Zero-copy** -- `BorrowedValue<'a>` borrows strings from input (18% faster)
+- **Path queries** -- `value.query("items[*].name")` with wildcards and recursive descent
 - **DoS hardened** -- 7 configurable limits, billion-laughs safe
 - **`#![no_std]`** -- works with `alloc` only for embedded and WASM
 - **`miette` diagnostics** -- rich terminal errors with source spans
-- **201 KB WASM binary** -- runs in browsers via wasm-bindgen
 - **100% YAML Test Suite** -- 392/392 official test cases pass
-- **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
-- **2,235 tests** -- unit, integration, doc-tests, property-based, official suite
+- **201 KB WASM binary** -- runs in browsers via wasm-bindgen
+- **6 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
+- **2,565 tests** -- unit, integration, doc-tests, property-based, official suite
 - **45 branded examples** with animated spinner UI
 
 ---
@@ -134,6 +135,8 @@ noyalib competes across four categories of Rust YAML libraries:
 | **Source spans** | Yes | No | No | Yes | No | No |
 | **YAML 1.1 compat** | Yes | Yes | Yes | No | Yes | No |
 | **Serialization** | Yes | Yes | Yes | Yes | No | No |
+| **Path queries** | `query("..name")` | No | No | No | No | No |
+| **Zero-copy AST** | `BorrowedValue<'a>` | No | No | No | No | Partial |
 
 ---
 
@@ -173,6 +176,8 @@ Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--releas
 | SIMD-accelerated scanning (`memchr`) | Faster delimiter search on large inputs |
 | Span-free path (`from_str` default) | 77% less overhead vs span tracking |
 | Serialization recursion limit | `max_depth` enforced, prevents stack overflow |
+| `BorrowedValue<'a>` (zero-copy AST) | **18% faster** than owned Value |
+| Path queries (wildcards, recursive descent) | `value.query("items[*].name")` |
 | DoS rejection (billion laughs) | <3 us to reject with `ParserConfig::strict()` |
 | DoS rejection (50-level nesting) | <3 us to reject |
 
@@ -182,8 +187,8 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 24,204 lines across 22 modules |
-| **Test suite** | 2,235 tests + 69 doc-tests |
+| **Source** | 25,188 lines across 23 modules |
+| **Test suite** | 2,565 tests + 69 doc-tests |
 | **YAML Test Suite** | 100% compliance (392/392 active cases) |
 | **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
@@ -198,7 +203,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | | |
 | :--- | :--- |
 | **Serde** | `from_str`, `from_slice`, `from_reader`, `to_string`, `to_writer`, `to_fmt_writer` -- all with `_with_config` variants. `to_value`, `from_value` for Value conversion. Multi-document: `load_all`, `load_all_as`, `to_string_multi`. Streaming deserializer bypasses Value AST for typed targets. |
-| **Values** | 7-variant `Value` enum: Null, Bool, Number, String, Sequence, Mapping, Tagged. Path traversal via `get_path("server.host")`. Deep merge via `merge()` and `merge_concat()`. `MappingAny` for non-string keys (any `Value` as key, including sequences and mappings). |
+| **Values** | 7-variant `Value` enum: Null, Bool, Number, String, Sequence, Mapping, Tagged. Path traversal via `get_path("server.host")`. Path queries via `query("items[*].name")` with wildcards (`*`) and recursive descent (`..`). Deep merge via `merge()` and `merge_concat()`. `MappingAny` for non-string keys. Zero-copy `BorrowedValue<'a>` borrows strings from input (18% faster). |
 | **Spans** | `Spanned<T>` tracks line, column, and byte offset for every deserialized field. Serializes transparently as `T`. Span tracking is opt-in — disabled by default in `from_str` for zero overhead. For large documents, consider the memory impact of the span HashMap. |
 | **Formatting** | Per-value output control: `FlowSeq<T>`, `FlowMap<T>`, `LitStr`, `FoldStr`, `Commented<T>`, `SpaceAfter<T>`. |
 | **Enums** | `singleton_map`, `singleton_map_optional`, `singleton_map_recursive`, `singleton_map_with` -- custom key transforms (snake\_case, kebab-case, lowercase). |
@@ -287,7 +292,31 @@ let first = value.get("items").and_then(|v| v.get(0));
 // Missing keys return None (never panic)
 assert!(value.get("nonexistent").is_none());
 assert!(value.get_path("a.b.c").is_none());
+
+// Path queries: wildcards and recursive descent
+let all_names = value.query("items[*]");       // all items
+let deep = value.query("..debug");              // find at any depth
 ```
+
+</details>
+
+<details>
+<summary><b>Zero-copy borrowed values</b></summary>
+
+```rust
+use noyalib::borrowed::from_str_borrowed;
+
+let yaml = "host: localhost\nport: 8080\n";
+let value = from_str_borrowed(yaml).unwrap();
+
+// Strings borrow directly from input — zero heap allocation
+assert_eq!(value.as_mapping().unwrap().get("host").unwrap().as_str(), Some("localhost"));
+
+// Convert to owned Value when needed
+let owned = value.into_owned();
+```
+
+18% faster than `from_str::<Value>` on typical payloads. Aliases not supported in borrowed mode.
 
 </details>
 

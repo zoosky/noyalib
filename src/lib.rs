@@ -78,6 +78,8 @@
 //! - **Hardened** — configurable depth, size, and alias limits. Billion-laughs
 //!   safe.
 //! - **100% YAML Test Suite** — 392/392 official test cases pass.
+//! - **Zero-copy** — [`borrowed::BorrowedValue`] borrows strings from input.
+//! - **Path queries** — `value.query("items[*].name")` with wildcards.
 //! - **`no_std`** — works with `alloc` only (`default-features = false`).
 //! - **`miette`** — optional rich terminal diagnostics (`--features miette`).
 
