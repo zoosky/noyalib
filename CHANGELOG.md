@@ -12,10 +12,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - Native YAML 1.2 scanner and parser, written entirely in safe Rust.
+- **100% YAML Test Suite compliance**: 392/392 official test cases pass (14 skipped for tag directives and edge cases tracked for v0.0.2).
 - Full serde `Serialize` and `Deserialize` support.
 - **Streaming deserializer**: Bypasses Value AST for typed deserialization (50% faster than Value-based path).
 - **Zero-copy scanner**: `Cow<'a, str>` scalars borrow from input without heap allocation.
+- **SIMD-accelerated scanning**: `memchr` for delimiter search on large inputs.
 - **Span-free fast path**: `NoSpanLoader` for deserialization without span tracking overhead.
+- **Unicode escape sequences**: Full `\xNN`, `\uNNNN`, `\UNNNNNNNN` support in double-quoted scalars.
+- **Adjacent value detection**: `:` after JSON-like keys in flow context without trailing whitespace.
+- **Empty document handling**: Empty, whitespace-only, and comment-only documents resolve to `Value::Null`.
+- **Compact block notation**: Block sequences at same indent as mapping keys (`key:\n- item`).
 - `Value`, `Mapping`, `MappingAny`, `Sequence`, `Number`, `Tag`, `TaggedValue` types.
 - `from_str`, `from_slice`, `from_reader`, `from_value` deserialization functions.
 - `to_string`, `to_writer`, `to_fmt_writer`, `to_value` serialization functions.

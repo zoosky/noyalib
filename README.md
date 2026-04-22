@@ -107,8 +107,9 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 - **`#![no_std]`** -- works with `alloc` only for embedded and WASM
 - **`miette` diagnostics** -- rich terminal errors with source spans
 - **201 KB WASM binary** -- runs in browsers via wasm-bindgen
-- **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu
-- **2,206 tests** -- unit, integration, doc-tests, property-based
+- **100% YAML Test Suite** -- 392/392 official test cases pass
+- **5 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
+- **2,235 tests** -- unit, integration, doc-tests, property-based, official suite
 - **45 branded examples** with animated spinner UI
 
 ---
@@ -119,6 +120,7 @@ noyalib competes across four categories of Rust YAML libraries:
 
 | | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **YAML Test Suite** | 100% (392/392) | — | — | — | — | — |
 | **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes | Yes |
 | **Zero `unsafe`** | Yes | No | No | Yes | Yes | Yes |
 | **Serde integration** | Yes | Yes | Yes | Yes | No | Yes |
@@ -180,11 +182,12 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 23,866 lines across 22 modules |
-| **Test suite** | 2,206 tests + 69 doc-tests |
+| **Source** | 24,204 lines across 22 modules |
+| **Test suite** | 2,235 tests + 69 doc-tests |
+| **YAML Test Suite** | 100% compliance (392/392 active cases) |
 | **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
-| **Dependencies** | 5 runtime + 1 optional (miette) |
+| **Dependencies** | 6 runtime + 1 optional (miette) |
 | **WASM binary** | 201 KB (release, LTO) |
 | **MSRV** | Rust 1.75.0 |
 

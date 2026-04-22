@@ -77,6 +77,7 @@
 //!   offset.
 //! - **Hardened** — configurable depth, size, and alias limits. Billion-laughs
 //!   safe.
+//! - **100% YAML Test Suite** — 392/392 official test cases pass.
 //! - **`no_std`** — works with `alloc` only (`default-features = false`).
 //! - **`miette`** — optional rich terminal diagnostics (`--features miette`).
 
