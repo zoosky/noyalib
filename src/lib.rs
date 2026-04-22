@@ -120,6 +120,8 @@ pub(crate) mod prelude {
 }
 
 mod anchors;
+/// Zero-copy YAML values that borrow from the input.
+pub mod borrowed;
 mod de;
 /// Multi-document loading and iteration.
 pub mod document;

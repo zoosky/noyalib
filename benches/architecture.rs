@@ -318,11 +318,44 @@ fn bench_competitors(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Benchmark: Borrowed vs Owned Value ───────────────────────────────
+
+fn bench_borrowed_vs_owned(c: &mut Criterion) {
+    let mut group = c.benchmark_group("borrowed_vs_owned");
+
+    group.bench_function("owned/k8s", |b| {
+        b.iter(|| {
+            let _: noyalib::Value = noyalib::from_str(black_box(K8S_DEPLOYMENT)).unwrap();
+        });
+    });
+
+    group.bench_function("borrowed/k8s", |b| {
+        b.iter(|| {
+            let _ = noyalib::borrowed::from_str_borrowed(black_box(K8S_DEPLOYMENT)).unwrap();
+        });
+    });
+
+    group.bench_function("owned/zero_copy", |b| {
+        b.iter(|| {
+            let _: noyalib::Value = noyalib::from_str(black_box(ZERO_COPY)).unwrap();
+        });
+    });
+
+    group.bench_function("borrowed/zero_copy", |b| {
+        b.iter(|| {
+            let _ = noyalib::borrowed::from_str_borrowed(black_box(ZERO_COPY)).unwrap();
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_streaming_vs_ast,
     bench_span_overhead,
     bench_security,
+    bench_borrowed_vs_owned,
     bench_competitors,
 );
 criterion_main!(benches);

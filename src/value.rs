@@ -1924,10 +1924,46 @@ impl Value {
             current = match segment {
                 PathSegment::Key(key) => current.get(key.as_str())?,
                 PathSegment::Index(idx) => current.get(idx)?,
+                PathSegment::Wildcard | PathSegment::RecursiveDescent => {
+                    // For get_path, return the first match
+                    return self.query(path).into_iter().next();
+                }
             };
         }
 
         Some(current)
+    }
+
+    /// Query nested values using an extended path expression.
+    ///
+    /// Returns all matching values. Supports:
+    /// - Dot notation: `"foo.bar.baz"`
+    /// - Bracket indexing: `"items[0]"`
+    /// - Wildcard: `"items[*]"` or `"items.*"` — matches all children
+    /// - Recursive descent: `"..name"` — finds `name` at any depth
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use noyalib::{from_str, Value};
+    ///
+    /// let yaml = "items:\n  - name: a\n    v: 1\n  - name: b\n    v: 2\n";
+    /// let value: Value = from_str(yaml).unwrap();
+    ///
+    /// // Wildcard: all items
+    /// let all = value.query("items[*].name");
+    /// assert_eq!(all.len(), 2);
+    ///
+    /// // Recursive descent: find "name" at any depth
+    /// let names = value.query("..name");
+    /// assert_eq!(names.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn query(&self, path: &str) -> Vec<&Value> {
+        let segments = parse_path(path);
+        let mut results = Vec::new();
+        query_recursive(self, &segments, 0, &mut results);
+        results
     }
 
     /// Mutably access a nested value using a path string.
@@ -1957,6 +1993,7 @@ impl Value {
             current = match segment {
                 PathSegment::Key(key) => current.get_mut(key.as_str())?,
                 PathSegment::Index(idx) => current.get_mut(idx)?,
+                PathSegment::Wildcard | PathSegment::RecursiveDescent => return None,
             };
         }
 
@@ -2284,14 +2321,20 @@ enum PathSegment {
     Key(String),
     /// An index in a sequence.
     Index(usize),
+    /// Wildcard: matches all keys or all indices.
+    Wildcard,
+    /// Recursive descent: matches at any depth.
+    RecursiveDescent,
 }
 
 /// Parse a path string into segments.
 ///
 /// Supports:
-/// - Dot notation: "foo.bar.baz"
-/// - Bracket notation: "items[0]"
-/// - Mixed: "items[0].name"
+/// - Dot notation: `"foo.bar.baz"`
+/// - Bracket notation: `"items[0]"`
+/// - Mixed: `"items[0].name"`
+/// - Wildcard: `"items[*]"` or `"items.*"`
+/// - Recursive descent: `"..name"` (find `name` at any depth)
 fn parse_path(path: &str) -> Vec<PathSegment> {
     let mut segments = Vec::new();
     let mut current = String::new();
@@ -2303,12 +2346,16 @@ fn parse_path(path: &str) -> Vec<PathSegment> {
                 if !current.is_empty() {
                     segments.push(PathSegment::Key(core::mem::take(&mut current)));
                 }
+                // Check for recursive descent (..)
+                if chars.peek() == Some(&'.') {
+                    let _ = chars.next();
+                    segments.push(PathSegment::RecursiveDescent);
+                }
             }
             '[' => {
                 if !current.is_empty() {
                     segments.push(PathSegment::Key(core::mem::take(&mut current)));
                 }
-                // Parse the index
                 let mut index_str = String::new();
                 while let Some(&c) = chars.peek() {
                     if c == ']' {
@@ -2318,12 +2365,18 @@ fn parse_path(path: &str) -> Vec<PathSegment> {
                     index_str.push(c);
                     let _ = chars.next();
                 }
-                if let Ok(idx) = index_str.parse::<usize>() {
+                if index_str == "*" {
+                    segments.push(PathSegment::Wildcard);
+                } else if let Ok(idx) = index_str.parse::<usize>() {
                     segments.push(PathSegment::Index(idx));
                 }
             }
-            ']' => {
-                // Should be consumed by '[' handler, but handle gracefully
+            ']' => {}
+            '*' => {
+                if !current.is_empty() {
+                    segments.push(PathSegment::Key(core::mem::take(&mut current)));
+                }
+                segments.push(PathSegment::Wildcard);
             }
             _ => {
                 current.push(c);
@@ -2336,6 +2389,70 @@ fn parse_path(path: &str) -> Vec<PathSegment> {
     }
 
     segments
+}
+
+/// Recursively query a Value tree against path segments.
+fn query_recursive<'a>(
+    value: &'a Value,
+    segments: &[PathSegment],
+    depth: usize,
+    results: &mut Vec<&'a Value>,
+) {
+    if depth >= segments.len() {
+        results.push(value);
+        return;
+    }
+
+    match &segments[depth] {
+        PathSegment::Key(key) => {
+            if let Some(child) = value.get(key.as_str()) {
+                query_recursive(child, segments, depth + 1, results);
+            }
+        }
+        PathSegment::Index(idx) => {
+            if let Some(child) = value.get(*idx) {
+                query_recursive(child, segments, depth + 1, results);
+            }
+        }
+        PathSegment::Wildcard => match value {
+            Value::Sequence(seq) => {
+                for item in seq {
+                    query_recursive(item, segments, depth + 1, results);
+                }
+            }
+            Value::Mapping(map) => {
+                for (_, v) in map.iter() {
+                    query_recursive(v, segments, depth + 1, results);
+                }
+            }
+            _ => {}
+        },
+        PathSegment::RecursiveDescent => {
+            // Match the remaining path at this level and all descendants
+            let remaining = &segments[depth + 1..];
+            if !remaining.is_empty() {
+                // Try matching the rest of the path at this node
+                query_recursive(value, segments, depth + 1, results);
+                // Recurse into all children
+                match value {
+                    Value::Sequence(seq) => {
+                        for item in seq {
+                            query_recursive(item, segments, depth, results);
+                        }
+                    }
+                    Value::Mapping(map) => {
+                        for (_, v) in map.iter() {
+                            query_recursive(v, segments, depth, results);
+                        }
+                    }
+                    Value::Tagged(t) => {
+                        query_recursive(t.value(), segments, depth, results);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 impl PartialEq for Value {
