@@ -15,6 +15,11 @@ pub(crate) use events::{Event, Parser};
 pub(crate) use loader::ParseConfig;
 pub(crate) use scanner::ScalarStyle;
 
+/// Returns a default (zero) `Span` for use in synthesized events.
+pub(crate) fn scanner_span_default() -> scanner::Span {
+    scanner::Span::default()
+}
+
 use crate::error::Result;
 use crate::prelude::*;
 #[cfg(feature = "std")]

@@ -218,6 +218,7 @@ harness = false
 default = ["std"]
 std = []
 miette = ["dep:miette"]
+robotics = []
 
 [package.metadata.docs.rs]
 all-features = true

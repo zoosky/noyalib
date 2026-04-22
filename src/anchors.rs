@@ -18,6 +18,7 @@ use std::rc::{Rc, Weak as RcWeak};
 #[cfg(feature = "std")]
 use std::sync::Weak as ArcWeak;
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 /// An `Rc` wrapper with YAML anchor semantics.
@@ -255,5 +256,153 @@ impl<'de, T> Deserialize<'de> for ArcWeakAnchor<T> {
     {
         let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
         Ok(ArcWeakAnchor(ArcWeak::new()))
+    }
+}
+
+// ── Anchor Registries ──────────────────────────────────────────────────
+
+/// Registry for shared `Rc` anchor references during deserialization.
+///
+/// When the same YAML anchor is referenced multiple times, all aliases
+/// point to the same heap allocation via `Rc::clone`. This enables
+/// true shared-memory DAG structures rather than duplicated subtrees.
+///
+/// # Example
+///
+/// ```rust
+/// use noyalib::AnchorRegistry;
+/// use std::rc::Rc;
+///
+/// let mut reg = AnchorRegistry::<String>::new();
+/// let rc = reg.register("shared".into(), "hello".into());
+/// let alias = reg.resolve("shared").unwrap();
+/// assert!(Rc::ptr_eq(&rc, &alias));
+/// ```
+pub struct AnchorRegistry<T> {
+    anchors: FxHashMap<String, Rc<T>>,
+}
+
+impl<T: fmt::Debug> fmt::Debug for AnchorRegistry<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnchorRegistry")
+            .field("len", &self.anchors.len())
+            .finish()
+    }
+}
+
+impl<T> Default for AnchorRegistry<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> AnchorRegistry<T> {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            anchors: FxHashMap::default(),
+        }
+    }
+
+    /// Register a value under the given anchor name.
+    ///
+    /// Returns the `Rc` wrapping the value. If an anchor with the
+    /// same name already existed, the old entry is replaced.
+    pub fn register(&mut self, name: String, value: T) -> Rc<T> {
+        let rc = Rc::new(value);
+        let _ = self.anchors.insert(name, Rc::clone(&rc));
+        rc
+    }
+
+    /// Resolve an anchor by name, returning a cloned `Rc` if present.
+    pub fn resolve(&self, name: &str) -> Option<Rc<T>> {
+        self.anchors.get(name).cloned()
+    }
+
+    /// Returns the number of registered anchors.
+    pub fn len(&self) -> usize {
+        self.anchors.len()
+    }
+
+    /// Returns `true` if no anchors are registered.
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty()
+    }
+
+    /// Remove all entries from the registry.
+    pub fn clear(&mut self) {
+        self.anchors.clear();
+    }
+}
+
+/// Registry for shared `Arc` anchor references during deserialization.
+///
+/// Thread-safe counterpart to [`AnchorRegistry`]. All aliases for the
+/// same anchor share one `Arc` allocation, enabling cross-thread DAGs.
+///
+/// # Example
+///
+/// ```rust
+/// use noyalib::ArcAnchorRegistry;
+/// use std::sync::Arc;
+///
+/// let mut reg = ArcAnchorRegistry::<String>::new();
+/// let arc = reg.register("shared".into(), "hello".into());
+/// let alias = reg.resolve("shared").unwrap();
+/// assert!(Arc::ptr_eq(&arc, &alias));
+/// ```
+pub struct ArcAnchorRegistry<T> {
+    anchors: FxHashMap<String, Arc<T>>,
+}
+
+impl<T: fmt::Debug> fmt::Debug for ArcAnchorRegistry<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArcAnchorRegistry")
+            .field("len", &self.anchors.len())
+            .finish()
+    }
+}
+
+impl<T> Default for ArcAnchorRegistry<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> ArcAnchorRegistry<T> {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            anchors: FxHashMap::default(),
+        }
+    }
+
+    /// Register a value under the given anchor name.
+    ///
+    /// Returns the `Arc` wrapping the value.
+    pub fn register(&mut self, name: String, value: T) -> Arc<T> {
+        let arc = Arc::new(value);
+        let _ = self.anchors.insert(name, Arc::clone(&arc));
+        arc
+    }
+
+    /// Resolve an anchor by name, returning a cloned `Arc` if present.
+    pub fn resolve(&self, name: &str) -> Option<Arc<T>> {
+        self.anchors.get(name).cloned()
+    }
+
+    /// Returns the number of registered anchors.
+    pub fn len(&self) -> usize {
+        self.anchors.len()
+    }
+
+    /// Returns `true` if no anchors are registered.
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty()
+    }
+
+    /// Remove all entries from the registry.
+    pub fn clear(&mut self) {
+        self.anchors.clear();
     }
 }

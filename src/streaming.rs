@@ -1,14 +1,16 @@
 //! Streaming YAML deserializer that operates directly on parser events.
 //!
 //! Bypasses the intermediate `Value` AST for typed deserialization,
-//! eliminating all intermediate allocations. Falls back to the Value-based
-//! path when anchors/aliases or tags are encountered.
+//! eliminating all intermediate allocations. Anchors and aliases are
+//! handled natively via event buffering and replay. Falls back to the
+//! Value-based path only for tags, merge keys, and `Spanned<T>`.
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
 use crate::prelude::*;
 
+use rustc_hash::FxHashMap;
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 
@@ -17,6 +19,31 @@ use crate::parser::{Event, ParseConfig, Parser, ScalarStyle};
 
 /// Sentinel error message used to signal fallback to the Value-based path.
 const FALLBACK_SENTINEL: &str = "$__noyalib_streaming_fallback";
+
+/// A simplified, owned copy of a parser event used for anchor replay.
+///
+/// When the streaming deserializer encounters an anchored subtree, it
+/// records all events into a `Vec<BufferedEvent>`. When an alias references
+/// that anchor, the buffer is pushed onto a replay stack so the events are
+/// re-emitted without re-parsing.
+#[derive(Debug, Clone)]
+enum BufferedEvent {
+    /// A scalar value.
+    Scalar {
+        /// The resolved scalar text.
+        value: String,
+        /// The original scalar style.
+        style: ScalarStyle,
+    },
+    /// Start of a sequence.
+    SeqStart,
+    /// End of a sequence.
+    SeqEnd,
+    /// Start of a mapping.
+    MapStart,
+    /// End of a mapping.
+    MapEnd,
+}
 
 /// Resolved scalar — avoids building a `Value` for the common case.
 enum Scalar<'a> {
@@ -161,6 +188,14 @@ struct StreamingDeserializer<'a> {
     /// YAML type resolution. Set during map key deserialization so that
     /// keys like `true`, `42`, or `null` are passed through as strings.
     raw_str_mode: bool,
+    /// Buffered events for anchored subtrees, keyed by anchor name.
+    anchor_events: FxHashMap<String, Vec<BufferedEvent>>,
+    /// Stack of event buffers being replayed for alias resolution.
+    /// Each entry is a reversed list of events; we pop from the end.
+    replay_stack: Vec<Vec<BufferedEvent>>,
+    /// When `Some`, we are recording events for an anchored compound
+    /// node. The tuple holds (anchor_name, nesting_depth, buffer).
+    recording: Option<(String, usize, Vec<BufferedEvent>)>,
 }
 
 impl<'a> StreamingDeserializer<'a> {
@@ -172,19 +207,40 @@ impl<'a> StreamingDeserializer<'a> {
             config: *config,
             depth: 0,
             raw_str_mode: false,
+            anchor_events: FxHashMap::default(),
+            replay_stack: Vec::new(),
+            recording: None,
         }
     }
 
     /// Peek at the next event without consuming it.
     fn peek_event(&mut self) -> Result<&Event<'a>> {
         if self.current.is_none() {
+            // Check replay stack first.
+            if let Some(buf) = self.replay_stack.last_mut() {
+                if let Some(be) = buf.pop() {
+                    if buf.is_empty() {
+                        let _ = self.replay_stack.pop();
+                    }
+                    self.current = Some(self.buffered_to_event(be));
+                    return Ok(self.current.as_ref().expect("internal: current set above"));
+                }
+                let _ = self.replay_stack.pop();
+            }
+
             let event = self
                 .parser
                 .next_event()
                 .map_err(|e| Error::parse_at(&*e.message, self.input, e.index))?;
-            self.current = Some(event);
+
+            // Handle alias transparently at peek time.
+            if let Event::Alias { ref anchor, .. } = event {
+                let resolved = self.resolve_alias(anchor)?;
+                self.current = Some(resolved);
+            } else {
+                self.current = Some(event);
+            }
         }
-        // SAFETY: We just set `current` to `Some` above.
         Ok(self
             .current
             .as_ref()
@@ -192,13 +248,170 @@ impl<'a> StreamingDeserializer<'a> {
     }
 
     /// Consume and return the next event.
+    ///
+    /// First drains from the replay stack (for alias expansion), then
+    /// falls through to the peeked event or the underlying parser.
     fn next_event(&mut self) -> Result<Event<'a>> {
-        if let Some(ev) = self.current.take() {
-            Ok(ev)
+        // If we already have a peeked event, use it.
+        let mut ev = if let Some(ev) = self.current.take() {
+            ev
         } else {
+            // Check replay stack.
+            if let Some(buf) = self.replay_stack.last_mut() {
+                if let Some(be) = buf.pop() {
+                    if buf.is_empty() {
+                        let _ = self.replay_stack.pop();
+                    }
+                    return Ok(self.buffered_to_event(be));
+                }
+                let _ = self.replay_stack.pop();
+            }
             self.parser
                 .next_event()
-                .map_err(|e| Error::parse_at(&*e.message, self.input, e.index))
+                .map_err(|e| Error::parse_at(&*e.message, self.input, e.index))?
+        };
+
+        // Handle alias: resolve to buffered events transparently.
+        if let Event::Alias { ref anchor, .. } = ev {
+            let resolved = self.resolve_alias(anchor)?;
+            return Ok(resolved);
+        }
+
+        // Start recording if this event introduces an anchor.
+        self.handle_anchor(&mut ev);
+        // Buffer a copy if we are inside an anchored subtree.
+        self.maybe_record(&ev);
+
+        Ok(ev)
+    }
+
+    /// Convert a `BufferedEvent` back into an owned `Event` for
+    /// consumption by the deserializer.
+    fn buffered_to_event(&self, be: BufferedEvent) -> Event<'a> {
+        let dummy_span = crate::parser::scanner_span_default();
+        match be {
+            BufferedEvent::Scalar { value, style } => Event::Scalar {
+                value: Cow::Owned(value),
+                style,
+                anchor: None,
+                tag: None,
+                span: dummy_span,
+            },
+            BufferedEvent::SeqStart => Event::SequenceStart {
+                anchor: None,
+                tag: None,
+                span: dummy_span,
+            },
+            BufferedEvent::SeqEnd => Event::SequenceEnd { span: dummy_span },
+            BufferedEvent::MapStart => Event::MappingStart {
+                anchor: None,
+                tag: None,
+                span: dummy_span,
+            },
+            BufferedEvent::MapEnd => Event::MappingEnd { span: dummy_span },
+        }
+    }
+
+    /// Handle an anchored event: if the event has an anchor (and no tag),
+    /// strip the anchor and start recording. Must be called before
+    /// `maybe_record` for the same event.
+    fn handle_anchor(&mut self, ev: &mut Event<'_>) {
+        let anchor_name = Self::strip_anchor_and_record(ev);
+        if let Some(name) = anchor_name {
+            // Check there is no tag — tags still trigger fallback before we get here.
+            let has_tag = match ev {
+                Event::Scalar { ref tag, .. }
+                | Event::SequenceStart { ref tag, .. }
+                | Event::MappingStart { ref tag, .. } => tag.is_some(),
+                _ => false,
+            };
+            if !has_tag {
+                self.start_recording(name);
+            }
+        }
+    }
+
+    /// If we are currently recording an anchored subtree, buffer the event.
+    fn maybe_record(&mut self, ev: &Event<'_>) {
+        if let Some((_, ref mut depth, ref mut buf)) = self.recording {
+            match ev {
+                Event::Scalar { value, style, .. } => {
+                    buf.push(BufferedEvent::Scalar {
+                        value: value.to_string(),
+                        style: *style,
+                    });
+                    if *depth == 0 {
+                        // Scalar anchor — recording is done.
+                        let (name, _, events) =
+                            self.recording.take().expect("internal: recording is Some");
+                        let _ = self.anchor_events.insert(name, events);
+                    }
+                }
+                Event::SequenceStart { .. } => {
+                    buf.push(BufferedEvent::SeqStart);
+                    *depth += 1;
+                }
+                Event::SequenceEnd { .. } => {
+                    buf.push(BufferedEvent::SeqEnd);
+                    *depth -= 1;
+                    if *depth == 0 {
+                        let (name, _, events) =
+                            self.recording.take().expect("internal: recording is Some");
+                        let _ = self.anchor_events.insert(name, events);
+                    }
+                }
+                Event::MappingStart { .. } => {
+                    buf.push(BufferedEvent::MapStart);
+                    *depth += 1;
+                }
+                Event::MappingEnd { .. } => {
+                    buf.push(BufferedEvent::MapEnd);
+                    *depth -= 1;
+                    if *depth == 0 {
+                        let (name, _, events) =
+                            self.recording.take().expect("internal: recording is Some");
+                        let _ = self.anchor_events.insert(name, events);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Begin recording events for an anchored node.
+    fn start_recording(&mut self, anchor_name: String) {
+        self.recording = Some((anchor_name, 0, Vec::new()));
+    }
+
+    /// Resolve an alias by pushing its buffered events onto the replay stack.
+    /// Returns the first event from the replayed buffer.
+    fn resolve_alias(&mut self, name: &str) -> Result<Event<'a>> {
+        let buf = self
+            .anchor_events
+            .get(name)
+            .ok_or_else(|| Error::UnknownAnchor(name.to_owned()))?
+            .clone();
+        if buf.is_empty() {
+            return Err(Error::UnknownAnchor(name.to_owned()));
+        }
+        // Reverse the buffer so we can pop from the end efficiently.
+        let mut reversed = buf;
+        reversed.reverse();
+        let first = reversed.pop().expect("internal: checked non-empty above");
+        if !reversed.is_empty() {
+            self.replay_stack.push(reversed);
+        }
+        Ok(self.buffered_to_event(first))
+    }
+
+    /// Strip the anchor from an event if present and start recording.
+    /// Returns the event without the anchor field set.
+    fn strip_anchor_and_record(ev: &mut Event<'_>) -> Option<String> {
+        match ev {
+            Event::Scalar { ref mut anchor, .. }
+            | Event::SequenceStart { ref mut anchor, .. }
+            | Event::MappingStart { ref mut anchor, .. } => anchor.take(),
+            _ => None,
         }
     }
 
@@ -232,15 +445,15 @@ impl<'a> StreamingDeserializer<'a> {
     fn skip_value(&mut self) -> Result<()> {
         let ev = self.next_event()?;
         match ev {
-            Event::Scalar { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::Scalar { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 Ok(())
             }
             Event::Alias { .. } => Err(self.fallback()),
-            Event::SequenceStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::SequenceStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 loop {
@@ -252,8 +465,8 @@ impl<'a> StreamingDeserializer<'a> {
                     self.skip_value()?;
                 }
             }
-            Event::MappingStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::MappingStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 loop {
@@ -297,8 +510,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         self.skip_to_content()?;
         let ev = self.peek_event()?;
         match ev {
-            Event::Scalar { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::Scalar { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let ev = self.next_event()?;
@@ -315,18 +528,19 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                     unreachable!()
                 }
             }
-            Event::SequenceStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::SequenceStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 self.deserialize_seq(visitor)
             }
-            Event::MappingStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::MappingStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 self.deserialize_map(visitor)
             }
+            // Aliases are resolved transparently in peek_event/next_event.
             Event::Alias { .. } => Err(self.fallback()),
             Event::StreamEnd | Event::DocumentEnd => {
                 // Empty or comment-only document — resolve to null per YAML spec.
@@ -350,11 +564,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let resolved = self.resolve_scalar(value, style);
@@ -405,11 +618,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let resolved = self.resolve_scalar(value, style);
@@ -468,11 +680,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let resolved = self.resolve_scalar(value, style);
@@ -514,11 +725,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let resolved = self.resolve_scalar(value, style);
@@ -547,12 +757,9 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         let ev = self.next_event()?;
         match ev {
             Event::Scalar {
-                ref value,
-                ref anchor,
-                ref tag,
-                ..
+                ref value, ref tag, ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let s: &str = value;
@@ -583,11 +790,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 if self.raw_str_mode {
@@ -629,11 +835,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 // Resolve first: only string-resolved scalars are valid for bytes.
@@ -669,13 +874,9 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         let ev = self.peek_event()?;
         match ev {
             Event::Scalar {
-                value,
-                style,
-                anchor,
-                tag,
-                ..
+                value, style, tag, ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 // Check for null.
@@ -690,6 +891,7 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                 }
                 visitor.visit_some(self)
             }
+            // Aliases are resolved transparently in peek_event.
             Event::Alias { .. } => Err(self.fallback()),
             _ => visitor.visit_some(self),
         }
@@ -705,11 +907,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
             Event::Scalar {
                 ref value,
                 style,
-                ref anchor,
                 ref tag,
                 ..
             } => {
-                if anchor.is_some() || tag.is_some() {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 let resolved = self.resolve_scalar(value, style);
@@ -750,8 +951,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         self.skip_to_content()?;
         let ev = self.next_event()?;
         match ev {
-            Event::SequenceStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::SequenceStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 self.depth += 1;
@@ -799,8 +1000,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         self.skip_to_content()?;
         let ev = self.next_event()?;
         match ev {
-            Event::MappingStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::MappingStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 self.depth += 1;
@@ -850,8 +1051,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         self.skip_to_content()?;
         let ev = self.peek_event()?;
         match ev {
-            Event::Scalar { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::Scalar { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 // Unit variant: scalar = variant name.
@@ -862,8 +1063,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                     unreachable!()
                 }
             }
-            Event::MappingStart { anchor, tag, .. } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::MappingStart { tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 // Newtype/struct/tuple variant: single-entry mapping.
@@ -883,6 +1084,7 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                     variant: variant_name,
                 })
             }
+            // Aliases are resolved transparently in peek_event.
             Event::Alias { .. } => Err(self.fallback()),
             _ => Err(Error::TypeMismatch {
                 expected: "enum",
@@ -901,10 +1103,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         self.skip_to_content()?;
         let ev = self.next_event()?;
         match ev {
-            Event::Scalar {
-                value, anchor, tag, ..
-            } => {
-                if anchor.is_some() || tag.is_some() {
+            Event::Scalar { value, tag, .. } => {
+                if tag.is_some() {
                     return Err(self.fallback());
                 }
                 visitor.visit_str(&value)
@@ -1164,8 +1364,9 @@ impl<'de> de::VariantAccess<'de> for StreamingVariantAccess<'_, 'de> {
 // ── Public entry point ──────────────────────────────────────────────────
 
 /// Attempt streaming deserialization. If the input contains features that
-/// require the Value-based path (anchors, aliases, tags, `Spanned<T>`),
-/// returns `None` so the caller can fall back.
+/// require the Value-based path (tags, merge keys, `Spanned<T>`),
+/// returns `None` so the caller can fall back. Anchors and aliases are
+/// handled natively via event buffering and replay.
 pub(crate) fn from_str_streaming<T>(s: &str, config: &ParseConfig) -> Option<Result<T>>
 where
     T: for<'de> Deserialize<'de>,
