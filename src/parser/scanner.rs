@@ -84,6 +84,10 @@ struct SimpleKey {
     required: bool,
     token_number: usize,
     index: usize,
+    /// True when the simple key is a JSON-like node (quoted scalar or flow
+    /// collection).  In flow context, `:` is a valid value indicator after
+    /// a JSON-like key even without trailing whitespace.
+    json_like: bool,
 }
 
 /// Lookup table for bytes that are blanks (space, tab) or line breaks (LF, CR).
@@ -130,6 +134,14 @@ pub(crate) struct Scanner<'a> {
     simple_keys: Vec<SimpleKey>,
     /// Whether a simple key is allowed at the current position.
     simple_key_allowed: bool,
+    /// In flow context, `:` is a value indicator when immediately adjacent
+    /// to a JSON-like key (double-quoted scalar, `]`, or `}`).  This flag
+    /// is set after emitting such tokens and cleared on the next fetch.
+    adjacent_value_allowed: bool,
+    /// True after an explicit key indicator `?` is emitted.  Allows block
+    /// entries (`-`) in the key content even though `simple_key_allowed` is
+    /// false (which prevents duplicate Key insertion on `:` later).
+    explicit_key_pending: bool,
     /// True once we've emitted StreamStart.
     stream_started: bool,
     /// True once we've emitted StreamEnd.
@@ -157,6 +169,8 @@ impl<'a> Scanner<'a> {
             flow_level: 0,
             simple_keys: Vec::with_capacity(estimated_depth),
             simple_key_allowed: false,
+            adjacent_value_allowed: false,
+            explicit_key_pending: false,
             stream_started: false,
             stream_ended: false,
         }
@@ -348,9 +362,22 @@ impl<'a> Scanner<'a> {
                 // In block context, allow simple key at line start.
                 if self.flow_level == 0 {
                     self.simple_key_allowed = true;
-                    // After a line break in block context, reject tabs as indentation.
+                    // After a line break in block context, reject tabs as
+                    // indentation — but only when the tab precedes actual
+                    // content.  Tabs on otherwise-empty lines (tab followed
+                    // by line break or EOF) are harmless whitespace.
                     if self.peek() == b'\t' {
-                        return Err(self.error("tab characters are not allowed as indentation"));
+                        // Scan ahead past the tab(s) and any following
+                        // whitespace to see if content follows.
+                        let mut look = self.pos;
+                        while look < self.input.len() && Self::is_blank(self.input[look]) {
+                            look += 1;
+                        }
+                        // If content follows (not a line break / EOF), the
+                        // tab is being used as indentation which YAML forbids.
+                        if look < self.input.len() && !Self::is_break(self.input[look]) {
+                            return Err(self.error("tab characters are not allowed as indentation"));
+                        }
                     }
                 }
             } else {
@@ -406,6 +433,11 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     fn save_simple_key(&mut self) {
+        self.save_simple_key_ext(false);
+    }
+
+    #[inline]
+    fn save_simple_key_ext(&mut self, json_like: bool) {
         if !self.simple_key_allowed {
             return;
         }
@@ -415,6 +447,7 @@ impl<'a> Scanner<'a> {
             required,
             token_number: self.tokens_produced + (self.tokens.len() - self.tokens_consumed),
             index: self.pos,
+            json_like,
         };
         // Inline remove_simple_key for the common case (not required).
         if let Some(last) = self.simple_keys.last_mut() {
@@ -452,7 +485,16 @@ impl<'a> Scanner<'a> {
             return self.fetch_stream_start();
         }
 
+        // `adjacent_value_allowed` is valid only when the very next byte is
+        // `:` with no intervening whitespace.  Capture and clear it here;
+        // `skip_to_next_token` may consume whitespace which breaks adjacency.
+        let pos_before_skip = self.pos;
+        let adj = self.adjacent_value_allowed;
+        self.adjacent_value_allowed = false;
+
         self.skip_to_next_token()?;
+        // If any whitespace was consumed, adjacency is broken.
+        let adjacent_value = adj && self.pos == pos_before_skip;
         self.stale_simple_keys()?;
         self.unroll_indent(self.column() as i32);
         self.mark = self.pos;
@@ -507,8 +549,14 @@ impl<'a> Scanner<'a> {
                 || (self.flow_level > 0
                     && (self.peek_at(1) == b','
                         || self.peek_at(1) == b']'
-                        || self.peek_at(1) == b'}'
-                        || self.peek_at(1) == b':')) =>
+                        || self.peek_at(1) == b'}'))
+                // Adjacent value: `:` immediately after a JSON-like key
+                // (quoted scalar, `]`, or `}`) in flow context — no space needed.
+                || (self.flow_level > 0 && adjacent_value)
+                // JSON-like simple key: `:` after a pending simple key that
+                // was a quoted scalar or flow collection, even across whitespace.
+                || (self.flow_level > 0
+                    && self.simple_keys.last().is_some_and(|sk| sk.possible && sk.json_like)) =>
             {
                 self.fetch_value()
             }
@@ -539,6 +587,7 @@ impl<'a> Scanner<'a> {
             required: false,
             token_number: 0,
             index: 0,
+            json_like: false,
         });
         // Skip BOM if present.
         if self.pos + 2 < self.input.len()
@@ -592,8 +641,20 @@ impl<'a> Scanner<'a> {
     }
 
     fn fetch_flow_collection_start(&mut self, is_seq: bool) -> ScanResult<()> {
-        self.save_simple_key();
+        // Flow collections are JSON-like: `[...]` and `{...}` can act as
+        // mapping keys with adjacent `:`.
+        self.save_simple_key_ext(true);
         self.flow_level += 1;
+        // Push a new simple-key context for this flow level so that a `:`
+        // inside the collection does not retroactively consume a simple key
+        // that started *outside* the collection (e.g. `[` itself).
+        self.simple_keys.push(SimpleKey {
+            possible: false,
+            required: false,
+            token_number: 0,
+            index: 0,
+            json_like: false,
+        });
         self.simple_key_allowed = true;
         self.mark = self.pos;
         self.advance();
@@ -607,6 +668,9 @@ impl<'a> Scanner<'a> {
 
     fn fetch_flow_collection_end(&mut self, is_seq: bool) -> ScanResult<()> {
         self.remove_simple_key()?;
+        // Pop the simple-key context that was pushed when this flow
+        // collection was opened.
+        let _ = self.simple_keys.pop();
         if self.flow_level > 0 {
             self.flow_level -= 1;
         }
@@ -617,6 +681,11 @@ impl<'a> Scanner<'a> {
             self.emit(TokenKind::FlowSequenceEnd);
         } else {
             self.emit(TokenKind::FlowMappingEnd);
+        }
+        // `]` and `}` end JSON-like nodes — a following `:` is an
+        // adjacent value indicator when still inside a flow context.
+        if self.flow_level > 0 {
+            self.adjacent_value_allowed = true;
         }
         Ok(())
     }
@@ -632,7 +701,7 @@ impl<'a> Scanner<'a> {
 
     fn fetch_block_entry(&mut self) -> ScanResult<()> {
         if self.flow_level == 0 {
-            if !self.simple_key_allowed {
+            if !self.simple_key_allowed && !self.explicit_key_pending {
                 return Err(self.error("block sequence entries are not allowed in this context"));
             }
             let col = self.column() as i32;
@@ -655,7 +724,16 @@ impl<'a> Scanner<'a> {
             self.roll_indent(col, None, TokenKind::BlockMappingStart, self.pos);
         }
         self.remove_simple_key()?;
-        self.simple_key_allowed = self.flow_level > 0;
+        // After an explicit key indicator `?`, the key boundary is already
+        // established. Do NOT allow a simple key for the following content —
+        // otherwise the subsequent `:` value indicator would retroactively
+        // insert a *duplicate* Key token.
+        self.simple_key_allowed = false;
+        // However, the key content CAN be a block collection (e.g. `? - a`).
+        // Track this so `fetch_block_entry` allows it.
+        if self.flow_level == 0 {
+            self.explicit_key_pending = true;
+        }
         self.mark = self.pos;
         self.advance();
         self.emit(TokenKind::Key);
@@ -699,7 +777,7 @@ impl<'a> Scanner<'a> {
             } else {
                 // No simple key. Must be a complex value indicator.
                 if self.flow_level == 0 {
-                    if !self.simple_key_allowed {
+                    if !self.simple_key_allowed && !self.explicit_key_pending {
                         return Err(self.error("mapping values are not allowed in this context"));
                     }
                     let col = self.column() as i32;
@@ -709,7 +787,7 @@ impl<'a> Scanner<'a> {
             }
         } else {
             // No simple key tracking. Must be a complex value.
-            if self.flow_level == 0 && !self.simple_key_allowed {
+            if self.flow_level == 0 && !self.simple_key_allowed && !self.explicit_key_pending {
                 return Err(self.error("mapping values are not allowed in this context"));
             }
             if self.flow_level == 0 {
@@ -719,6 +797,7 @@ impl<'a> Scanner<'a> {
             self.simple_key_allowed = self.flow_level == 0;
         }
 
+        self.explicit_key_pending = false;
         self.mark = self.pos;
         self.advance();
         self.emit(TokenKind::Value);
@@ -860,16 +939,30 @@ impl<'a> Scanner<'a> {
             let mut len = 0;
             let mut is_single_line = true;
 
-            // Find first line break or comment. Use memchr for large
-            // remaining slices (>32 bytes) where SIMD pays off; fall back
-            // to a simple scan for short scalars to avoid setup overhead.
+            // Find first line break or comment. A `#` is only a comment
+            // when preceded by whitespace (YAML 1.2 rule).
+            //
+            // Use memchr for large remaining slices (>32 bytes) where SIMD
+            // pays off; fall back to a simple scan for short scalars.
             let mut search_end = remaining.len();
             if remaining.len() > 32 {
-                if let Some(p) = memchr::memchr3(b'\n', b'\r', b'#', remaining) {
-                    search_end = p;
-                    if remaining[p] != b'#' {
-                        is_single_line = false;
+                let mut offset = 0;
+                while let Some(p) = memchr::memchr3(b'\n', b'\r', b'#', &remaining[offset..]) {
+                    let abs = offset + p;
+                    if remaining[abs] == b'#' {
+                        // Only a comment if preceded by whitespace.
+                        if abs > 0 && Self::is_blank(remaining[abs - 1]) {
+                            search_end = abs;
+                            break;
+                        }
+                        // Not a comment — keep scanning after this `#`.
+                        offset = abs + 1;
+                        continue;
                     }
+                    // Line break found.
+                    search_end = abs;
+                    is_single_line = false;
+                    break;
                 }
             } else {
                 for (i, &b) in remaining.iter().enumerate() {
@@ -878,7 +971,7 @@ impl<'a> Scanner<'a> {
                         is_single_line = false;
                         break;
                     }
-                    if b == b'#' {
+                    if b == b'#' && i > 0 && Self::is_blank(remaining[i - 1]) {
                         search_end = i;
                         break;
                     }
@@ -974,7 +1067,13 @@ impl<'a> Scanner<'a> {
                     break;
                 }
 
-                if Self::is_blank_or_break(c) || c == b'#' {
+                if Self::is_blank_or_break(c) {
+                    break;
+                }
+                // `#` is a comment indicator when preceded by whitespace, or
+                // at the start of a content segment (where prior whitespace
+                // was already consumed by the outer loop).
+                if c == b'#' && (length == 0 || Self::is_blank(remaining[length - 1])) {
                     break;
                 }
 
@@ -1096,7 +1195,8 @@ impl<'a> Scanner<'a> {
     }
 
     fn fetch_quoted_scalar(&mut self, double: bool) -> ScanResult<()> {
-        self.save_simple_key();
+        // Quoted scalars are JSON-like: mark for adjacent value detection.
+        self.save_simple_key_ext(true);
         self.simple_key_allowed = false;
         self.mark = self.pos;
 
@@ -1112,6 +1212,11 @@ impl<'a> Scanner<'a> {
             ScalarStyle::SingleQuoted
         };
         self.emit(TokenKind::Scalar(style, Cow::Owned(string)));
+        // Both single- and double-quoted scalars are JSON-like nodes:
+        // a following `:` is an adjacent value indicator in flow context.
+        if self.flow_level > 0 {
+            self.adjacent_value_allowed = true;
+        }
         Ok(())
     }
 

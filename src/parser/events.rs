@@ -378,6 +378,17 @@ impl<'a> Parser<'a> {
                     span: tok_span,
                 })
             }
+            // Indentless block sequence: `BlockEntry` without a preceding
+            // `BlockSequenceStart` — the `-` is at the same indent as the
+            // containing mapping key.
+            TokenKind::BlockEntry if indentless || (anchor.is_some() || tag.is_some()) => {
+                self.state = State::IndentlessSequenceEntry;
+                Ok(Event::SequenceStart {
+                    anchor,
+                    tag,
+                    span: tok_span,
+                })
+            }
             _ => {
                 if anchor.is_some() || tag.is_some() {
                     self.state = self.pop_state();
@@ -474,6 +485,11 @@ impl<'a> Parser<'a> {
             self.skip()?;
             self.state = self.pop_state();
             Ok(Event::MappingEnd { span })
+        } else if self.peek_is(|k| matches!(k, TokenKind::Value))? {
+            // Bare `:` without `?` — implicit empty key.  Emit the empty key
+            // scalar and transition to the value phase (which will consume `:`)
+            self.state = State::BlockMappingValue;
+            Ok(self.empty_scalar(span))
         } else if self.peek_is(|k| {
             matches!(
                 k,
@@ -544,6 +560,19 @@ impl<'a> Parser<'a> {
         if self.peek_is(|k| matches!(k, TokenKind::Key))? {
             self.skip()?;
             self.state = State::FlowSequenceEntryMappingKey;
+            self.states.push(State::FlowSequenceEntry);
+            return Ok(Event::MappingStart {
+                anchor: None,
+                tag: None,
+                span,
+            });
+        }
+
+        // A bare `Value` (`:`) without a preceding `Key` means an implicit
+        // empty-key mapping pair, e.g. `[ : value ]`.  Start a mapping and
+        // jump straight to the value phase — the key is empty.
+        if self.peek_is(|k| matches!(k, TokenKind::Value))? {
+            self.state = State::FlowSequenceEntryMappingValue;
             self.states.push(State::FlowSequenceEntry);
             return Ok(Event::MappingStart {
                 anchor: None,
@@ -637,6 +666,14 @@ impl<'a> Parser<'a> {
             }
             self.state = State::FlowMappingValue;
             return Ok(self.empty_scalar(next_span));
+        }
+
+        // A bare `Value` (`:`) without a preceding `Key` means the key is
+        // empty, e.g. `{ : bar }`.  Emit an empty scalar for the key and
+        // proceed directly to the value phase.
+        if self.peek_is(|k| matches!(k, TokenKind::Value))? {
+            self.state = State::FlowMappingValue;
+            return Ok(self.empty_scalar(span));
         }
 
         // Implicit key.
