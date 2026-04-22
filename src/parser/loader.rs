@@ -276,8 +276,8 @@ impl<'a> Loader<'a> {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 self.stack.push(Frame::MappingKey {
-                    map: Mapping::new(),
-                    span_entries: Vec::new(),
+                    map: Mapping::with_capacity(4),
+                    span_entries: Vec::with_capacity(4),
                     anchor,
                     merge_values: Vec::new(),
                     start_offset: span.start,
@@ -950,7 +950,7 @@ impl<'a> NoSpanLoader<'a> {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 self.stack.push(NoSpanFrame::MappingKey {
-                    map: Mapping::new(),
+                    map: Mapping::with_capacity(4),
                     anchor,
                     merge_values: Vec::new(),
                 });
