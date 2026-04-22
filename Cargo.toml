@@ -184,6 +184,7 @@ path = "examples/all.rs"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 indexmap = { version = "2.14", features = ["serde"] }
+rustc-hash = "2.1"
 thiserror = "2.0"
 itoa = "1"
 ryu = "1"

@@ -232,8 +232,8 @@ impl<'a> Loader<'a> {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 self.stack.push(Frame::Sequence {
-                    items: Vec::new(),
-                    span_items: Vec::new(),
+                    items: Vec::with_capacity(4),
+                    span_items: Vec::with_capacity(4),
                     anchor,
                     start_offset: span.start,
                 });
@@ -919,7 +919,7 @@ impl<'a> NoSpanLoader<'a> {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 self.stack.push(NoSpanFrame::Sequence {
-                    items: Vec::new(),
+                    items: Vec::with_capacity(4),
                     anchor,
                 });
                 Ok(LoaderState::Continue)
