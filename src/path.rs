@@ -304,6 +304,85 @@ impl Display for Path<'_> {
     }
 }
 
+// ── Query path parsing ──────────────────────────────────────────────────
+// Shared path parsing for value.rs and borrowed.rs query methods.
+
+/// A segment in a query path expression.
+#[derive(Debug, Clone)]
+pub(crate) enum QuerySegment {
+    /// A key in a mapping.
+    Key(String),
+    /// An index in a sequence.
+    Index(usize),
+    /// Wildcard: matches all keys or all indices.
+    Wildcard,
+    /// Recursive descent: matches at any depth.
+    RecursiveDescent,
+}
+
+/// Parse a query path string into segments.
+///
+/// Supports:
+/// - Dot notation: `"foo.bar.baz"`
+/// - Bracket notation: `"items[0]"`
+/// - Mixed: `"items[0].name"`
+/// - Wildcard: `"items[*]"` or `"items.*"`
+/// - Recursive descent: `"..name"` (find `name` at any depth)
+pub(crate) fn parse_query_path(path: &str) -> Vec<QuerySegment> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut chars = path.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '.' => {
+                if !current.is_empty() {
+                    segments.push(QuerySegment::Key(core::mem::take(&mut current)));
+                }
+                if chars.peek() == Some(&'.') {
+                    let _ = chars.next();
+                    segments.push(QuerySegment::RecursiveDescent);
+                }
+            }
+            '[' => {
+                if !current.is_empty() {
+                    segments.push(QuerySegment::Key(core::mem::take(&mut current)));
+                }
+                let mut index_str = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ']' {
+                        let _ = chars.next();
+                        break;
+                    }
+                    index_str.push(c);
+                    let _ = chars.next();
+                }
+                if index_str == "*" {
+                    segments.push(QuerySegment::Wildcard);
+                } else if let Ok(idx) = index_str.parse::<usize>() {
+                    segments.push(QuerySegment::Index(idx));
+                }
+            }
+            ']' => {}
+            '*' => {
+                if !current.is_empty() {
+                    segments.push(QuerySegment::Key(core::mem::take(&mut current)));
+                }
+                segments.push(QuerySegment::Wildcard);
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        segments.push(QuerySegment::Key(current));
+    }
+
+    segments
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

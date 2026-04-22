@@ -20,12 +20,15 @@
 
 use crate::error::{Error, Result};
 use crate::parser::{Event, ParseConfig, Parser, ScalarStyle};
+use crate::path::{parse_query_path, QuerySegment};
 use crate::prelude::*;
+use core::hash::{Hash, Hasher};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
+use serde::Serialize;
 
 /// A zero-copy YAML value that borrows strings from the input.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BorrowedValue<'a> {
     /// YAML null.
     Null,
@@ -93,6 +96,58 @@ impl<'a> BorrowedValue<'a> {
         }
     }
 
+    /// Query nested values using an extended path expression.
+    ///
+    /// Returns all matching values. Supports dot notation, bracket indexing,
+    /// wildcards (`*`), and recursive descent (`..`).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use noyalib::borrowed::from_str_borrowed;
+    ///
+    /// let yaml = "items:\n  - name: a\n  - name: b\n";
+    /// let v = from_str_borrowed(yaml).unwrap();
+    /// let names = v.query("items[*].name");
+    /// assert_eq!(names.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn query(&self, path: &str) -> Vec<&BorrowedValue<'a>> {
+        let segments = parse_query_path(path);
+        let mut results = Vec::new();
+        borrowed_query_recursive(self, &segments, 0, &mut results);
+        results
+    }
+
+    /// Access a nested value via a dotted path.
+    #[must_use]
+    pub fn get_path(&self, path: &str) -> Option<&BorrowedValue<'a>> {
+        let segments = parse_query_path(path);
+        let mut current = self;
+        for seg in &segments {
+            current = match seg {
+                QuerySegment::Key(key) => {
+                    if let Self::Mapping(m) = current {
+                        m.get(key.as_str())?
+                    } else {
+                        return None;
+                    }
+                }
+                QuerySegment::Index(idx) => {
+                    if let Self::Sequence(s) = current {
+                        s.get(*idx)?
+                    } else {
+                        return None;
+                    }
+                }
+                QuerySegment::Wildcard | QuerySegment::RecursiveDescent => {
+                    return self.query(path).into_iter().next();
+                }
+            };
+        }
+        Some(current)
+    }
+
     /// Convert to an owned `Value`, cloning all borrowed strings.
     #[must_use]
     pub fn into_owned(self) -> crate::Value {
@@ -110,6 +165,148 @@ impl<'a> BorrowedValue<'a> {
                     let _ = m.insert(k.into_owned(), v.into_owned());
                 }
                 crate::Value::Mapping(m)
+            }
+        }
+    }
+}
+
+impl Hash for BorrowedValue<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            Self::Null => {}
+            Self::Bool(b) => b.hash(state),
+            Self::Number(n) => n.hash(state),
+            Self::String(s) => s.hash(state),
+            Self::Sequence(seq) => seq.hash(state),
+            Self::Mapping(map) => {
+                state.write_usize(map.len());
+                for (k, v) in map {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+        }
+    }
+}
+
+impl Serialize for BorrowedValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Null => serializer.serialize_none(),
+            Self::Bool(b) => serializer.serialize_bool(*b),
+            Self::Number(n) => match n {
+                crate::value::Number::Integer(i) => serializer.serialize_i64(*i),
+                crate::value::Number::Float(f) => serializer.serialize_f64(*f),
+            },
+            Self::String(s) => serializer.serialize_str(s),
+            Self::Sequence(seq) => seq.serialize(serializer),
+            Self::Mapping(map) => {
+                use serde::ser::SerializeMap;
+                let mut m = serializer.serialize_map(Some(map.len()))?;
+                for (k, v) in map {
+                    m.serialize_entry(k.as_ref(), v)?;
+                }
+                m.end()
+            }
+        }
+    }
+}
+
+impl PartialOrd for BorrowedValue<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BorrowedValue<'_> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        use core::cmp::Ordering;
+        let rank = |v: &Self| -> u8 {
+            match v {
+                Self::Null => 0,
+                Self::Bool(_) => 1,
+                Self::Number(_) => 2,
+                Self::String(_) => 3,
+                Self::Sequence(_) => 4,
+                Self::Mapping(_) => 5,
+            }
+        };
+        let r = rank(self).cmp(&rank(other));
+        if r != Ordering::Equal {
+            return r;
+        }
+        match (self, other) {
+            (Self::Null, Self::Null) => Ordering::Equal,
+            (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
+            (Self::Number(a), Self::Number(b)) => a.cmp(b),
+            (Self::String(a), Self::String(b)) => a.cmp(b),
+            (Self::Sequence(a), Self::Sequence(b)) => a.cmp(b),
+            (Self::Mapping(a), Self::Mapping(b)) => a.len().cmp(&b.len()),
+            _ => Ordering::Equal,
+        }
+    }
+}
+
+/// Recursively query a `BorrowedValue` tree.
+fn borrowed_query_recursive<'a, 'b>(
+    value: &'b BorrowedValue<'a>,
+    segments: &[QuerySegment],
+    depth: usize,
+    results: &mut Vec<&'b BorrowedValue<'a>>,
+) {
+    if depth >= segments.len() {
+        results.push(value);
+        return;
+    }
+    match &segments[depth] {
+        QuerySegment::Key(key) => {
+            if let BorrowedValue::Mapping(m) = value {
+                if let Some(child) = m.get(key.as_str()) {
+                    borrowed_query_recursive(child, segments, depth + 1, results);
+                }
+            }
+        }
+        QuerySegment::Index(idx) => {
+            if let BorrowedValue::Sequence(s) = value {
+                if let Some(child) = s.get(*idx) {
+                    borrowed_query_recursive(child, segments, depth + 1, results);
+                }
+            }
+        }
+        QuerySegment::Wildcard => match value {
+            BorrowedValue::Sequence(seq) => {
+                for item in seq {
+                    borrowed_query_recursive(item, segments, depth + 1, results);
+                }
+            }
+            BorrowedValue::Mapping(map) => {
+                for (_, v) in map {
+                    borrowed_query_recursive(v, segments, depth + 1, results);
+                }
+            }
+            _ => {}
+        },
+        QuerySegment::RecursiveDescent => {
+            let remaining = &segments[depth + 1..];
+            if !remaining.is_empty() {
+                borrowed_query_recursive(value, segments, depth + 1, results);
+                match value {
+                    BorrowedValue::Sequence(seq) => {
+                        for item in seq {
+                            borrowed_query_recursive(item, segments, depth, results);
+                        }
+                    }
+                    BorrowedValue::Mapping(map) => {
+                        for (_, v) in map {
+                            borrowed_query_recursive(v, segments, depth, results);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
