@@ -110,7 +110,7 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 - **100% YAML Test Suite** -- 392/392 official test cases pass
 - **201 KB WASM binary** -- runs in browsers via wasm-bindgen
 - **6 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
-- **2,565 tests** -- unit, integration, doc-tests, property-based, official suite
+- **2,566 tests** -- unit, integration, doc-tests, property-based, official suite
 - **45 branded examples** with animated spinner UI
 
 ---
@@ -148,38 +148,45 @@ Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--releas
 
 | Library | Simple (3 fields) | Nested (20 fields) | Large (500 items) |
 | :--- | ---: | ---: | ---: |
-| **noyalib** | **1.53 us** | **10.3 us** | **0.90 ms** |
-| yaml-rust2 | 2.08 us (1.4x) | 13.5 us (1.3x) | 1.23 ms (1.4x) |
-| serde\_yaml\_ng | 2.79 us (1.8x) | 16.9 us (1.6x) | 1.47 ms (1.6x) |
-| serde-saphyr | 3.39 us (2.2x) | 20.0 us (1.9x) | 1.83 ms (2.0x) |
+| **noyalib** | **1.51 us** | **9.93 us** | **0.89 ms** |
+| yaml-rust2 | 2.08 us (1.4x) | 13.5 us (1.4x) | 1.23 ms (1.4x) |
+| serde\_yaml\_ng | 2.82 us (1.9x) | 16.9 us (1.7x) | 1.48 ms (1.7x) |
+| serde-saphyr | 3.29 us (2.2x) | 20.5 us (2.1x) | 1.84 ms (2.1x) |
 
 ### Typed deserialization (streaming, no Value AST)
 
 | Library | Simple struct | Nested struct |
 | :--- | ---: | ---: |
-| **noyalib** | **1.29 us** | **7.47 us** |
-| serde\_yaml\_ng | 2.30 us (1.8x) | 12.5 us (1.7x) |
+| **noyalib** | **1.34 us** | **7.67 us** |
+| serde\_yaml\_ng | 2.39 us (1.8x) | 12.6 us (1.6x) |
 
 ### Serialization throughput
 
 | Library | Simple (3 fields) | Nested (20 fields) |
 | :--- | ---: | ---: |
-| **noyalib** | **358 ns** | **2.80 us** |
-| serde\_yaml\_ng | 1.41 us (3.9x) | 8.32 us (3.0x) |
+| **noyalib** | **330 ns** | **2.54 us** |
+| serde\_yaml\_ng | 1.43 us (4.3x) | 8.04 us (3.2x) |
+
+### Roundtrip (deserialize + serialize)
+
+| Library | Nested (20 fields) |
+| :--- | ---: |
+| **noyalib** | **12.7 us** |
+| serde\_yaml\_ng | 25.5 us (2.0x) |
 
 ### Architecture validation
 
 | Capability | Measured Impact |
 | :--- | :--- |
-| Streaming deserializer (typed targets) | 36% faster than Value AST path |
-| Zero-copy scanner (`Cow::Borrowed`) | 26% fewer heap allocations |
-| SIMD-accelerated scanning (`memchr`) | Faster delimiter search on large inputs |
-| Span-free path (`from_str` default) | 77% less overhead vs span tracking |
-| Serialization recursion limit | `max_depth` enforced, prevents stack overflow |
-| `BorrowedValue<'a>` (zero-copy AST) | **18% faster** than owned Value |
-| Path queries (wildcards, recursive descent) | `value.query("items[*].name")` |
-| DoS rejection (billion laughs) | <3 us to reject with `ParserConfig::strict()` |
-| DoS rejection (50-level nesting) | <3 us to reject |
+| Streaming deserializer (bypasses Value AST) | **30% faster** (14.0 vs 19.4 us) |
+| `BorrowedValue<'a>` (zero-copy AST) | **18% faster** (16.0 vs 19.4 us) |
+| Zero-copy scanner (`Cow::Borrowed`) | **12% fewer** allocations (6.3 vs 7.1 us) |
+| Span-free path (`from_str` default) | **34% less** overhead (5.6 vs 8.5 us) |
+| FxHasher for Mapping keys | Faster key insertion and lookup |
+| SIMD scanning (`memchr`) | Faster delimiter search on large inputs |
+| Path queries | `value.query("items[*].name")` with `*` and `..` |
+| DoS rejection (billion laughs) | **<3 us** with `ParserConfig::strict()` |
+| DoS rejection (deep nesting) | **<4 us** |
 
 Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architecture`.
 
@@ -187,8 +194,8 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 25,188 lines across 23 modules |
-| **Test suite** | 2,565 tests + 69 doc-tests |
+| **Source** | 25,606 lines across 23 modules |
+| **Test suite** | 2,566 tests + 73 doc-tests |
 | **YAML Test Suite** | 100% compliance (392/392 active cases) |
 | **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
