@@ -2,8 +2,12 @@
 //!
 //! Bypasses the intermediate `Value` AST for typed deserialization,
 //! eliminating all intermediate allocations. Anchors and aliases are
-//! handled natively via event buffering and replay. Falls back to the
-//! Value-based path only for tags, merge keys, and `Spanned<T>`.
+//! handled natively via event buffering and replay. The common
+//! `<<: *anchor` merge-key pattern (merge at first position, single
+//! anchor) is also expanded natively; sequence merges, locals-before-
+//! merge, and non-mapping merge targets fall back to the Value-based
+//! path so correctness is preserved. Tags and `Spanned<T>` still
+//! trigger the AST fallback.
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
@@ -431,6 +435,35 @@ impl<'a> StreamingDeserializer<'a> {
             self.replay_stack.push(reversed);
         }
         Ok(self.buffered_to_event(first))
+    }
+
+    /// Inject the inner events of an anchored mapping onto the replay stack
+    /// so the caller streams the mapping's contents as if they appeared
+    /// inline. Used to expand `<<: *anchor` merge keys natively.
+    ///
+    /// Returns the fallback sentinel if the target is not a mapping (empty
+    /// or scalar/sequence), at which point the caller should propagate the
+    /// error to restart deserialization on the AST path.
+    fn inject_merge_mapping_contents(&mut self, name: &str, alias_start: usize) -> Result<()> {
+        let buf = match self.anchor_events.get(name) {
+            Some(b) => b.clone(),
+            None => return Err(self.build_unknown_anchor(name, alias_start)),
+        };
+        // Require the target to be a mapping: [MapStart, ..., MapEnd].
+        if buf.len() < 2
+            || !matches!(buf.first(), Some(BufferedEvent::MapStart))
+            || !matches!(buf.last(), Some(BufferedEvent::MapEnd))
+        {
+            return Err(self.fallback());
+        }
+        // Strip outer MapStart/MapEnd; reverse for pop-from-end semantics.
+        let mut inner: Vec<BufferedEvent> = buf[1..buf.len() - 1].to_vec();
+        if inner.is_empty() {
+            return Ok(());
+        }
+        inner.reverse();
+        self.replay_stack.push(inner);
+        Ok(())
     }
 
     /// Build an `UnknownAnchorAt` error, attaching a "did you mean …?"
@@ -1061,6 +1094,7 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                 let result = visitor.visit_map(StreamingMapAccess {
                     de: self,
                     finished: false,
+                    has_emitted_key: false,
                 })?;
                 self.depth = self.depth.saturating_sub(1);
                 Ok(result)
@@ -1229,6 +1263,13 @@ impl Drop for StreamingSeqAccess<'_, '_> {
 struct StreamingMapAccess<'a, 'de> {
     de: &'a mut StreamingDeserializer<'de>,
     finished: bool,
+    /// Whether this access has surfaced at least one key to the visitor.
+    /// Used to decide whether a `<<:` merge can be expanded natively:
+    /// native expansion relies on serde's last-wins insertion to honour
+    /// "local keys override merged keys", which is only sound when all
+    /// local keys follow the merge. If a local key preceded `<<` we fall
+    /// back to the AST path so override semantics stay correct.
+    has_emitted_key: bool,
 }
 
 impl<'de> MapAccess<'de> for StreamingMapAccess<'_, 'de> {
@@ -1238,31 +1279,62 @@ impl<'de> MapAccess<'de> for StreamingMapAccess<'_, 'de> {
     where
         K: DeserializeSeed<'de>,
     {
-        let ev = self.de.peek_event()?;
-        if matches!(ev, Event::MappingEnd { .. }) {
-            self.de.skip_event()?;
-            self.finished = true;
-            return Ok(None);
-        }
-        // Detect merge keys (`<<`) and fall back to the Value-based path.
-        if let Event::Scalar {
-            value,
-            style: ScalarStyle::Plain,
-            ..
-        } = ev
-        {
-            if value.as_ref() == "<<" {
-                return Err(self.de.fallback());
+        loop {
+            let ev = self.de.peek_event()?;
+            if matches!(ev, Event::MappingEnd { .. }) {
+                self.de.skip_event()?;
+                self.finished = true;
+                return Ok(None);
             }
+            // Detect merge keys (`<<`). Handle the common `<<: *anchor`
+            // pattern natively when it is the first key of this mapping;
+            // anything else (sequence merge, non-first position) falls back
+            // to the AST path so correctness is preserved.
+            if let Event::Scalar {
+                value,
+                style: ScalarStyle::Plain,
+                ..
+            } = ev
+            {
+                if value.as_ref() == "<<" {
+                    if self.has_emitted_key {
+                        // Locals already emitted — serde's last-wins order
+                        // would let merged values override them, violating
+                        // YAML "local > merged" semantics. Fall back.
+                        return Err(self.de.fallback());
+                    }
+                    // Consume the `<<` key event and peek the value.
+                    self.de.skip_event()?;
+                    let next_ev = self.de.peek_event()?;
+                    let (anchor_name, alias_start) = if let Event::Alias { anchor, span } = next_ev
+                    {
+                        (anchor.clone(), span.start)
+                    } else {
+                        // <<: sequence or inline mapping — fall back.
+                        return Err(self.de.fallback());
+                    };
+                    // Consume the alias event and inject the merge target's
+                    // inner events onto the replay stack.
+                    self.de.skip_event()?;
+                    self.de
+                        .inject_merge_mapping_contents(&anchor_name, alias_start)?;
+                    // Loop back to pick up the first merged key (or a
+                    // post-merge local key if the merged mapping was empty).
+                    continue;
+                }
+            }
+            // Enable raw string mode for key deserialization so that
+            // non-string scalars (booleans, numbers, null) are passed
+            // through as their textual representation, matching the
+            // Value-based path's `value_into_key` behavior.
+            self.de.raw_str_mode = true;
+            let result = seed.deserialize(&mut *self.de).map(Some);
+            self.de.raw_str_mode = false;
+            if result.is_ok() {
+                self.has_emitted_key = true;
+            }
+            return result;
         }
-        // Enable raw string mode for key deserialization so that
-        // non-string scalars (booleans, numbers, null) are passed
-        // through as their textual representation, matching the
-        // Value-based path's `value_into_key` behavior.
-        self.de.raw_str_mode = true;
-        let result = seed.deserialize(&mut *self.de).map(Some);
-        self.de.raw_str_mode = false;
-        result
     }
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
