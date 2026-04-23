@@ -31,6 +31,12 @@ include = [
 name = "noyalib"
 path = "src/lib.rs"
 
+## ── Binary targets ──
+[[bin]]
+name = "noyavalidate"
+path = "src/bin/noyavalidate.rs"
+required-features = ["noyavalidate"]
+
 ## ── Core ──
 [[example]]
 name = "hello"
@@ -236,6 +242,7 @@ default = ["std"]
 std = []
 miette = ["dep:miette"]
 robotics = []
+noyavalidate = ["std", "miette", "miette/fancy"]
 
 [package.metadata.docs.rs]
 all-features = true
