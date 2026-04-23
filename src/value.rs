@@ -3010,17 +3010,7 @@ impl<'de> serde::Deserializer<'de> for &'de Value {
         V: serde::de::Visitor<'de>,
     {
         if name == crate::spanned::SPANNED_TYPE_NAME {
-            let p: *const Value = self;
-            let ptr = p as usize;
-            #[cfg(feature = "std")]
-            let (start, end) = crate::span_context::lookup_span(ptr)
-                .unwrap_or((crate::Location::default(), crate::Location::default()));
-            #[cfg(not(feature = "std"))]
-            let (start, end) = {
-                let _ = ptr;
-                (crate::Location::default(), crate::Location::default())
-            };
-            return visitor.visit_map(crate::de::SpannedMapAccess::new(start, end, self));
+            return visitor.visit_map(crate::de::SpannedMapAccess::new(self, None));
         }
         serde::Deserializer::deserialize_map(self, visitor)
     }

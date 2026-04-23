@@ -155,10 +155,7 @@ mod miette_render {
         assert_eq!(labels.len(), 2, "dual-label path: {labels:?}");
         // Labels are ordered: alias site first, anchor-definition site second.
         assert!(labels[0].label().unwrap().contains("unknown anchor 'logg'"));
-        assert!(labels[1]
-            .label()
-            .unwrap()
-            .contains("did you mean this anchor"));
+        assert!(labels[1].label().unwrap().contains("did you mean"));
     }
 
     #[test]
@@ -189,8 +186,7 @@ mod miette_render {
     fn diagnostic_help_falls_back_when_no_suggestion() {
         let yaml = "foo: *bar\n";
         let err = from_str::<Value>(yaml).unwrap_err();
-        let help = err.help().unwrap().to_string();
-        assert!(help.contains("Define the anchor"));
+        assert!(err.help().is_none());
     }
 
     #[test]
@@ -205,7 +201,7 @@ mod miette_render {
             "missing alias label: {rendered}"
         );
         assert!(
-            rendered.contains("did you mean this anchor"),
+            rendered.contains("did you mean '&logger'?"),
             "missing suggestion label: {rendered}"
         );
     }

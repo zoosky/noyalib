@@ -1,112 +1,45 @@
-//! YAML deserialization.
-
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use crate::prelude::*;
+//! YAML Deserialization.
 
+use crate::error::{Error, Result};
+use crate::parser::{self};
+use crate::span_context;
+use crate::value::{Number, Value};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
+use std::io;
 
-use crate::error::{Error, Location, Result};
-#[cfg(feature = "std")]
-use crate::span_context;
-use crate::value::{Mapping, Number, Sequence, Value};
-use crate::{parser, spanned};
-
-/// Policy for handling duplicate keys in YAML mappings.
-///
-/// By default, the last occurrence of a duplicate key wins (compatible with
-/// most YAML parsers). You can make this stricter for untrusted input.
-///
-/// # Example
-///
-/// ```rust
-/// use noyalib::{
-///     from_str_with_config, DuplicateKeyPolicy, ParserConfig, Value,
-/// };
-///
-/// let config =
-///     ParserConfig::new().duplicate_key_policy(DuplicateKeyPolicy::Error);
-///
-/// let yaml = "a: 1\na: 2";
-/// let result: Result<Value, _> = from_str_with_config(yaml, &config);
-/// assert!(result.is_err());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum DuplicateKeyPolicy {
-    /// Reject duplicate keys with an error (strictest).
-    Error,
-    /// First occurrence wins; later duplicates are silently ignored.
-    First,
-    /// Last occurrence wins (default, backwards-compatible).
-    #[default]
-    Last,
-}
-
-/// Configuration options for YAML parsing with security limits.
-///
-/// This struct provides options to limit resource consumption during parsing,
-/// protecting against denial-of-service attacks such as the "billion laughs"
-/// attack or deeply nested structures.
-///
-/// # Example
-///
-/// ```rust
-/// use noyalib::{from_str_with_config, ParserConfig, Value};
-///
-/// let config = ParserConfig::new()
-///     .max_depth(50)
-///     .max_document_length(1_000_000);
-///
-/// let yaml = "key: value";
-/// let value: Value = from_str_with_config(yaml, &config).unwrap();
-/// ```
+/// Deserialization configuration.
 #[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
 pub struct ParserConfig {
-    /// Maximum nesting depth allowed (default: 128).
+    /// Maximum recursion depth allowed during parsing (default: 128).
     pub max_depth: usize,
-    /// Maximum document length in bytes (default: 64MB).
+    /// Maximum length of a single YAML document in bytes (default: 64 MB).
     pub max_document_length: usize,
-    /// Maximum number of alias expansions (default: 1024).
-    ///
-    /// The "billion laughs" attack uses anchors and aliases to create
-    /// exponentially large outputs. This limit protects against such
-    /// attacks by counting each alias resolution during loading.
+    /// Maximum number of times a single anchor can be expanded (default: 1024).
     pub max_alias_expansions: usize,
-    /// Maximum number of keys in a single mapping (default: 65536).
+    /// Maximum number of keys allowed in a single mapping (default: 64k).
     pub max_mapping_keys: usize,
-    /// Maximum length of a single sequence (default: 65536).
+    /// Maximum number of elements allowed in a single sequence (default: 64k).
     pub max_sequence_length: usize,
-    /// How to handle duplicate keys in mappings (default: Last).
+    /// How to handle duplicate keys in a mapping (default: Last, per YAML 1.2).
     pub duplicate_key_policy: DuplicateKeyPolicy,
-    /// YAML 1.2 strict boolean mode (default: false).
-    ///
-    /// When `true`, only exact `"true"` and `"false"` (lowercase) resolve to
-    /// booleans. Case variants like `"True"`, `"TRUE"`, `"False"`, `"FALSE"`
-    /// are treated as strings. This matches the YAML 1.2 JSON Schema.
+    /// If true, only `true` and `false` (lowercase) are accepted as booleans.
     pub strict_booleans: bool,
-    /// YAML 1.1 legacy boolean mode (default: false).
-    ///
-    /// When `true`, additional YAML 1.1 boolean forms are accepted:
-    /// `"yes"`, `"no"`, `"on"`, `"off"`, `"y"`, `"n"` (case-insensitive).
-    /// This resolves the "Norway problem" where `NO` (the country code)
-    /// is incorrectly parsed as `false`.
-    ///
-    /// Takes precedence over `strict_booleans` when enabled.
+    /// If true, accepts YAML 1.1 booleans like `yes`, `no`, `on`, `off`.
     pub legacy_booleans: bool,
 }
 
 impl Default for ParserConfig {
     fn default() -> Self {
-        Self {
+        ParserConfig {
             max_depth: 128,
-            max_document_length: 64 * 1024 * 1024, // 64MB
+            max_document_length: 1024 * 1024 * 64, // 64 MB
             max_alias_expansions: 1024,
-            max_mapping_keys: 65536,
-            max_sequence_length: 65536,
+            max_mapping_keys: 1024 * 64,
+            max_sequence_length: 1024 * 64,
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
             legacy_booleans: false,
@@ -115,163 +48,115 @@ impl Default for ParserConfig {
 }
 
 impl ParserConfig {
-    /// Create a new parser configuration with default settings.
+    /// Create a new configuration with default values.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the maximum nesting depth.
-    ///
-    /// Deeply nested structures can cause stack overflow. This limit
-    /// protects against such attacks.
+    /// Create a strict configuration (YAML 1.2 strict) with tighter
+    /// security limits suitable for untrusted input.
+    #[must_use]
+    pub fn strict() -> Self {
+        ParserConfig {
+            max_depth: 64,
+            max_document_length: 1024 * 1024, // 1 MB
+            max_alias_expansions: 100,
+            max_mapping_keys: 1024,
+            max_sequence_length: 1024,
+            strict_booleans: true,
+            legacy_booleans: false,
+            duplicate_key_policy: DuplicateKeyPolicy::Error,
+        }
+    }
+
+    /// Set the maximum recursion depth.
     #[must_use]
     pub fn max_depth(mut self, depth: usize) -> Self {
         self.max_depth = depth;
         self
     }
 
-    /// Set the maximum document length in bytes.
-    ///
-    /// Very large documents can cause memory exhaustion. This limit
-    /// provides protection against such scenarios.
+    /// Set the maximum document length.
     #[must_use]
-    pub fn max_document_length(mut self, length: usize) -> Self {
-        self.max_document_length = length;
+    pub fn max_document_length(mut self, len: usize) -> Self {
+        self.max_document_length = len;
         self
     }
 
-    /// Set the maximum number of alias expansions.
-    ///
-    /// The "billion laughs" attack uses anchors and aliases to create
-    /// exponentially large outputs. This limit is enforced during loading
-    /// by counting each alias resolution.
+    /// Set the maximum alias expansions.
     #[must_use]
-    pub fn max_alias_expansions(mut self, count: usize) -> Self {
-        self.max_alias_expansions = count;
+    pub fn max_alias_expansions(mut self, expansions: usize) -> Self {
+        self.max_alias_expansions = expansions;
         self
     }
 
-    /// Set the maximum number of keys in a mapping.
+    /// Set the maximum number of mapping keys.
     #[must_use]
-    pub fn max_mapping_keys(mut self, count: usize) -> Self {
-        self.max_mapping_keys = count;
+    pub fn max_mapping_keys(mut self, max: usize) -> Self {
+        self.max_mapping_keys = max;
         self
     }
 
-    /// Set the maximum length of a sequence.
+    /// Set the maximum sequence length.
     #[must_use]
-    pub fn max_sequence_length(mut self, count: usize) -> Self {
-        self.max_sequence_length = count;
+    pub fn max_sequence_length(mut self, max: usize) -> Self {
+        self.max_sequence_length = max;
         self
     }
 
-    /// Create a strict configuration with lower limits.
-    ///
-    /// Useful for parsing untrusted input. Enables strict booleans
-    /// (only `"true"` / `"false"`, not case variants).
-    #[must_use]
-    pub fn strict() -> Self {
-        Self {
-            max_depth: 32,
-            max_document_length: 1024 * 1024, // 1MB
-            max_alias_expansions: 64,
-            max_mapping_keys: 1024,
-            max_sequence_length: 1024,
-            duplicate_key_policy: DuplicateKeyPolicy::Error,
-            strict_booleans: true,
-            legacy_booleans: false,
-        }
-    }
-
-    /// Enable or disable strict boolean mode.
-    ///
-    /// When enabled, only exact `"true"` and `"false"` (lowercase) resolve
-    /// to booleans. Case variants are treated as strings.
-    #[must_use]
-    pub fn strict_booleans(mut self, enabled: bool) -> Self {
-        self.strict_booleans = enabled;
-        self
-    }
-
-    /// Set the duplicate key handling policy.
+    /// Set the duplicate key policy.
     #[must_use]
     pub fn duplicate_key_policy(mut self, policy: DuplicateKeyPolicy) -> Self {
         self.duplicate_key_policy = policy;
         self
     }
 
-    /// Enable YAML 1.1 legacy boolean mode.
-    ///
-    /// When enabled, `"yes"`, `"no"`, `"on"`, `"off"`, `"y"`, `"n"`
-    /// (case-insensitive) are resolved as booleans. This matches YAML 1.1
-    /// behavior used by older tools (GitHub Actions, Docker Compose, etc.).
+    /// Enable or disable strict booleans.
     #[must_use]
-    pub fn legacy_booleans(mut self, enabled: bool) -> Self {
-        self.legacy_booleans = enabled;
+    pub fn strict_booleans(mut self, strict: bool) -> Self {
+        self.strict_booleans = strict;
+        self
+    }
+
+    /// Enable or disable legacy booleans.
+    #[must_use]
+    pub fn legacy_booleans(mut self, legacy: bool) -> Self {
+        self.legacy_booleans = legacy;
         self
     }
 }
 
-/// Deserialize a YAML string into a Rust type.
-///
-/// # Errors
-///
-/// Returns an error if the YAML is invalid or cannot be deserialized
-/// into the target type.
-///
-/// # Example
-///
-/// ```rust
-/// use serde::Deserialize;
-///
-/// #[derive(Debug, Deserialize)]
-/// struct Config {
-///     name: String,
-///     port: u16,
-/// }
-///
-/// let yaml = "name: myapp\nport: 8080\n";
-/// let config: Config = noyalib::from_str(yaml).unwrap();
-/// assert_eq!(config.name, "myapp");
-/// assert_eq!(config.port, 8080);
-/// ```
+/// Policy for handling duplicate keys in a YAML mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DuplicateKeyPolicy {
+    /// Use the first occurrence of the key; ignore subsequent ones.
+    First,
+    /// Use the last occurrence of the key (YAML 1.2 default).
+    #[default]
+    Last,
+    /// Return an error if a duplicate key is encountered.
+    Error,
+}
+
+/// Deserialize YAML from a string.
 pub fn from_str<T>(s: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let config = ParserConfig::default();
-    let parse_config = parser::ParseConfig::from(&config);
-    // Try the streaming path first — zero intermediate allocations.
-    if let Some(result) = crate::streaming::from_str_streaming(s, &parse_config) {
-        return result;
-    }
-    // Fallback: Value-based path (handles anchors, aliases, tags, Spanned<T>).
-    from_str_with_config(s, &config)
+    from_str_with_config(s, &ParserConfig::default())
 }
 
-/// Deserialize a YAML string into a Rust type with custom configuration.
-///
-/// This function allows specifying security limits for parsing untrusted input.
-///
-/// # Errors
-///
-/// Returns an error if the YAML is invalid, exceeds configured limits,
-/// or cannot be deserialized into the target type.
-///
-/// # Example
-///
-/// ```rust
-/// use noyalib::{ParserConfig, from_str_with_config, Value};
-///
-/// let config = ParserConfig::strict(); // Use strict limits for untrusted input
-/// let yaml = "key: value";
-/// let value: Value = from_str_with_config(yaml, &config).unwrap();
-/// ```
+/// Deserialize YAML from a string with custom security limits.
 pub fn from_str_with_config<T>(s: &str, config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
+    // Try streaming path first (faster, no intermediate Value AST).
+    if let Some(res) = crate::streaming::from_str_streaming(s, &config.into()) {
+        return res;
+    }
+
     let parse_config = parser::ParseConfig::from(config);
 
     #[cfg(feature = "std")]
@@ -283,7 +168,11 @@ where
             source: s.into(),
         };
         let _guard = span_context::set_span_context(ctx);
-        T::deserialize(Deserializer::new(&value))
+        let de = Deserializer {
+            value: &value,
+            span_ctx: Some(_guard.as_ref()),
+        };
+        T::deserialize(de)
     }
 
     #[cfg(not(feature = "std"))]
@@ -293,117 +182,45 @@ where
     }
 }
 
-/// Deserialize a YAML byte slice into a Rust type.
-///
-/// # Errors
-///
-/// Returns an error if the bytes are not valid UTF-8, the YAML is invalid,
-/// or the data cannot be deserialized into the target type.
-pub fn from_slice<T>(slice: &[u8]) -> Result<T>
+/// Deserialize YAML from a byte slice.
+pub fn from_slice<T>(b: &[u8]) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let s = core::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
-    let parse_config = parser::ParseConfig::from(&ParserConfig::default());
-    // Try the streaming path first.
-    if let Some(result) = crate::streaming::from_str_streaming(s, &parse_config) {
-        return result;
-    }
-    // Fallback: Value-based path.
-    let value = parser::parse_one_value(s, &parse_config)?;
-    T::deserialize(Deserializer::new(&value))
+    let s = std::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
+    from_str(s)
 }
 
-/// Deserialize a YAML byte slice with custom security limits.
-///
-/// # Errors
-///
-/// Returns an error if the bytes are not valid UTF-8, security limits
-/// are exceeded, or the data cannot be deserialized.
-pub fn from_slice_with_config<T>(slice: &[u8], config: &ParserConfig) -> Result<T>
+/// Deserialize YAML from a byte slice with custom configuration.
+pub fn from_slice_with_config<T>(b: &[u8], config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let s = core::str::from_utf8(slice).map_err(|e| Error::Parse(e.to_string()))?;
+    let s = std::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
     from_str_with_config(s, config)
 }
 
-/// Deserialize YAML from a reader into a Rust type.
-///
-/// # Errors
-///
-/// Returns an error if reading fails, the YAML is invalid,
-/// or the data cannot be deserialized into the target type.
-#[cfg(feature = "std")]
-pub fn from_reader<T, R>(mut reader: R) -> Result<T>
+/// Deserialize YAML from an IO reader.
+pub fn from_reader<R, T>(reader: R) -> Result<T>
 where
+    R: io::Read,
     T: for<'de> Deserialize<'de>,
-    R: std::io::Read,
+{
+    from_reader_with_config(reader, &ParserConfig::default())
+}
+
+/// Deserialize YAML from an IO reader with custom configuration.
+pub fn from_reader_with_config<R, T>(mut reader: R, config: &ParserConfig) -> Result<T>
+where
+    R: io::Read,
+    T: for<'de> Deserialize<'de>,
 {
     let mut s = String::new();
-    let _ = reader.read_to_string(&mut s)?;
-    let parse_config = parser::ParseConfig::from(&ParserConfig::default());
-    // Try the streaming path first.
-    if let Some(result) = crate::streaming::from_str_streaming(&s, &parse_config) {
-        return result;
-    }
-    // Fallback: Value-based path.
-    let value = parser::parse_one_value(&s, &parse_config)?;
-    T::deserialize(Deserializer::new(&value))
+    let _ = reader.read_to_string(&mut s).map_err(Error::Io)?;
+    from_str_with_config(&s, config)
 }
 
-/// Deserialize YAML from a reader with custom security limits.
-///
-/// This function reads the entire input into memory, then parses it using
-/// the provided configuration limits to prevent denial-of-service attacks.
-///
-/// # Errors
-///
-/// Returns an error if reading fails, security limits are exceeded,
-/// or the data cannot be deserialized.
-///
-/// # Example
-///
-/// ```rust
-/// use std::io::Cursor;
-///
-/// use noyalib::{from_reader_with_config, ParserConfig, Value};
-///
-/// let yaml = "key: value\nnumber: 42";
-/// let reader = Cursor::new(yaml);
-/// let config = ParserConfig::strict();
-///
-/// let value: Value = from_reader_with_config(reader, &config).unwrap();
-/// ```
-#[cfg(feature = "std")]
-pub fn from_reader_with_config<T, R>(reader: R, config: &ParserConfig) -> Result<T>
-where
-    T: for<'de> Deserialize<'de>,
-    R: std::io::Read,
-{
-    use std::io::Read as _;
-    // Read with size limit
-    let mut buffer = Vec::new();
-    let bytes_read = reader
-        .take(config.max_document_length as u64 + 1)
-        .read_to_end(&mut buffer)?;
-
-    if bytes_read > config.max_document_length {
-        return Err(Error::Parse(format!(
-            "document exceeds maximum length of {} bytes",
-            config.max_document_length
-        )));
-    }
-
-    let s = core::str::from_utf8(&buffer).map_err(|e| Error::Parse(e.to_string()))?;
-    from_str_with_config(s, config)
-}
-
-/// Deserialize a `Value` into a Rust type.
-///
-/// # Errors
-///
-/// Returns an error if the value cannot be deserialized into the target type.
+/// Deserialize a Value into a Rust type.
 pub fn from_value<T>(value: &Value) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -412,16 +229,45 @@ where
 }
 
 /// A YAML deserializer.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Deserializer<'de> {
-    value: &'de Value,
+    pub(crate) value: &'de Value,
+    pub(crate) span_ctx: Option<&'de span_context::SpanContext>,
 }
 
 impl<'de> Deserializer<'de> {
     /// Create a new deserializer from a value.
     #[must_use]
     pub fn new(value: &'de Value) -> Self {
-        Deserializer { value }
+        Deserializer {
+            value,
+            span_ctx: None,
+        }
+    }
+
+    /// Create a new deserializer from a value with an associated span context.
+    #[must_use]
+    pub fn with_span_context(value: &'de Value, span_ctx: &'de span_context::SpanContext) -> Self {
+        Deserializer {
+            value,
+            span_ctx: Some(span_ctx),
+        }
+    }
+
+    fn wrap_err<T>(&self, res: Result<T>) -> Result<T> {
+        match res {
+            Err(Error::Deserialize(msg)) => {
+                if let Some(ctx) = self.span_ctx {
+                    let ptr: *const Value = self.value;
+                    let addr = ptr as usize;
+                    if let Some(span) = ctx.spans.get(&addr) {
+                        return Err(Error::deserialize_at(msg, &ctx.source, span.0));
+                    }
+                }
+                Err(Error::Deserialize(msg))
+            }
+            _ => res,
+        }
     }
 }
 
@@ -433,16 +279,20 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Null => visitor.visit_none(),
-            Value::Bool(b) => visitor.visit_bool(*b),
-            Value::Number(Number::Integer(n)) => visitor.visit_i64(*n),
-            Value::Number(Number::Float(n)) => visitor.visit_f64(*n),
-            Value::String(s) => visitor.visit_str(s),
+            Value::Null => self.wrap_err(visitor.visit_none()),
+            Value::Bool(b) => self.wrap_err(visitor.visit_bool(*b)),
+            Value::Number(Number::Integer(n)) => self.wrap_err(visitor.visit_i64(*n)),
+            Value::Number(Number::Float(n)) => self.wrap_err(visitor.visit_f64(*n)),
+            Value::String(s) => self.wrap_err(visitor.visit_str(s)),
             Value::Sequence(_) => self.deserialize_seq(visitor),
             Value::Mapping(_) => self.deserialize_map(visitor),
             Value::Tagged(tagged) => {
-                // Deserialize the inner value
-                Deserializer::new(tagged.value()).deserialize_any(visitor)
+                let de = if let Some(ctx) = self.span_ctx {
+                    Deserializer::with_span_context(tagged.value(), ctx)
+                } else {
+                    Deserializer::new(tagged.value())
+                };
+                de.deserialize_any(visitor)
             }
         }
     }
@@ -452,11 +302,11 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Bool(b) => visitor.visit_bool(*b),
-            _ => Err(Error::TypeMismatch {
+            Value::Bool(b) => self.wrap_err(visitor.visit_bool(*b)),
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "bool",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -486,19 +336,19 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Number(Number::Integer(n)) => visitor.visit_i64(*n),
+            Value::Number(Number::Integer(n)) => self.wrap_err(visitor.visit_i64(*n)),
             Value::Number(Number::Float(n))
                 if n.fract() == 0.0
                     && *n >= i64::MIN as f64
                     && *n <= i64::MAX as f64
                     && !n.is_nan() =>
             {
-                visitor.visit_i64(*n as i64)
+                self.wrap_err(visitor.visit_i64(*n as i64))
             }
-            _ => Err(Error::TypeMismatch {
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "integer",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -528,16 +378,18 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Number(Number::Integer(n)) if *n >= 0 => visitor.visit_u64(*n as u64),
+            Value::Number(Number::Integer(n)) if *n >= 0 => {
+                self.wrap_err(visitor.visit_u64(*n as u64))
+            }
             Value::Number(Number::Float(n))
                 if n.fract() == 0.0 && *n >= 0.0 && *n <= u64::MAX as f64 && !n.is_nan() =>
             {
-                visitor.visit_u64(*n as u64)
+                self.wrap_err(visitor.visit_u64(*n as u64))
             }
-            _ => Err(Error::TypeMismatch {
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "unsigned integer",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -553,12 +405,12 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Number(Number::Float(n)) => visitor.visit_f64(*n),
-            Value::Number(Number::Integer(n)) => visitor.visit_f64(*n as f64),
-            _ => Err(Error::TypeMismatch {
+            Value::Number(Number::Float(n)) => self.wrap_err(visitor.visit_f64(*n)),
+            Value::Number(Number::Integer(n)) => self.wrap_err(visitor.visit_f64(*n as f64)),
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "float",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -568,13 +420,12 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::String(s) if s.chars().count() == 1 => {
-                // SAFETY: count() == 1 guarantees next() returns Some.
-                visitor.visit_char(s.chars().next().expect("internal: count verified"))
+                self.wrap_err(visitor.visit_char(s.chars().next().unwrap()))
             }
-            _ => Err(Error::TypeMismatch {
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "char",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -583,11 +434,11 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::String(s) => visitor.visit_str(s),
-            _ => Err(Error::TypeMismatch {
+            Value::String(s) => self.wrap_err(visitor.visit_str(s)),
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "string",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -603,11 +454,11 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::String(s) => visitor.visit_bytes(s.as_bytes()),
-            _ => Err(Error::TypeMismatch {
+            Value::String(s) => self.wrap_err(visitor.visit_bytes(s.as_bytes())),
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "bytes",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -623,8 +474,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Null => visitor.visit_none(),
-            _ => visitor.visit_some(self),
+            Value::Null => self.wrap_err(visitor.visit_none()),
+            _ => self.wrap_err(visitor.visit_some(self)),
         }
     }
 
@@ -633,11 +484,11 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Null => visitor.visit_unit(),
-            _ => Err(Error::TypeMismatch {
+            Value::Null => self.wrap_err(visitor.visit_unit()),
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "null",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -648,11 +499,14 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         self.deserialize_unit(visitor)
     }
 
-    fn deserialize_newtype_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value>
+    fn deserialize_newtype_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        visitor.visit_newtype_struct(self)
+        if name == crate::spanned::SPANNED_TYPE_NAME {
+            return visitor.visit_map(SpannedMapAccess::new(self.value, self.span_ctx));
+        }
+        self.wrap_err(visitor.visit_newtype_struct(self))
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value>
@@ -660,11 +514,13 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Sequence(seq) => visitor.visit_seq(SeqDeserializer::new(seq)),
-            _ => Err(Error::TypeMismatch {
+            Value::Sequence(seq) => {
+                self.wrap_err(visitor.visit_seq(ValueSeqAccess::new(seq, self.span_ctx)))
+            }
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "sequence",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -692,11 +548,13 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Mapping(map) => visitor.visit_map(MapDeserializer::new(map)),
-            _ => Err(Error::TypeMismatch {
+            Value::Mapping(map) => {
+                self.wrap_err(visitor.visit_map(ValueMapAccess::new(map, self.span_ctx)))
+            }
+            _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "mapping",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -709,18 +567,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        if name == spanned::SPANNED_TYPE_NAME {
-            let p: *const Value = self.value;
-            let ptr = p as usize;
-            #[cfg(feature = "std")]
-            let (start, end) = span_context::lookup_span(ptr)
-                .unwrap_or((Location::default(), Location::default()));
-            #[cfg(not(feature = "std"))]
-            let (start, end) = {
-                let _ = ptr;
-                (Location::default(), Location::default())
-            };
-            return visitor.visit_map(SpannedMapAccess::new(start, end, self.value));
+        if name == crate::spanned::SPANNED_TYPE_NAME {
+            return visitor.visit_map(SpannedMapAccess::new(self.value, self.span_ctx));
         }
         self.deserialize_map(visitor)
     }
@@ -735,19 +583,23 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::String(s) => visitor.visit_enum(s.as_str().into_deserializer()),
-            Value::Mapping(map) if map.len() == 1 => {
-                // SAFETY: len() == 1 guarantees next() returns Some.
-                let (key, value) = map.iter().next().expect("internal: len verified");
-                visitor.visit_enum(EnumDeserializer {
-                    variant: key,
-                    value,
-                })
+            Value::String(variant) => {
+                let de: de::value::StrDeserializer<'de, Error> =
+                    variant.as_str().into_deserializer();
+                self.wrap_err(visitor.visit_enum(de))
             }
-            _ => Err(Error::TypeMismatch {
-                expected: "enum",
+            Value::Mapping(map) if map.len() == 1 => {
+                let (variant, value) = map.iter().next().unwrap();
+                self.wrap_err(visitor.visit_enum(EnumAccess {
+                    variant,
+                    value,
+                    span_ctx: self.span_ctx,
+                }))
+            }
+            _ => self.wrap_err(Err(Error::TypeMismatch {
+                expected: "string or single-key mapping",
                 found: type_name(self.value),
-            }),
+            })),
         }
     }
 
@@ -755,28 +607,35 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_str(visitor)
+        match self.value {
+            Value::String(s) => self.wrap_err(visitor.visit_str(s)),
+            _ => self.deserialize_any(visitor),
+        }
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        visitor.visit_unit()
+        self.wrap_err(visitor.visit_unit())
     }
 }
 
-struct SeqDeserializer<'de> {
-    iter: core::slice::Iter<'de, Value>,
+pub(crate) struct ValueSeqAccess<'de> {
+    iter: std::slice::Iter<'de, Value>,
+    span_ctx: Option<&'de span_context::SpanContext>,
 }
 
-impl<'de> SeqDeserializer<'de> {
-    fn new(seq: &'de Sequence) -> Self {
-        SeqDeserializer { iter: seq.iter() }
+impl<'de> ValueSeqAccess<'de> {
+    pub(crate) fn new(seq: &'de [Value], span_ctx: Option<&'de span_context::SpanContext>) -> Self {
+        ValueSeqAccess {
+            iter: seq.iter(),
+            span_ctx,
+        }
     }
 }
 
-impl<'de> SeqAccess<'de> for SeqDeserializer<'de> {
+impl<'de> SeqAccess<'de> for ValueSeqAccess<'de> {
     type Error = Error;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
@@ -784,27 +643,39 @@ impl<'de> SeqAccess<'de> for SeqDeserializer<'de> {
         T: DeserializeSeed<'de>,
     {
         match self.iter.next() {
-            Some(value) => seed.deserialize(Deserializer::new(value)).map(Some),
+            Some(value) => {
+                let de = if let Some(ctx) = self.span_ctx {
+                    Deserializer::with_span_context(value, ctx)
+                } else {
+                    Deserializer::new(value)
+                };
+                seed.deserialize(de).map(Some)
+            }
             None => Ok(None),
         }
     }
 }
 
-struct MapDeserializer<'de> {
+pub(crate) struct ValueMapAccess<'de> {
     iter: indexmap::map::Iter<'de, String, Value>,
     value: Option<&'de Value>,
+    span_ctx: Option<&'de span_context::SpanContext>,
 }
 
-impl<'de> MapDeserializer<'de> {
-    fn new(map: &'de Mapping) -> Self {
-        MapDeserializer {
+impl<'de> ValueMapAccess<'de> {
+    pub(crate) fn new(
+        map: &'de crate::value::Mapping,
+        span_ctx: Option<&'de span_context::SpanContext>,
+    ) -> Self {
+        ValueMapAccess {
             iter: map.iter(),
             value: None,
+            span_ctx,
         }
     }
 }
 
-impl<'de> MapAccess<'de> for MapDeserializer<'de> {
+impl<'de> MapAccess<'de> for ValueMapAccess<'de> {
     type Error = Error;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
@@ -814,7 +685,14 @@ impl<'de> MapAccess<'de> for MapDeserializer<'de> {
         match self.iter.next() {
             Some((key, value)) => {
                 self.value = Some(value);
-                seed.deserialize(key.as_str().into_deserializer()).map(Some)
+                let de = if let Some(ctx) = self.span_ctx {
+                    Deserializer::with_span_context(value, ctx)
+                } else {
+                    Deserializer::new(value)
+                };
+                let key_de: de::value::StrDeserializer<'de, Error> =
+                    key.as_str().into_deserializer();
+                de.wrap_err(seed.deserialize(key_de).map(Some))
             }
             None => Ok(None),
         }
@@ -825,40 +703,110 @@ impl<'de> MapAccess<'de> for MapDeserializer<'de> {
         V: DeserializeSeed<'de>,
     {
         match self.value.take() {
-            Some(value) => seed.deserialize(Deserializer::new(value)),
-            None => Err(Error::Invalid("missing value in map".to_string())),
+            Some(value) => {
+                let de = if let Some(ctx) = self.span_ctx {
+                    Deserializer::with_span_context(value, ctx)
+                } else {
+                    Deserializer::new(value)
+                };
+                let res = seed.deserialize(de);
+                de.wrap_err(res)
+            }
+            None => Err(de::Error::custom("value is missing")),
         }
     }
 }
 
-/// Feeds the virtual `Spanned<T>` fields (start_line, start_column, …, value)
-/// to the `SpannedVisitor`.
-pub(crate) struct SpannedMapAccess<'de> {
-    start: Location,
-    end: Location,
+struct EnumAccess<'de> {
+    variant: &'de str,
     value: &'de Value,
-    state: SpannedFieldState,
+    span_ctx: Option<&'de span_context::SpanContext>,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum SpannedFieldState {
-    StartLine,
-    StartColumn,
-    StartIndex,
-    EndLine,
-    EndColumn,
-    EndIndex,
-    Value,
-    Done,
+impl<'de> de::EnumAccess<'de> for EnumAccess<'de> {
+    type Error = Error;
+    type Variant = VariantAccess<'de>;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant)>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        let de: de::value::StrDeserializer<'de, Error> = self.variant.into_deserializer();
+        let variant = seed.deserialize(de)?;
+        let visitor = VariantAccess {
+            value: self.value,
+            span_ctx: self.span_ctx,
+        };
+        Ok((variant, visitor))
+    }
+}
+
+struct VariantAccess<'de> {
+    value: &'de Value,
+    span_ctx: Option<&'de span_context::SpanContext>,
+}
+
+impl<'de> de::VariantAccess<'de> for VariantAccess<'de> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<()> {
+        let de = if let Some(ctx) = self.span_ctx {
+            Deserializer::with_span_context(self.value, ctx)
+        } else {
+            Deserializer::new(self.value)
+        };
+        Deserialize::deserialize(de)
+    }
+
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value>
+    where
+        T: DeserializeSeed<'de>,
+    {
+        let de = if let Some(ctx) = self.span_ctx {
+            Deserializer::with_span_context(self.value, ctx)
+        } else {
+            Deserializer::new(self.value)
+        };
+        seed.deserialize(de)
+    }
+
+    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        let de = if let Some(ctx) = self.span_ctx {
+            Deserializer::with_span_context(self.value, ctx)
+        } else {
+            Deserializer::new(self.value)
+        };
+        de::Deserializer::deserialize_seq(de, visitor)
+    }
+
+    fn struct_variant<V>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        let de = if let Some(ctx) = self.span_ctx {
+            Deserializer::with_span_context(self.value, ctx)
+        } else {
+            Deserializer::new(self.value)
+        };
+        de::Deserializer::deserialize_map(de, visitor)
+    }
+}
+
+pub(crate) struct SpannedMapAccess<'de> {
+    value: &'de Value,
+    span_ctx: Option<&'de span_context::SpanContext>,
+    fields: std::slice::Iter<'static, &'static str>,
 }
 
 impl<'de> SpannedMapAccess<'de> {
-    pub(crate) fn new(start: Location, end: Location, value: &'de Value) -> Self {
+    pub(crate) fn new(value: &'de Value, span_ctx: Option<&'de span_context::SpanContext>) -> Self {
         SpannedMapAccess {
-            start,
-            end,
             value,
-            state: SpannedFieldState::StartLine,
+            span_ctx,
+            fields: crate::spanned::SPANNED_FIELDS.iter(),
         }
     }
 }
@@ -870,120 +818,69 @@ impl<'de> MapAccess<'de> for SpannedMapAccess<'de> {
     where
         K: DeserializeSeed<'de>,
     {
-        let field = match self.state {
-            SpannedFieldState::StartLine => spanned::SPANNED_FIELD_START_LINE,
-            SpannedFieldState::StartColumn => spanned::SPANNED_FIELD_START_COLUMN,
-            SpannedFieldState::StartIndex => spanned::SPANNED_FIELD_START_INDEX,
-            SpannedFieldState::EndLine => spanned::SPANNED_FIELD_END_LINE,
-            SpannedFieldState::EndColumn => spanned::SPANNED_FIELD_END_COLUMN,
-            SpannedFieldState::EndIndex => spanned::SPANNED_FIELD_END_INDEX,
-            SpannedFieldState::Value => spanned::SPANNED_FIELD_VALUE,
-            SpannedFieldState::Done => return Ok(None),
-        };
-        seed.deserialize(de::value::BorrowedStrDeserializer::new(field))
-            .map(Some)
+        match self.fields.next() {
+            Some(field) => {
+                use serde::de::value::BorrowedStrDeserializer;
+                let de: BorrowedStrDeserializer<'_, Error> = BorrowedStrDeserializer::new(field);
+                seed.deserialize(de).map(Some)
+            }
+            None => Ok(None),
+        }
     }
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
     where
         V: DeserializeSeed<'de>,
     {
-        match self.state {
-            SpannedFieldState::StartLine => {
-                self.state = SpannedFieldState::StartColumn;
-                seed.deserialize(self.start.line().into_deserializer())
-            }
-            SpannedFieldState::StartColumn => {
-                self.state = SpannedFieldState::StartIndex;
-                seed.deserialize(self.start.column().into_deserializer())
-            }
-            SpannedFieldState::StartIndex => {
-                self.state = SpannedFieldState::EndLine;
-                seed.deserialize(self.start.index().into_deserializer())
-            }
-            SpannedFieldState::EndLine => {
-                self.state = SpannedFieldState::EndColumn;
-                seed.deserialize(self.end.line().into_deserializer())
-            }
-            SpannedFieldState::EndColumn => {
-                self.state = SpannedFieldState::EndIndex;
-                seed.deserialize(self.end.column().into_deserializer())
-            }
-            SpannedFieldState::EndIndex => {
-                self.state = SpannedFieldState::Value;
-                seed.deserialize(self.end.index().into_deserializer())
-            }
-            SpannedFieldState::Value => {
-                self.state = SpannedFieldState::Done;
-                seed.deserialize(Deserializer::new(self.value))
-            }
-            SpannedFieldState::Done => Err(Error::Invalid("no more fields".to_string())),
+        use crate::spanned::*;
+        let last_field = SPANNED_FIELDS[SPANNED_FIELDS.len() - 1 - (self.fields.len())];
+
+        if last_field == SPANNED_FIELD_VALUE {
+            let de = if let Some(ctx) = self.span_ctx {
+                Deserializer::with_span_context(self.value, ctx)
+            } else {
+                Deserializer::new(self.value)
+            };
+            return de.wrap_err(seed.deserialize(de));
         }
-    }
-}
 
-struct EnumDeserializer<'de> {
-    variant: &'de str,
-    value: &'de Value,
-}
+        let ptr: *const Value = self.value;
+        let addr = ptr as usize;
+        let span = self.span_ctx.and_then(|ctx| ctx.spans.get(&addr));
+        let loc = if let Some(s) = span {
+            crate::error::Location::from_index(&self.span_ctx.unwrap().source, s.0)
+        } else {
+            crate::error::Location::default()
+        };
+        let end_loc = if let Some(s) = span {
+            crate::error::Location::from_index(&self.span_ctx.unwrap().source, s.1)
+        } else {
+            crate::error::Location::default()
+        };
 
-impl<'de> de::EnumAccess<'de> for EnumDeserializer<'de> {
-    type Error = Error;
-    type Variant = VariantDeserializer<'de>;
+        let val = match last_field {
+            SPANNED_FIELD_START_LINE => loc.line(),
+            SPANNED_FIELD_START_COLUMN => loc.column(),
+            SPANNED_FIELD_START_INDEX => loc.index(),
+            SPANNED_FIELD_END_LINE => end_loc.line(),
+            SPANNED_FIELD_END_COLUMN => end_loc.column(),
+            SPANNED_FIELD_END_INDEX => end_loc.index(),
+            _ => unreachable!(),
+        };
 
-    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant)>
-    where
-        V: DeserializeSeed<'de>,
-    {
-        use serde::de::value::StrDeserializer;
-        let deserializer: StrDeserializer<'_, Error> = self.variant.into_deserializer();
-        let variant = seed.deserialize(deserializer)?;
-        Ok((variant, VariantDeserializer { value: self.value }))
-    }
-}
-
-struct VariantDeserializer<'de> {
-    value: &'de Value,
-}
-
-impl<'de> de::VariantAccess<'de> for VariantDeserializer<'de> {
-    type Error = Error;
-
-    fn unit_variant(self) -> Result<()> {
-        Ok(())
-    }
-
-    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value>
-    where
-        T: DeserializeSeed<'de>,
-    {
-        seed.deserialize(Deserializer::new(self.value))
-    }
-
-    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value>
-    where
-        V: Visitor<'de>,
-    {
-        de::Deserializer::deserialize_seq(Deserializer::new(self.value), visitor)
-    }
-
-    fn struct_variant<V>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value>
-    where
-        V: Visitor<'de>,
-    {
-        de::Deserializer::deserialize_map(Deserializer::new(self.value), visitor)
+        seed.deserialize(val.into_deserializer())
     }
 }
 
 fn type_name(value: &Value) -> String {
     match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(_) => "boolean".to_string(),
-        Value::Number(Number::Integer(_)) => "integer".to_string(),
-        Value::Number(Number::Float(_)) => "float".to_string(),
-        Value::String(_) => "string".to_string(),
-        Value::Sequence(_) => "sequence".to_string(),
-        Value::Mapping(_) => "mapping".to_string(),
-        Value::Tagged(t) => format!("tagged({})", t.tag()),
+        Value::Null => "null".to_owned(),
+        Value::Bool(_) => "bool".to_owned(),
+        Value::Number(Number::Integer(_)) => "integer".to_owned(),
+        Value::Number(Number::Float(_)) => "float".to_owned(),
+        Value::String(_) => "string".to_owned(),
+        Value::Sequence(_) => "sequence".to_owned(),
+        Value::Mapping(_) => "mapping".to_owned(),
+        Value::Tagged(tagged) => format!("tagged value (!{})", tagged.tag().as_str()),
     }
 }

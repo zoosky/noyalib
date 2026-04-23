@@ -146,10 +146,10 @@ mod ser;
 pub(crate) mod span_context;
 pub(crate) mod spanned;
 mod streaming;
-/// Declarative post-deserialise validation via [`garde`] (requires the
-/// `garde` feature).
-#[cfg(feature = "garde")]
-#[cfg_attr(docsrs, doc(cfg(feature = "garde")))]
+/// Declarative post-deserialise validation via [`garde`] or [`validator`]
+/// (requires the corresponding feature).
+#[cfg(any(feature = "garde", feature = "validator"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "garde", feature = "validator"))))]
 pub mod validated;
 mod value;
 pub mod with;
@@ -188,6 +188,9 @@ pub use streaming::StreamingDeserializer;
 #[cfg(feature = "garde")]
 #[cfg_attr(docsrs, doc(cfg(feature = "garde")))]
 pub use validated::Validated;
+#[cfg(feature = "validator")]
+#[cfg_attr(docsrs, doc(cfg(feature = "validator")))]
+pub use validated::ValidatedValidator;
 pub use value::{
     check_for_tag, nobang, Mapping, MappingAny, MaybeTag, Number, ParseNumberError, Sequence, Tag,
     TaggedValue, Value, ValueIndex,

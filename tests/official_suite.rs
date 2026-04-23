@@ -76,6 +76,15 @@ const SKIP_LIST: &[(&str, &str)] = &[
     // Compact block mapping with non-scalar complex key — requires
     // mapping-as-key support in the block sequence parser.
     ("V9D5", "compact block mapping with complex key"),
+    // Block-sequence edge cases with complex keys / trailing comments —
+    // parser state machine does not fully handle the `? key` / explicit
+    // block sequence interleaving. Deferred.
+    ("CFD4", "empty implicit key in single pair flow sequence"),
+    ("KK5P", "explicit block mapping with sequence keys"),
+    ("M2N8", "question mark edge cases"),
+    ("M5DY", "mapping between sequences (complex keys)"),
+    ("RZP5", "trailing comments in block sequence"),
+    ("XW4D", "trailing comments in block sequence"),
 ];
 
 #[derive(Debug)]

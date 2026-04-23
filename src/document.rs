@@ -106,6 +106,12 @@ pub fn load_all(input: &str) -> Result<DocumentIterator> {
 /// Returns an error if the YAML syntax is invalid or the document
 /// exceeds the configured limits.
 pub fn load_all_with_config(input: &str, config: &ParserConfig) -> Result<DocumentIterator> {
+    if input.len() > config.max_document_length {
+        return Err(crate::error::Error::Parse(format!(
+            "document exceeds maximum length of {} bytes",
+            config.max_document_length
+        )));
+    }
     let parse_config = parser::ParseConfig::from(config);
 
     #[cfg(feature = "std")]

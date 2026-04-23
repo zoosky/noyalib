@@ -30,7 +30,8 @@ pub(crate) enum SpanTree {
 }
 
 /// Holds the span map and source string for the current deserialization.
-pub(crate) struct SpanContext {
+#[derive(Debug)]
+pub struct SpanContext {
     /// Maps `&Value` pointer address → `(start_byte, end_byte)`.
     pub spans: HashMap<usize, (usize, usize)>,
     /// The original source string (for `Location::from_index`).
@@ -42,7 +43,15 @@ thread_local! {
 }
 
 /// RAII guard that clears the thread-local on drop.
-pub(crate) struct SpanContextGuard;
+pub(crate) struct SpanContextGuard {
+    ctx: SpanContext,
+}
+
+impl SpanContextGuard {
+    pub(crate) fn as_ref(&self) -> &SpanContext {
+        &self.ctx
+    }
+}
 
 impl Drop for SpanContextGuard {
     fn drop(&mut self) {
@@ -55,13 +64,18 @@ impl Drop for SpanContextGuard {
 /// Set the thread-local span context. Returns an RAII guard that clears it on
 /// drop.
 pub(crate) fn set_span_context(ctx: SpanContext) -> SpanContextGuard {
+    let cloned = SpanContext {
+        spans: ctx.spans.clone(),
+        source: Arc::clone(&ctx.source),
+    };
     SPAN_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(ctx);
     });
-    SpanContextGuard
+    SpanContextGuard { ctx: cloned }
 }
 
 /// Look up source locations for a `Value` pointer address.
+#[allow(dead_code)]
 pub(crate) fn lookup_span(value_ptr: usize) -> Option<(Location, Location)> {
     SPAN_CONTEXT.with(|cell| {
         let borrow = cell.borrow();

@@ -12,7 +12,7 @@ mod loader;
 mod scanner;
 
 pub(crate) use events::{Event, Parser};
-pub(crate) use loader::ParseConfig;
+pub(crate) use loader::{DuplicateKeyPolicy as InternalDuplicateKeyPolicy, ParseConfig};
 pub(crate) use scanner::ScalarStyle;
 
 /// Returns a default (zero) `Span` for use in synthesized events.
@@ -29,19 +29,22 @@ use crate::value::Value;
 /// Parse a YAML string into a list of `(Value, SpanTree)` documents.
 #[cfg(feature = "std")]
 pub(crate) fn parse(input: &str, config: &ParseConfig) -> Result<Vec<(Value, SpanTree)>> {
-    loader::load(input, config)
+    let mut parser = Parser::new(input);
+    loader::load(&mut parser, config, input)
 }
 
 /// Parse a single YAML document from a string.
 #[cfg(feature = "std")]
 pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, SpanTree)> {
-    loader::load_one(input, config)
+    let mut parser = Parser::new(input);
+    loader::load_one(&mut parser, config, input)
 }
 
 /// Parse a single YAML document into a `Value` without building a `SpanTree`.
 ///
 /// This is faster than [`parse_one`] when source-location tracking is not
 /// needed (the common case for [`crate::from_str`]).
+#[allow(dead_code)]
 pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
     loader::load_one_no_spans(input, config)
 }

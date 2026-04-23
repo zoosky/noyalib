@@ -9,7 +9,7 @@
 //! it supports and the shape of the errors it produces for unsupported
 //! constructs.
 
-use noyalib::{ParserConfig, StreamingDeserializer};
+use noyalib::{ParserConfig, StreamingDeserializer, Value};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -87,8 +87,7 @@ replica: *p
 fn native_merge_key_expansion() {
     // Deserialise into a fully-consuming type (BTreeMap<String, BTreeMap<...>>)
     // so every key is kept — using a struct that ignores `base` would skip
-    // an anchored value and trigger the AST fallback, which we cover in the
-    // Phase 5 tests.
+    // an anchored value and trigger the AST fallback.
     let yaml = r#"
 base: &b
   a: 1
@@ -103,6 +102,30 @@ target:
     assert_eq!(target["a"], 1);
     assert_eq!(target["b"], 2);
     assert_eq!(target["c"], 3);
+}
+
+#[test]
+fn native_multi_merge_key_expansion() {
+    let yaml = r#"
+defaults: &d
+  host: localhost
+  port: 8080
+overrides: &o
+  port: 9090
+  timeout: 30
+target:
+  <<: [*o, *d]
+  debug: true
+"#;
+    let mut de = StreamingDeserializer::new(yaml);
+    let outer: BTreeMap<String, BTreeMap<String, Value>> =
+        Deserialize::deserialize(&mut de).unwrap();
+    let target = &outer["target"];
+    // overrides (*o) comes FIRST in sequence, so it takes precedence for `port`.
+    assert_eq!(target["host"].as_str().unwrap(), "localhost");
+    assert_eq!(target["port"].as_i64().unwrap(), 9090);
+    assert_eq!(target["timeout"].as_i64().unwrap(), 30);
+    assert_eq!(target["debug"].as_bool().unwrap(), true);
 }
 
 // ── Error cases: unsupported constructs produce errors ──────────────────
