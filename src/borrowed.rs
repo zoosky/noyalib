@@ -328,7 +328,25 @@ fn borrowed_query_recursive<'a, 'b>(
 /// assert_eq!(value.as_mapping().unwrap().get("host").unwrap().as_str(), Some("localhost"));
 /// ```
 pub fn from_str_borrowed(input: &str) -> Result<BorrowedValue<'_>> {
-    let config = ParseConfig::from(&crate::ParserConfig::default());
+    from_str_borrowed_with_config(input, &crate::ParserConfig::default())
+}
+
+/// Parse YAML into a zero-copy `BorrowedValue` with custom security limits.
+///
+/// Same as [`from_str_borrowed`] but accepts a [`crate::ParserConfig`]
+/// so callers can tighten `max_document_length`, `max_depth`, and other
+/// limits for untrusted input.
+///
+/// # Errors
+///
+/// Returns an error when the input exceeds `max_document_length`, when
+/// the parser encounters invalid YAML, or when an unsupported construct
+/// (anchors/aliases on the borrowed path) is seen.
+pub fn from_str_borrowed_with_config<'a>(
+    input: &'a str,
+    user_config: &crate::ParserConfig,
+) -> Result<BorrowedValue<'a>> {
+    let config = ParseConfig::from(user_config);
     if input.len() > config.max_document_length {
         return Err(Error::Parse(format!(
             "document exceeds maximum length of {} bytes",

@@ -42,9 +42,9 @@ pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, Spa
 
 /// Parse a single YAML document into a `Value` without building a `SpanTree`.
 ///
-/// This is faster than [`parse_one`] when source-location tracking is not
-/// needed (the common case for [`crate::from_str`]).
-#[allow(dead_code)]
+/// Used only on `no_std` targets where `SpanTree` construction is
+/// unavailable — the `std` build always uses the span-aware path.
+#[cfg(not(feature = "std"))]
 pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
     loader::load_one_no_spans(input, config)
 }

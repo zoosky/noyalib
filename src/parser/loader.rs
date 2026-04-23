@@ -49,12 +49,6 @@ impl Default for ParseConfig {
     }
 }
 
-impl From<&ParseConfig> for ParseConfig {
-    fn from(c: &ParseConfig) -> Self {
-        *c
-    }
-}
-
 impl From<&crate::de::ParserConfig> for ParseConfig {
     fn from(c: &crate::de::ParserConfig) -> Self {
         ParseConfig {
@@ -487,9 +481,13 @@ fn estimate_value_size(v: &Value) -> usize {
     }
 }
 
-// ── Span-free loader ────────────────────────────────────────────────────
+// ── Span-free loader (no_std path) ──────────────────────────────────────
+//
+// Only compiled when the `std` feature is disabled. The `std` build
+// always uses the span-aware loader above so `Spanned<T>` fields are
+// populated correctly.
 
-#[allow(dead_code)]
+#[cfg(not(feature = "std"))]
 pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Value> {
     let mut parser = crate::parser::events::Parser::new(input);
     let mut loader = NoSpanLoader::new(config);
@@ -506,7 +504,7 @@ pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Val
     Ok(loader.docs.into_iter().next().unwrap_or(Value::Null))
 }
 
-#[allow(dead_code)]
+#[cfg(not(feature = "std"))]
 #[derive(Debug)]
 enum NoSpanFrame {
     Sequence {
@@ -526,7 +524,7 @@ enum NoSpanFrame {
     },
 }
 
-#[allow(dead_code)]
+#[cfg(not(feature = "std"))]
 struct NoSpanLoader<'a> {
     docs: Vec<Value>,
     stack: Vec<NoSpanFrame>,
@@ -538,7 +536,7 @@ struct NoSpanLoader<'a> {
     in_document: bool,
 }
 
-#[allow(dead_code)]
+#[cfg(not(feature = "std"))]
 impl<'a> NoSpanLoader<'a> {
     fn new(config: &'a ParseConfig) -> Self {
         NoSpanLoader {
