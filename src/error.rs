@@ -8,6 +8,60 @@ use crate::prelude::*;
 /// A specialized `Result` type for noyalib operations.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// Pick the closest known name to `target`, if any, within a small edit
+/// distance. Used by alias-error diagnostics to suggest likely typo fixes
+/// ("did you mean `&logger`?"). Returns `None` when no candidate is within
+/// the threshold.
+///
+/// Threshold is length-aware: short names (≤ 3 chars) require distance 1;
+/// longer names allow distance 2. This keeps suggestions high-confidence.
+pub(crate) fn closest_name<'a, I>(target: &str, candidates: I) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let max_dist = if target.len() <= 3 { 1 } else { 2 };
+    let mut best: Option<(usize, &'a str)> = None;
+    for cand in candidates {
+        // Cheap length prefilter: anything differing in length by more than
+        // max_dist can't be within edit distance max_dist.
+        let lc = cand.len();
+        let lt = target.len();
+        let diff = lc.abs_diff(lt);
+        if diff > max_dist {
+            continue;
+        }
+        let d = levenshtein(target, cand);
+        if d <= max_dist && best.map_or(true, |(bd, _)| d < bd) {
+            best = Some((d, cand));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
+/// Classic Levenshtein distance (insertions, deletions, substitutions count
+/// as one edit each). O(m·n) time, O(min(m,n)) space.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let (a, b) = if a.len() < b.len() { (b, a) } else { (a, b) };
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if b_bytes.is_empty() {
+        return a_bytes.len();
+    }
+    let mut prev: Vec<usize> = (0..=b_bytes.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b_bytes.len() + 1];
+    for (i, &ac) in a_bytes.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, &bc) in b_bytes.iter().enumerate() {
+            let cost = usize::from(ac != bc);
+            curr[j + 1] = (curr[j] + 1) // insertion
+                .min(prev[j + 1] + 1) // deletion
+                .min(prev[j] + cost); // substitution
+        }
+        core::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_bytes.len()]
+}
+
 /// A location within a YAML document.
 ///
 /// This is used to report where in the source document an error occurred.
@@ -170,6 +224,27 @@ pub enum Error {
     #[error("unknown anchor: {0}")]
     UnknownAnchor(String),
 
+    /// Unknown anchor with source location and optional typo suggestion.
+    ///
+    /// Richer counterpart to [`Error::UnknownAnchor`]: carries the byte
+    /// location of the failing alias and, when an anchor with a similar name
+    /// was defined in the same document, that anchor's name and location.
+    /// Used by the miette [`Diagnostic`] impl to render dual-label "did you
+    /// mean …?" output.
+    ///
+    /// [`Diagnostic`]: miette::Diagnostic
+    #[error("unknown anchor: {name}")]
+    UnknownAnchorAt {
+        /// The anchor name the alias tried to reference.
+        name: String,
+        /// Source location of the alias site.
+        location: Location,
+        /// An anchor with a similar name that *was* defined, if any, and
+        /// where. When present, the diagnostic renders a second label at
+        /// this location with label text "defined here".
+        suggestion: Option<(String, Location)>,
+    },
+
     /// Scalar value found where a mapping was expected in a merge operation.
     ///
     /// The YAML merge key (`<<`) requires its value to be a mapping or
@@ -267,6 +342,7 @@ impl Error {
         match self {
             Error::ParseWithLocation { location, .. } => Some(*location),
             Error::DeserializeWithLocation { location, .. } => Some(*location),
+            Error::UnknownAnchorAt { location, .. } => Some(*location),
             Error::Shared(arc) => arc.location(),
             _ => None,
         }
@@ -479,7 +555,7 @@ impl miette::Diagnostic for Error {
             Error::UnknownField(_) => "noyalib::unknown_field",
             Error::RecursionLimitExceeded { .. } => "noyalib::recursion_limit",
             Error::RepetitionLimitExceeded => "noyalib::repetition_limit",
-            Error::UnknownAnchor(_) => "noyalib::unknown_anchor",
+            Error::UnknownAnchor(_) | Error::UnknownAnchorAt { .. } => "noyalib::unknown_anchor",
             Error::DuplicateKey(_) => "noyalib::duplicate_key",
             Error::EndOfStream => "noyalib::eof",
             Error::MoreThanOneDocument => "noyalib::multi_document",
@@ -505,10 +581,44 @@ impl miette::Diagnostic for Error {
             Error::UnknownAnchor(_) => Some("Define the anchor (&name) before referencing it"),
             _ => None,
         };
-        help.map(|s| -> Box<dyn fmt::Display + 'a> { Box::new(s) })
+        if let Some(s) = help {
+            return Some(Box::new(s));
+        }
+        // Suggestion-bearing variant: render "did you mean '&name'?" when a
+        // similar anchor was defined in the same document.
+        if let Error::UnknownAnchorAt { suggestion, .. } = self {
+            if let Some((name, _)) = suggestion {
+                let msg = std::format!("did you mean '&{name}'?");
+                return Some(Box::new(msg));
+            }
+            return Some(Box::new("Define the anchor (&name) before referencing it"));
+        }
+        None
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        // Dual-label path: alias site + anchor-definition site when a typo
+        // suggestion is present.
+        if let Error::UnknownAnchorAt {
+            location,
+            suggestion,
+            name,
+            ..
+        } = self
+        {
+            let alias_label = miette::LabeledSpan::at_offset(
+                location.index,
+                std::format!("unknown anchor '{name}'"),
+            );
+            if let Some((sugg_name, sugg_loc)) = suggestion {
+                let def_label = miette::LabeledSpan::at_offset(
+                    sugg_loc.index,
+                    std::format!("did you mean this anchor '&{sugg_name}'?"),
+                );
+                return Some(Box::new([alias_label, def_label].into_iter()));
+            }
+            return Some(Box::new(core::iter::once(alias_label)));
+        }
         let loc = self.location()?;
         // Byte offset → single-character span at the error point.
         let label = miette::LabeledSpan::at_offset(loc.index, "here");

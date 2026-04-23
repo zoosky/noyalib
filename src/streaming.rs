@@ -190,6 +190,10 @@ struct StreamingDeserializer<'a> {
     raw_str_mode: bool,
     /// Buffered events for anchored subtrees, keyed by anchor name.
     anchor_events: FxHashMap<String, Vec<BufferedEvent>>,
+    /// Byte offset of each anchor's definition site, keyed by anchor name.
+    /// Used by [`crate::error::Error::UnknownAnchorAt`] to point at the
+    /// anchor the user probably meant when suggesting typo fixes.
+    anchor_def_spans: FxHashMap<String, usize>,
     /// Stack of event buffers being replayed for alias resolution.
     /// Each entry is a reversed list of events; we pop from the end.
     replay_stack: Vec<Vec<BufferedEvent>>,
@@ -208,6 +212,7 @@ impl<'a> StreamingDeserializer<'a> {
             depth: 0,
             raw_str_mode: false,
             anchor_events: FxHashMap::default(),
+            anchor_def_spans: FxHashMap::default(),
             replay_stack: Vec::new(),
             recording: None,
         }
@@ -234,8 +239,13 @@ impl<'a> StreamingDeserializer<'a> {
                 .map_err(|e| Error::parse_at(&*e.message, self.input, e.index))?;
 
             // Handle alias transparently at peek time.
-            if let Event::Alias { ref anchor, .. } = event {
-                let resolved = self.resolve_alias(anchor)?;
+            if let Event::Alias {
+                ref anchor,
+                ref span,
+            } = event
+            {
+                let start = span.start;
+                let resolved = self.resolve_alias(anchor, start)?;
                 self.current = Some(resolved);
             } else {
                 self.current = Some(event);
@@ -272,8 +282,13 @@ impl<'a> StreamingDeserializer<'a> {
         };
 
         // Handle alias: resolve to buffered events transparently.
-        if let Event::Alias { ref anchor, .. } = ev {
-            let resolved = self.resolve_alias(anchor)?;
+        if let Event::Alias {
+            ref anchor,
+            ref span,
+        } = ev
+        {
+            let start = span.start;
+            let resolved = self.resolve_alias(anchor, start)?;
             return Ok(resolved);
         }
 
@@ -316,6 +331,15 @@ impl<'a> StreamingDeserializer<'a> {
     /// strip the anchor and start recording. Must be called before
     /// `maybe_record` for the same event.
     fn handle_anchor(&mut self, ev: &mut Event<'_>) {
+        // Capture the byte-offset of the anchor definition before we strip
+        // it: the recording map is keyed by name, so if the same anchor
+        // name is later redefined we still have the most recent location.
+        let def_start = match ev {
+            Event::Scalar { span, .. }
+            | Event::SequenceStart { span, .. }
+            | Event::MappingStart { span, .. } => Some(span.start),
+            _ => None,
+        };
         let anchor_name = Self::strip_anchor_and_record(ev);
         if let Some(name) = anchor_name {
             // Check there is no tag — tags still trigger fallback before we get here.
@@ -326,6 +350,9 @@ impl<'a> StreamingDeserializer<'a> {
                 _ => false,
             };
             if !has_tag {
+                if let Some(start) = def_start {
+                    let _ = self.anchor_def_spans.insert(name.clone(), start);
+                }
                 self.start_recording(name);
             }
         }
@@ -385,14 +412,16 @@ impl<'a> StreamingDeserializer<'a> {
 
     /// Resolve an alias by pushing its buffered events onto the replay stack.
     /// Returns the first event from the replayed buffer.
-    fn resolve_alias(&mut self, name: &str) -> Result<Event<'a>> {
-        let buf = self
-            .anchor_events
-            .get(name)
-            .ok_or_else(|| Error::UnknownAnchor(name.to_owned()))?
-            .clone();
+    ///
+    /// `alias_start` is the byte offset of the alias site used to build a
+    /// located [`Error::UnknownAnchorAt`] with an optional typo suggestion.
+    fn resolve_alias(&mut self, name: &str, alias_start: usize) -> Result<Event<'a>> {
+        let buf = match self.anchor_events.get(name) {
+            Some(b) => b.clone(),
+            None => return Err(self.build_unknown_anchor(name, alias_start)),
+        };
         if buf.is_empty() {
-            return Err(Error::UnknownAnchor(name.to_owned()));
+            return Err(self.build_unknown_anchor(name, alias_start));
         }
         // Reverse the buffer so we can pop from the end efficiently.
         let mut reversed = buf;
@@ -402,6 +431,27 @@ impl<'a> StreamingDeserializer<'a> {
             self.replay_stack.push(reversed);
         }
         Ok(self.buffered_to_event(first))
+    }
+
+    /// Build an `UnknownAnchorAt` error, attaching a "did you mean …?"
+    /// suggestion when a similar anchor name was defined earlier.
+    fn build_unknown_anchor(&self, name: &str, alias_start: usize) -> Error {
+        let alias_loc = crate::error::Location::from_index(self.input, alias_start);
+        let suggestion =
+            crate::error::closest_name(name, self.anchor_def_spans.keys().map(String::as_str))
+                .and_then(|sugg| {
+                    self.anchor_def_spans.get(sugg).map(|def_start| {
+                        (
+                            sugg.to_string(),
+                            crate::error::Location::from_index(self.input, *def_start),
+                        )
+                    })
+                });
+        Error::UnknownAnchorAt {
+            name: name.to_owned(),
+            location: alias_loc,
+            suggestion,
+        }
     }
 
     /// Strip the anchor from an event if present and start recording.

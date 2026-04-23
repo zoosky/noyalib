@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use super::events::{Event, Parser};
 use super::scanner::ScalarStyle;
 use crate::de::{DuplicateKeyPolicy, ParserConfig};
-use crate::error::{Error, Result};
+use crate::error::{Error, Location, Result};
 #[cfg(feature = "std")]
 use crate::span_context::SpanTree;
 use crate::value::{Mapping, Number, Value};
@@ -212,9 +212,30 @@ impl<'a> Loader<'a> {
                 }
                 // Clone is intentional here — alias expansion must produce an
                 // independent copy of the anchored value.
-                let value = self.anchor_map.get(&anchor).cloned().ok_or_else(|| {
-                    Error::parse_at(format!("unknown anchor '{anchor}'"), input, span.start)
-                })?;
+                let value = match self.anchor_map.get(&anchor).cloned() {
+                    Some(v) => v,
+                    None => {
+                        let alias_loc = Location::from_index(input, span.start);
+                        let suggestion = crate::error::closest_name(
+                            &anchor,
+                            self.anchor_span_map.keys().map(String::as_str),
+                        )
+                        .and_then(|sugg_name| {
+                            self.anchor_span_map.get(sugg_name).map(|tree| {
+                                let (def_start, _) = span_tree_bounds(tree);
+                                (
+                                    sugg_name.to_string(),
+                                    Location::from_index(input, def_start),
+                                )
+                            })
+                        });
+                        return Err(Error::UnknownAnchorAt {
+                            name: anchor,
+                            location: alias_loc,
+                            suggestion,
+                        });
+                    }
+                };
                 // Track cumulative bytes cloned via aliases to prevent
                 // billion-laughs attacks where a large value is aliased many times.
                 self.alias_bytes = self.alias_bytes.saturating_add(estimate_value_size(&value));
@@ -373,11 +394,7 @@ impl<'a> Loader<'a> {
             }) => {
                 // This value is a mapping key.
                 let key = value_into_key(value)?;
-                let key_span = match &span_tree {
-                    SpanTree::Leaf(s, e) => (*s, *e),
-                    SpanTree::Sequence { start, end, .. } => (*start, *end),
-                    SpanTree::Mapping { start, end, .. } => (*start, *end),
-                };
+                let key_span = span_tree_bounds(&span_tree);
 
                 // Check for merge key.
                 if key == MERGE_KEY {
@@ -487,6 +504,15 @@ impl<'a> Loader<'a> {
             }
         }
         Ok(())
+    }
+}
+
+/// Extract the byte-offset `(start, end)` pair from any `SpanTree` variant.
+fn span_tree_bounds(tree: &SpanTree) -> (usize, usize) {
+    match tree {
+        SpanTree::Leaf(s, e) => (*s, *e),
+        SpanTree::Sequence { start, end, .. } => (*start, *end),
+        SpanTree::Mapping { start, end, .. } => (*start, *end),
     }
 }
 
