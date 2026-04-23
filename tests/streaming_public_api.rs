@@ -125,7 +125,7 @@ target:
     assert_eq!(target["host"].as_str().unwrap(), "localhost");
     assert_eq!(target["port"].as_i64().unwrap(), 9090);
     assert_eq!(target["timeout"].as_i64().unwrap(), 30);
-    assert_eq!(target["debug"].as_bool().unwrap(), true);
+    assert!(target["debug"].as_bool().unwrap());
 }
 
 // ── Error cases: unsupported constructs produce errors ──────────────────

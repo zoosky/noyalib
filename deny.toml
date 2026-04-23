@@ -10,6 +10,16 @@ allow = [
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",
+    # `is_ci` (used by miette/fancy via supports-color) is ISC-licensed.
+    # ISC is permissive, OSI- and FSF-approved, and widely accepted.
+    "ISC",
+    # `memchr` is dual-licensed Unlicense OR MIT — transitive via memmap2.
+    "Unlicense",
+    # A handful of transitive deps ship under BSD clauses (2 or 3).
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # `adler2` and a few compression helpers are 0BSD.
+    "0BSD",
 ]
 confidence-threshold = 0.8
 

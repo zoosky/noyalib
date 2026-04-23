@@ -47,8 +47,8 @@ fn loader_tagged_int_invalid_errors() {
 
 #[test]
 fn loader_tagged_float_basic() {
-    let v: Value = from_str("!!float 3.14\n").unwrap();
-    assert!((v.as_f64().unwrap() - 3.14).abs() < 0.001);
+    let v: Value = from_str("!!float 2.5\n").unwrap();
+    assert!((v.as_f64().unwrap() - 2.5).abs() < 0.001);
 }
 
 #[test]

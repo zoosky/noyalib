@@ -234,9 +234,9 @@ fn into_owned_integer() {
 
 #[test]
 fn into_owned_float() {
-    let v: BorrowedValue<'_> = from_str_borrowed("3.14").unwrap();
+    let v: BorrowedValue<'_> = from_str_borrowed("2.5").unwrap();
     let owned = v.into_owned();
-    assert!((owned.as_f64().unwrap() - 3.14).abs() < 1e-9);
+    assert!((owned.as_f64().unwrap() - 2.5).abs() < 1e-9);
 }
 
 #[test]

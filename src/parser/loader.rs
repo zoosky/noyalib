@@ -375,11 +375,11 @@ impl<'a> Loader<'a> {
                 } else {
                     (0, 0)
                 };
-                let old_map = std::mem::replace(map, Mapping::new());
-                let old_span_entries = std::mem::replace(span_entries, Vec::new());
+                let old_map = std::mem::take(map);
+                let old_span_entries = std::mem::take(span_entries);
                 let old_start = *start;
                 let old_anchor = anchor.take();
-                let old_merge_values = std::mem::replace(merge_values, Vec::new());
+                let old_merge_values = std::mem::take(merge_values);
 
                 *self.stack.last_mut().unwrap() = Frame::MappingValue {
                     map: old_map,
@@ -427,11 +427,11 @@ impl<'a> Loader<'a> {
                     }
                 }
 
-                let old_map = std::mem::replace(map, Mapping::new());
-                let old_span_entries = std::mem::replace(span_entries, Vec::new());
+                let old_map = std::mem::take(map);
+                let old_span_entries = std::mem::take(span_entries);
                 let old_start = *start;
                 let old_anchor = anchor.take();
-                let old_merge_values = std::mem::replace(merge_values, Vec::new());
+                let old_merge_values = std::mem::take(merge_values);
 
                 *self.stack.last_mut().unwrap() = Frame::MappingKey {
                     map: old_map,
@@ -674,9 +674,9 @@ impl<'a> NoSpanLoader<'a> {
                 merge_values,
             } => {
                 if let Some(key) = value_to_key_string(value) {
-                    let old_map = std::mem::replace(map, Mapping::new());
+                    let old_map = std::mem::take(map);
                     let old_anchor = anchor.take();
-                    let old_merge_values = std::mem::replace(merge_values, Vec::new());
+                    let old_merge_values = std::mem::take(merge_values);
                     *self.stack.last_mut().unwrap() = NoSpanFrame::MappingValue {
                         map: old_map,
                         key,
@@ -696,9 +696,9 @@ impl<'a> NoSpanLoader<'a> {
                 } else {
                     let _ = map.insert(key.clone(), value);
                 }
-                let old_map = std::mem::replace(map, Mapping::new());
+                let old_map = std::mem::take(map);
                 let old_anchor = anchor.take();
-                let old_merge_values = std::mem::replace(merge_values, Vec::new());
+                let old_merge_values = std::mem::take(merge_values);
                 *self.stack.last_mut().unwrap() = NoSpanFrame::MappingKey {
                     map: old_map,
                     anchor: old_anchor,

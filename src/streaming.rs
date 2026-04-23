@@ -47,6 +47,11 @@ pub(crate) enum Scalar<'a> {
     Str(Cow<'a, str>),
 }
 
+/// A streaming YAML deserializer operating directly on parser events.
+///
+/// Bypasses the intermediate `Value` AST for the supported subset of
+/// YAML. See the module-level documentation for when to use this type
+/// versus [`crate::from_str`].
 pub struct StreamingDeserializer<'a> {
     parser: Parser<'a>,
     input: &'a str,
@@ -82,10 +87,18 @@ impl fmt::Debug for StreamingDeserializer<'_> {
 }
 
 impl<'a> StreamingDeserializer<'a> {
+    /// Create a streaming deserializer over the given YAML input using
+    /// default parser settings.
     pub fn new(input: &'a str) -> Self {
         Self::with_config(input, ParseConfig::default())
     }
 
+    /// Create a streaming deserializer with a custom parser configuration.
+    ///
+    /// Accepts anything convertible to the internal `ParseConfig` —
+    /// most callers pass a `&crate::ParserConfig`. Use this to tighten
+    /// security limits (`max_depth`, `max_document_length`, alias
+    /// expansion caps) for untrusted input.
     pub fn with_config<C>(input: &'a str, config: C) -> Self
     where
         C: Into<ParseConfig>,
@@ -250,7 +263,7 @@ impl<'a> StreamingDeserializer<'a> {
         };
         if let Some(name) = anchor_name {
             if let Some(start) = def_start {
-                self.anchor_def_spans.insert(name.clone(), start);
+                let _ = self.anchor_def_spans.insert(name.clone(), start);
             }
             self.recording = Some((name, 0, SmallVec::new()));
         }
@@ -266,7 +279,7 @@ impl<'a> StreamingDeserializer<'a> {
                     });
                     if *depth == 0 {
                         let (name, _, events) = self.recording.take().unwrap();
-                        self.anchor_events.insert(name, events);
+                        let _ = self.anchor_events.insert(name, events);
                     }
                 }
                 Event::SequenceStart { .. } => {
@@ -278,7 +291,7 @@ impl<'a> StreamingDeserializer<'a> {
                     *depth -= 1;
                     if *depth == 0 {
                         let (name, _, events) = self.recording.take().unwrap();
-                        self.anchor_events.insert(name, events);
+                        let _ = self.anchor_events.insert(name, events);
                     }
                 }
                 Event::MappingStart { .. } => {
@@ -290,7 +303,7 @@ impl<'a> StreamingDeserializer<'a> {
                     *depth -= 1;
                     if *depth == 0 {
                         let (name, _, events) = self.recording.take().unwrap();
-                        self.anchor_events.insert(name, events);
+                        let _ = self.anchor_events.insert(name, events);
                     }
                 }
                 Event::Alias { anchor, .. } => {
@@ -299,7 +312,7 @@ impl<'a> StreamingDeserializer<'a> {
                     });
                     if *depth == 0 {
                         let (name, _, events) = self.recording.take().unwrap();
-                        self.anchor_events.insert(name, events);
+                        let _ = self.anchor_events.insert(name, events);
                     }
                 }
                 _ => {}
@@ -433,7 +446,7 @@ impl<'a> StreamingDeserializer<'a> {
     }
 
     fn skip_event(&mut self) -> Result<()> {
-        self.next_event()?;
+        let _ = self.next_event()?;
         Ok(())
     }
 
@@ -493,13 +506,13 @@ impl<'a> StreamingDeserializer<'a> {
     /// state before returning a fallback error so the AST path sees the
     /// tagged node unchanged.
     fn restore_tag_to_current(&mut self, t: (String, String)) {
-        if let Some(ev) = self.current.as_mut() {
-            match ev {
-                Event::Scalar { tag, .. }
-                | Event::SequenceStart { tag, .. }
-                | Event::MappingStart { tag, .. } => *tag = Some(t),
-                _ => {}
-            }
+        if let Some(
+            Event::Scalar { tag, .. }
+            | Event::SequenceStart { tag, .. }
+            | Event::MappingStart { tag, .. },
+        ) = self.current.as_mut()
+        {
+            *tag = Some(t);
         }
     }
 
@@ -1321,7 +1334,7 @@ pub(crate) fn resolve_plain(s: &str, strict: bool, legacy: bool) -> Scalar<'_> {
         _ => {
             if let Some(n) = parse_integer(s) {
                 Scalar::Int(n)
-            } else if let Some(f) = s.parse::<f64>().ok() {
+            } else if let Ok(f) = s.parse::<f64>() {
                 Scalar::Float(f)
             } else {
                 Scalar::Str(Cow::Borrowed(s))
@@ -1371,7 +1384,7 @@ fn collect_keys(body: &[BufferedEvent], seen: &mut FxHashSet<String>) -> Option<
     let mut i = 0;
     while i < body.len() {
         if let BufferedEvent::Scalar { value, .. } = &body[i] {
-            seen.insert(value.clone());
+            let _ = seen.insert(value.clone());
         } else {
             return None;
         }
@@ -1434,7 +1447,7 @@ fn extract_local_keys(buf: &[BufferedEvent]) -> FxHashSet<String> {
             BufferedEvent::Scalar { value, .. } => {
                 if d == 0 {
                     if key {
-                        keys.insert(value.clone());
+                        let _ = keys.insert(value.clone());
                     }
                     key = !key;
                 }
