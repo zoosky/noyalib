@@ -59,6 +59,7 @@ const EXAMPLES: &[&str] = &[
     "registry",
     "scientific",
     "validation",
+    "anchor_shared",
     // Final
     "async_io",
     "recursive",

@@ -338,6 +338,103 @@ where
     Ok(())
 }
 
+/// Serialize a Rust type to a YAML string with automatic anchor/alias emission
+/// for shared `Rc` and `Arc` pointers wrapped in `RcAnchor` / `ArcAnchor`.
+///
+/// During this call, every `RcAnchor` / `ArcAnchor` whose pointer is seen for
+/// the first time emits a YAML anchor (`&idNNN`); every subsequent sighting of
+/// the same pointer emits an alias (`*idNNN`). This preserves true DAG
+/// structure in the emitted document — `Rc::clone` siblings become alias
+/// references instead of duplicated subtrees.
+///
+/// Pointer identity is tracked via a thread-local scratchpad that is installed
+/// for the duration of the call and cleared on return. Plain `to_string`
+/// behaviour is unaffected.
+///
+/// # Errors
+///
+/// Returns an error if the type cannot be serialized to YAML.
+///
+/// # Example
+///
+/// ```rust
+/// use noyalib::{to_string_tracking_shared, RcAnchor};
+/// use std::rc::Rc;
+///
+/// let shared: RcAnchor<String> = RcAnchor::from("hello".to_string());
+/// let doc = vec![shared.clone(), shared.clone(), shared];
+/// let yaml = to_string_tracking_shared(&doc).unwrap();
+/// assert!(yaml.contains("&id001"));
+/// assert!(yaml.contains("*id001"));
+/// ```
+#[cfg(feature = "std")]
+pub fn to_string_tracking_shared<T>(value: &T) -> Result<String>
+where
+    T: ?Sized + Serialize,
+{
+    to_string_tracking_shared_with_config(value, &SerializerConfig::default())
+}
+
+/// Serialize with automatic anchor/alias emission and a custom configuration.
+///
+/// See [`to_string_tracking_shared`] for behaviour.
+///
+/// # Errors
+///
+/// Returns an error if the type cannot be serialized to YAML.
+#[cfg(feature = "std")]
+pub fn to_string_tracking_shared_with_config<T>(
+    value: &T,
+    config: &SerializerConfig,
+) -> Result<String>
+where
+    T: ?Sized + Serialize,
+{
+    let _scope = crate::anchors::shared_tracking::AnchorScope::enter();
+    to_string_with_config(value, config)
+}
+
+/// Write YAML to a writer with automatic anchor/alias emission for shared
+/// `Rc` / `Arc` pointers.
+///
+/// See [`to_string_tracking_shared`] for behaviour.
+///
+/// # Errors
+///
+/// Returns an error if the type cannot be serialized or writing fails.
+#[cfg(feature = "std")]
+pub fn to_writer_tracking_shared<W, T>(writer: W, value: &T) -> Result<()>
+where
+    W: std::io::Write,
+    T: ?Sized + Serialize,
+{
+    to_writer_tracking_shared_with_config(writer, value, &SerializerConfig::default())
+}
+
+/// Write YAML to a writer with automatic anchor/alias emission and a custom
+/// configuration.
+///
+/// See [`to_string_tracking_shared`] for behaviour.
+///
+/// # Errors
+///
+/// Returns an error if the type cannot be serialized or writing fails.
+#[cfg(feature = "std")]
+pub fn to_writer_tracking_shared_with_config<W, T>(
+    writer: W,
+    value: &T,
+    config: &SerializerConfig,
+) -> Result<()>
+where
+    W: std::io::Write,
+    T: ?Sized + Serialize,
+{
+    let s = to_string_tracking_shared_with_config(value, config)?;
+    let mut writer = writer;
+    writer.write_all(s.as_bytes())?;
+    Ok(())
+}
+
 /// Serialize a Rust type to a `fmt::Write` destination.
 ///
 /// # Errors
@@ -816,6 +913,25 @@ fn write_sequence(
     Ok(())
 }
 
+/// Whether a value needs block-style layout (indented on the line after `:`)
+/// rather than inline scalar layout. Anchor-wrapped block collections must be
+/// treated like the inner collection.
+fn needs_block_layout(v: &Value) -> bool {
+    match v {
+        Value::Mapping(m) => !m.is_empty(),
+        Value::Sequence(s) => !s.is_empty(),
+        Value::Tagged(t) if t.tag().as_str() == crate::fmt::MAGIC_ANCHOR_DEF => {
+            if let Value::Sequence(seq) = t.value() {
+                if seq.len() == 2 {
+                    return needs_block_layout(&seq[1]);
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 fn write_mapping(
     output: &mut String,
     map: &Mapping,
@@ -836,19 +952,20 @@ fn write_mapping(
         }
         write_string(output, key, indent, config);
 
-        match value {
-            Value::Mapping(m) if !m.is_empty() => {
-                output.push(':');
-                write_value(output, value, indent + 1, false, config, depth + 1)?;
+        if needs_block_layout(value) {
+            output.push(':');
+            // Anchor-wrapped block values render as "&idNNN\n  ..." — we
+            // need the space between ":" and "&" to keep valid YAML.
+            if matches!(
+                value,
+                Value::Tagged(t) if t.tag().as_str() == crate::fmt::MAGIC_ANCHOR_DEF
+            ) {
+                output.push(' ');
             }
-            Value::Sequence(s) if !s.is_empty() => {
-                output.push(':');
-                write_value(output, value, indent + 1, false, config, depth + 1)?;
-            }
-            _ => {
-                output.push_str(": ");
-                write_value(output, value, indent, false, config, depth + 1)?;
-            }
+            write_value(output, value, indent + 1, false, config, depth + 1)?;
+        } else {
+            output.push_str(": ");
+            write_value(output, value, indent, false, config, depth + 1)?;
         }
     }
     Ok(())
@@ -911,6 +1028,46 @@ fn write_internal_tag(
         crate::fmt::MAGIC_SPACE_AFTER => {
             write_value(output, value, indent, is_root, config, depth)?;
             output.push('\n');
+        }
+        crate::fmt::MAGIC_ANCHOR_DEF => {
+            // value is a sequence [String(id), inner_value]. Emit "&id" before
+            // the inner value. For block collections the inner starts on a new
+            // line; for scalars it follows on the same line.
+            if let Value::Sequence(seq) = value {
+                if seq.len() == 2 {
+                    if let Value::String(id) = &seq[0] {
+                        let inner = &seq[1];
+                        output.push('&');
+                        output.push_str(id);
+                        match inner {
+                            Value::Mapping(m) if !m.is_empty() => {
+                                output.push('\n');
+                                write_indent(output, config.indent * indent);
+                                // `is_root = true` suppresses the leading newline
+                                // inside write_mapping so the anchor line and
+                                // the first key are correctly adjacent.
+                                write_mapping(output, m, indent, true, config, depth + 1)?;
+                            }
+                            Value::Sequence(s) if !s.is_empty() => {
+                                output.push('\n');
+                                write_indent(output, config.indent * indent);
+                                write_sequence(output, s, indent, true, config, depth + 1)?;
+                            }
+                            _ => {
+                                output.push(' ');
+                                write_value(output, inner, indent, false, config, depth + 1)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        crate::fmt::MAGIC_ANCHOR_REF => {
+            // value is String(id). Emit "*id".
+            if let Value::String(id) = value {
+                output.push('*');
+                output.push_str(id);
+            }
         }
         _ => {
             // Unknown internal tag — fall through to regular output
@@ -1198,6 +1355,15 @@ impl ser::Serializer for Serializer {
             }
             crate::fmt::MAGIC_COMMENTED => {
                 // value is a tuple (inner_value, comment_string)
+                let inner = value.serialize(Serializer)?;
+                Ok(Value::Tagged(Box::new(TaggedValue::new(
+                    Tag::new(name),
+                    inner,
+                ))))
+            }
+            crate::fmt::MAGIC_ANCHOR_DEF | crate::fmt::MAGIC_ANCHOR_REF => {
+                // ANCHOR_DEF: value serializes as Sequence([String(id), inner]).
+                // ANCHOR_REF: value serializes as String(id).
                 let inner = value.serialize(Serializer)?;
                 Ok(Value::Tagged(Box::new(TaggedValue::new(
                     Tag::new(name),

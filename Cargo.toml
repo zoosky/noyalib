@@ -190,6 +190,9 @@ path = "examples/scientific.rs"
 [[example]]
 name = "validation"
 path = "examples/validation.rs"
+[[example]]
+name = "anchor_shared"
+path = "examples/anchor_shared.rs"
 
 [[example]]
 name = "all"

@@ -21,6 +21,112 @@ use std::sync::Weak as ArcWeak;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
+/// Thread-local identity tracking for automatic anchor/alias emission.
+///
+/// Activated by `to_string_tracking_shared` (and writer variants). When active,
+/// `RcAnchor`/`ArcAnchor`/`*WeakAnchor` consult this state during serialization:
+/// the first time a pointer is seen, they emit a YAML anchor; subsequent
+/// sightings emit an alias.
+///
+/// Not re-entrant across threads. `ArcAnchor` serialization remains on the
+/// serialising thread; the scope guard ensures state does not leak across calls.
+#[cfg(feature = "std")]
+pub(crate) mod shared_tracking {
+    use core::cell::RefCell;
+    use rustc_hash::FxHashMap;
+
+    pub(crate) enum TrackOutcome {
+        NotActive,
+        New(u32),
+        Existing(u32),
+    }
+
+    struct AnchorState {
+        seen: FxHashMap<usize, u32>,
+        next_id: u32,
+    }
+
+    impl AnchorState {
+        fn new() -> Self {
+            Self {
+                seen: FxHashMap::default(),
+                next_id: 1,
+            }
+        }
+    }
+
+    std::thread_local! {
+        static STATE: RefCell<Option<AnchorState>> = const { RefCell::new(None) };
+    }
+
+    /// RAII guard that installs a fresh tracking state on construction and
+    /// clears it on drop. Nested scopes are rejected (only the outermost scope
+    /// is authoritative) — this prevents accidental state bleed when users
+    /// compose serializers.
+    pub(crate) struct AnchorScope {
+        owns: bool,
+    }
+
+    impl AnchorScope {
+        pub(crate) fn enter() -> Self {
+            let owns = STATE.with(|s| {
+                let mut borrow = s.borrow_mut();
+                if borrow.is_none() {
+                    *borrow = Some(AnchorState::new());
+                    true
+                } else {
+                    false
+                }
+            });
+            AnchorScope { owns }
+        }
+    }
+
+    impl Drop for AnchorScope {
+        fn drop(&mut self) {
+            if self.owns {
+                STATE.with(|s| {
+                    *s.borrow_mut() = None;
+                });
+            }
+        }
+    }
+
+    /// Record a pointer; return whether it is newly seen or already tracked.
+    pub(crate) fn track(ptr: usize) -> TrackOutcome {
+        STATE.with(|s| {
+            let mut borrow = s.borrow_mut();
+            match borrow.as_mut() {
+                None => TrackOutcome::NotActive,
+                Some(state) => {
+                    if let Some(&id) = state.seen.get(&ptr) {
+                        TrackOutcome::Existing(id)
+                    } else {
+                        let id = state.next_id;
+                        state.next_id = state.next_id.saturating_add(1);
+                        let _ = state.seen.insert(ptr, id);
+                        TrackOutcome::New(id)
+                    }
+                }
+            }
+        })
+    }
+
+    /// Look up without inserting. Used by weak-ref serializers: emit an alias
+    /// only if the target was already anchored by a strong reference.
+    pub(crate) fn peek(ptr: usize) -> Option<u32> {
+        STATE.with(|s| {
+            s.borrow()
+                .as_ref()
+                .and_then(|state| state.seen.get(&ptr).copied())
+        })
+    }
+
+    pub(crate) fn format_id(id: u32) -> String {
+        format!("id{id:03}")
+    }
+}
+
 /// An `Rc` wrapper with YAML anchor semantics.
 ///
 /// Serializes by delegating to the inner `T`. Deserializes by wrapping the
@@ -65,7 +171,26 @@ impl<T: Serialize> Serialize for RcAnchor<T> {
     where
         S: serde::Serializer,
     {
-        self.0.serialize(serializer)
+        #[cfg(feature = "std")]
+        {
+            let ptr = Rc::as_ptr(&self.0) as *const () as usize;
+            match shared_tracking::track(ptr) {
+                shared_tracking::TrackOutcome::NotActive => self.0.serialize(serializer),
+                shared_tracking::TrackOutcome::New(id) => {
+                    let id_str = shared_tracking::format_id(id);
+                    serializer
+                        .serialize_newtype_struct(crate::fmt::MAGIC_ANCHOR_DEF, &(id_str, &*self.0))
+                }
+                shared_tracking::TrackOutcome::Existing(id) => {
+                    let id_str = shared_tracking::format_id(id);
+                    serializer.serialize_newtype_struct(crate::fmt::MAGIC_ANCHOR_REF, &id_str)
+                }
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.0.serialize(serializer)
+        }
     }
 }
 
@@ -122,7 +247,26 @@ impl<T: Serialize> Serialize for ArcAnchor<T> {
     where
         S: serde::Serializer,
     {
-        self.0.serialize(serializer)
+        #[cfg(feature = "std")]
+        {
+            let ptr = Arc::as_ptr(&self.0) as *const () as usize;
+            match shared_tracking::track(ptr) {
+                shared_tracking::TrackOutcome::NotActive => self.0.serialize(serializer),
+                shared_tracking::TrackOutcome::New(id) => {
+                    let id_str = shared_tracking::format_id(id);
+                    serializer
+                        .serialize_newtype_struct(crate::fmt::MAGIC_ANCHOR_DEF, &(id_str, &*self.0))
+                }
+                shared_tracking::TrackOutcome::Existing(id) => {
+                    let id_str = shared_tracking::format_id(id);
+                    serializer.serialize_newtype_struct(crate::fmt::MAGIC_ANCHOR_REF, &id_str)
+                }
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.0.serialize(serializer)
+        }
     }
 }
 
@@ -180,7 +324,21 @@ impl<T: Serialize> Serialize for RcWeakAnchor<T> {
         S: serde::Serializer,
     {
         match self.0.upgrade() {
-            Some(v) => v.serialize(serializer),
+            Some(v) => {
+                #[cfg(feature = "std")]
+                {
+                    // Weak refs never define a new anchor. If tracking is active
+                    // and the target was already anchored by a strong reference,
+                    // emit an alias; otherwise fall back to inline value.
+                    let ptr = Rc::as_ptr(&v) as *const () as usize;
+                    if let Some(id) = shared_tracking::peek(ptr) {
+                        let id_str = shared_tracking::format_id(id);
+                        return serializer
+                            .serialize_newtype_struct(crate::fmt::MAGIC_ANCHOR_REF, &id_str);
+                    }
+                }
+                v.serialize(serializer)
+            }
             None => serializer.serialize_none(),
         }
     }
@@ -243,7 +401,18 @@ impl<T: Serialize> Serialize for ArcWeakAnchor<T> {
         S: serde::Serializer,
     {
         match self.0.upgrade() {
-            Some(v) => v.serialize(serializer),
+            Some(v) => {
+                #[cfg(feature = "std")]
+                {
+                    let ptr = Arc::as_ptr(&v) as *const () as usize;
+                    if let Some(id) = shared_tracking::peek(ptr) {
+                        let id_str = shared_tracking::format_id(id);
+                        return serializer
+                            .serialize_newtype_struct(crate::fmt::MAGIC_ANCHOR_REF, &id_str);
+                    }
+                }
+                v.serialize(serializer)
+            }
             None => serializer.serialize_none(),
         }
     }

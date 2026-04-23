@@ -172,6 +172,11 @@ pub use ser::{
     Serializer, SerializerConfig,
 };
 #[cfg(feature = "std")]
+pub use ser::{
+    to_string_tracking_shared, to_string_tracking_shared_with_config, to_writer_tracking_shared,
+    to_writer_tracking_shared_with_config,
+};
+#[cfg(feature = "std")]
 pub use ser::{to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_with_config};
 pub use spanned::Spanned;
 pub use value::{

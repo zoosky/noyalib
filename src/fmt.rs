@@ -34,6 +34,8 @@ pub(crate) const MAGIC_LIT_STR: &str = "__noya_lit_str";
 pub(crate) const MAGIC_FOLD_STR: &str = "__noya_fold_str";
 pub(crate) const MAGIC_COMMENTED: &str = "__noya_commented";
 pub(crate) const MAGIC_SPACE_AFTER: &str = "__noya_space_after";
+pub(crate) const MAGIC_ANCHOR_DEF: &str = "__noya_anchor_def";
+pub(crate) const MAGIC_ANCHOR_REF: &str = "__noya_anchor_ref";
 
 /// Force flow style `[a, b, c]` for a sequence value.
 #[derive(Clone, PartialEq, Eq, Hash)]
