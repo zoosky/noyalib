@@ -150,12 +150,15 @@ const MULTI_DOC_YAML: &str = "\
 ---
 name: doc1
 version: 1
+enabled: true
 ---
 name: doc2
 version: 2
+enabled: false
 ---
 name: doc3
 version: 3
+enabled: true
 ";
 
 const TAGGED_YAML: &str = "!custom tagged_value\n";

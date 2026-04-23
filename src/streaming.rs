@@ -536,9 +536,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         V: Visitor<'de>,
     {
         self.skip_to_content()?;
-        // Tagged nodes need the AST-based resolver so `!!int 42`, `!!str x`,
-        // etc., produce the correct `Value` variant. Restore the tag and
-        // fall back to the Value path.
+        // `deserialize_any` is used by `Value` and other type-erased
+        // visitors — they rely on the AST tag resolver to produce the
+        // correct `Value::Tagged(...)` / `Value::String` / `Value::Number`
+        // variant for tagged scalars. Restore the tag and fall back.
         if let Some(t) = self.take_tag_from_current() {
             self.restore_tag_to_current(t);
             return Err(self.fallback());
@@ -768,8 +769,22 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         }
         self.skip_to_content()?;
         if let Some(t) = self.take_tag_from_current() {
-            self.restore_tag_to_current(t);
-            return Err(self.fallback());
+            match (t.0.as_str(), t.1.as_str()) {
+                ("!!", "int")
+                | ("!!", "float")
+                | ("!!", "str")
+                | ("!!", "bool")
+                | ("!!", "null")
+                | ("!!", "seq")
+                | ("!!", "map") => {}
+                _ => {
+                    return visitor.visit_map(StreamingTagMapAccess {
+                        de: self,
+                        tag: t,
+                        done: false,
+                    });
+                }
+            }
         }
         visitor.visit_newtype_struct(self)
     }
@@ -779,6 +794,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         V: Visitor<'de>,
     {
         self.skip_to_content()?;
+        // Tagged sequences route through the AST fallback so the tag is
+        // preserved on the resulting `Value::Tagged(...)`.
         if let Some(t) = self.take_tag_from_current() {
             self.restore_tag_to_current(t);
             return Err(self.fallback());
@@ -808,6 +825,8 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         V: Visitor<'de>,
     {
         self.skip_to_content()?;
+        // Tagged mappings route through the AST fallback so the tag is
+        // preserved on the resulting `Value::Tagged(...)`.
         if let Some(t) = self.take_tag_from_current() {
             self.restore_tag_to_current(t);
             return Err(self.fallback());
@@ -845,8 +864,18 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
     {
         self.skip_to_content()?;
         if let Some(t) = self.take_tag_from_current() {
-            self.restore_tag_to_current(t);
-            return Err(self.fallback());
+            match (t.0.as_str(), t.1.as_str()) {
+                ("!!", "int")
+                | ("!!", "float")
+                | ("!!", "str")
+                | ("!!", "bool")
+                | ("!!", "null")
+                | ("!!", "seq")
+                | ("!!", "map") => {}
+                _ => {
+                    return visitor.visit_enum(StreamingTagEnumAccess { de: self, tag: t });
+                }
+            }
         }
         match self.next_event()? {
             Event::Scalar { value, .. } => {
