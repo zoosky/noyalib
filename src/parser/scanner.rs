@@ -127,7 +127,10 @@ pub(crate) struct Scanner<'a> {
     tokens_produced: usize,
     /// Block indentation level stack.
     indent: i32,
-    indents: Vec<i32>,
+    /// Block-scope indent history. 8 slots inline covers YAML nesting
+    /// depth for the overwhelming majority of real-world documents and
+    /// avoids a heap allocation for 32 bytes of data.
+    indents: smallvec::SmallVec<[i32; 8]>,
     /// Flow nesting level (0 = block context).
     flow_level: u32,
     /// Simple key tracking stack.
@@ -165,7 +168,7 @@ impl<'a> Scanner<'a> {
             tokens_consumed: 0,
             tokens_produced: 0,
             indent: -1,
-            indents: Vec::with_capacity(estimated_depth),
+            indents: smallvec::SmallVec::with_capacity(estimated_depth),
             flow_level: 0,
             simple_keys: Vec::with_capacity(estimated_depth),
             simple_key_allowed: false,

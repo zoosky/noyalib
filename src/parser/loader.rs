@@ -11,7 +11,9 @@ use indexmap::IndexMap;
 use super::events::{Event, Parser};
 use super::scanner::ScalarStyle;
 use crate::de::{DuplicateKeyPolicy, ParserConfig};
-use crate::error::{Error, Location, Result};
+#[cfg(feature = "std")]
+use crate::error::Location;
+use crate::error::{Error, Result};
 #[cfg(feature = "std")]
 use crate::span_context::SpanTree;
 use crate::value::{Mapping, Number, Value};
@@ -508,6 +510,7 @@ impl<'a> Loader<'a> {
 }
 
 /// Extract the byte-offset `(start, end)` pair from any `SpanTree` variant.
+#[cfg(feature = "std")]
 fn span_tree_bounds(tree: &SpanTree) -> (usize, usize) {
     match tree {
         SpanTree::Leaf(s, e) => (*s, *e),

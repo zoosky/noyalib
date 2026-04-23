@@ -623,6 +623,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "serde_yaml_ng",
+ "smallvec",
  "thiserror",
  "yaml-rust2",
  "yaml_lib",

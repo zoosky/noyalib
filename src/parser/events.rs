@@ -81,7 +81,10 @@ enum State {
 #[derive(Debug)]
 pub(crate) struct Parser<'a> {
     scanner: Scanner<'a>,
-    states: Vec<State>,
+    /// Parser state stack. Each `State` is a 1-byte enum; 16 slots inline
+    /// is plenty for realistic nesting and costs just 16 bytes of stack,
+    /// avoiding a heap allocation per parse.
+    states: smallvec::SmallVec<[State; 16]>,
     state: State,
     /// Current peeked token kind + span (if any).
     current_kind: Option<TokenKind<'a>>,
@@ -96,7 +99,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn new(input: &'a str) -> Self {
         Parser {
             scanner: Scanner::new(input),
-            states: Vec::new(),
+            states: smallvec::SmallVec::new(),
             state: State::StreamStart,
             current_kind: None,
             current_span: Span::default(),
