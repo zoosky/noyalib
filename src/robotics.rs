@@ -3,6 +3,15 @@
 //! This feature-gated module provides newtypes that enforce numeric
 //! precision and unit-aware deserialization, useful in robotics,
 //! simulation, and scientific computing pipelines.
+//!
+//! # Examples
+//!
+//! ```
+//! use noyalib::robotics::{Degrees, Radians};
+//! let d: Degrees = noyalib::from_str("90.0").unwrap();
+//! let r = d.to_radians();
+//! assert!((r.0 - std::f64::consts::FRAC_PI_2).abs() < 1e-10);
+//! ```
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
@@ -18,7 +27,7 @@ use serde::{Deserialize, Serialize};
 /// `1e308 * 2` (infinity) or subnormals that cannot be faithfully
 /// represented.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::robotics::StrictFloat;
@@ -35,6 +44,14 @@ use serde::{Deserialize, Serialize};
 pub struct StrictFloat(f64);
 
 /// Error returned when a float value fails the precision check.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::robotics::StrictFloat;
+/// let err = StrictFloat::try_from(f64::INFINITY).unwrap_err();
+/// assert!(err.to_string().contains("not precisely representable"));
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct StrictFloatError(f64);
 
@@ -73,6 +90,14 @@ impl<'de> Deserialize<'de> for StrictFloat {
 
 impl StrictFloat {
     /// Returns the inner `f64` value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::robotics::StrictFloat;
+    /// let sf = StrictFloat::try_from(2.5).unwrap();
+    /// assert_eq!(sf.get(), 2.5);
+    /// ```
     #[must_use]
     pub fn get(self) -> f64 {
         self.0
@@ -83,7 +108,7 @@ impl StrictFloat {
 ///
 /// Serialization emits the raw radian value.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::robotics::Radians;
@@ -110,7 +135,7 @@ impl<'de> Deserialize<'de> for Radians {
 /// This is a simple newtype for clarity in config structs that
 /// explicitly label their angular units.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::robotics::Degrees;
@@ -124,6 +149,15 @@ pub struct Degrees(pub f64);
 
 impl Degrees {
     /// Convert to radians.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::robotics::Degrees;
+    /// let d = Degrees(180.0);
+    /// let r = d.to_radians();
+    /// assert!((r.0 - std::f64::consts::PI).abs() < 1e-10);
+    /// ```
     #[must_use]
     pub fn to_radians(self) -> Radians {
         Radians(self.0.to_radians())
@@ -132,6 +166,15 @@ impl Degrees {
 
 impl Radians {
     /// Convert to degrees.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::robotics::Radians;
+    /// let r = Radians(std::f64::consts::PI);
+    /// let d = r.to_degrees();
+    /// assert!((d.0 - 180.0).abs() < 1e-10);
+    /// ```
     #[must_use]
     pub fn to_degrees(self) -> Degrees {
         Degrees(self.0.to_degrees())

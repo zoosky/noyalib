@@ -8,6 +8,15 @@ use core::fmt;
 use std::sync::Arc;
 
 /// A byte-offset location in a YAML document.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::Location;
+/// let loc = Location::from_index("a: 1\nb: 2\n", 5);
+/// assert_eq!(loc.line(), 2);
+/// assert_eq!(loc.column(), 1);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Location {
     index: usize,
@@ -17,6 +26,14 @@ pub struct Location {
 
 impl Location {
     /// Create a new location from a byte index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Location;
+    /// let loc = Location::from_index("hello\nworld", 6);
+    /// assert_eq!(loc.line(), 2);
+    /// ```
     pub fn from_index(input: &str, index: usize) -> Self {
         let mut line = 1;
         let mut column = 1;
@@ -38,7 +55,15 @@ impl Location {
         }
     }
 
-    /// Create a new location from a byte index (legacy compat).
+    /// Create a new location from line, column, and byte index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Location;
+    /// let loc = Location::new(1, 1, 0);
+    /// assert_eq!(loc.line(), 1);
+    /// ```
     pub fn new(line: usize, col: usize, index: usize) -> Self {
         Location {
             index,
@@ -48,16 +73,40 @@ impl Location {
     }
 
     /// The 0-based byte index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Location;
+    /// let loc = Location::from_index("abc", 2);
+    /// assert_eq!(loc.index(), 2);
+    /// ```
     pub fn index(&self) -> usize {
         self.index
     }
 
     /// The 1-based line number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Location;
+    /// let loc = Location::from_index("a\nb", 2);
+    /// assert_eq!(loc.line(), 2);
+    /// ```
     pub fn line(&self) -> usize {
         self.line
     }
 
     /// The 1-based column number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Location;
+    /// let loc = Location::from_index("abcd", 3);
+    /// assert_eq!(loc.column(), 4);
+    /// ```
     pub fn column(&self) -> usize {
         self.column
     }
@@ -70,142 +119,457 @@ impl fmt::Display for Location {
 }
 
 /// Errors that can occur during YAML serialization or deserialization.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str, Error, Value};
+/// let err = from_str::<Value>("a: [unclosed").unwrap_err();
+/// assert!(matches!(err, Error::Parse(_) | Error::ParseWithLocation { .. }));
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// Error during YAML parsing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::Parse("unexpected token".into());
+    /// ```
     #[error("YAML parse error: {0}")]
     Parse(String),
 
     /// Error during YAML parsing with location information.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Error, Location};
+    /// let _e = Error::ParseWithLocation {
+    ///     message: "bad token".into(),
+    ///     location: Location::from_index("a: [", 3),
+    /// };
+    /// ```
     #[error("YAML parse error at {location}: {message}")]
     ParseWithLocation {
         /// The error message.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::ParseWithLocation {
+        ///     message: "bad".into(),
+        ///     location: Location::default(),
+        /// };
+        /// if let Error::ParseWithLocation { message, .. } = e {
+        ///     assert_eq!(message, "bad");
+        /// }
+        /// ```
         message: String,
         /// The location in the source where the error occurred.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::ParseWithLocation {
+        ///     message: "x".into(),
+        ///     location: Location::from_index("abc", 1),
+        /// };
+        /// if let Error::ParseWithLocation { location, .. } = e {
+        ///     assert_eq!(location.column(), 2);
+        /// }
+        /// ```
         location: Location,
     },
 
     /// Error during serialization.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::Serialize("bad value".into());
+    /// ```
     #[error("serialization error: {0}")]
     Serialize(String),
 
     /// Error during deserialization.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::Deserialize("type mismatch".into());
+    /// ```
     #[error("deserialization error: {0}")]
     Deserialize(String),
 
     /// Error during deserialization with location information.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Error, Location};
+    /// let _e = Error::DeserializeWithLocation {
+    ///     message: "expected int".into(),
+    ///     location: Location::default(),
+    /// };
+    /// ```
     #[error("deserialization error at {location}: {message}")]
     DeserializeWithLocation {
         /// The error message.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::DeserializeWithLocation {
+        ///     message: "m".into(),
+        ///     location: Location::default(),
+        /// };
+        /// if let Error::DeserializeWithLocation { message, .. } = e {
+        ///     assert_eq!(message, "m");
+        /// }
+        /// ```
         message: String,
         /// The location in the source where the error occurred.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::DeserializeWithLocation {
+        ///     message: "m".into(),
+        ///     location: Location::from_index("ab", 1),
+        /// };
+        /// if let Error::DeserializeWithLocation { location, .. } = e {
+        ///     assert_eq!(location.column(), 2);
+        /// }
+        /// ```
         location: Location,
     },
 
     /// I/O error (requires std feature).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ioe = std::io::Error::new(std::io::ErrorKind::Other, "nope");
+    /// let _e = noyalib::Error::Io(ioe);
+    /// ```
     #[cfg(feature = "std")]
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
     /// Custom error message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::Custom("whatever".into());
+    /// ```
     #[error("{0}")]
     Custom(String),
 
     /// Error when recursion depth limit is exceeded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::RecursionLimitExceeded { depth: 64 };
+    /// ```
     #[error("recursion depth limit exceeded: {depth}")]
     RecursionLimitExceeded {
         /// The current depth.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::Error;
+        /// if let Error::RecursionLimitExceeded { depth } =
+        ///     (Error::RecursionLimitExceeded { depth: 10 })
+        /// {
+        ///     assert_eq!(depth, 10);
+        /// }
+        /// ```
         depth: usize,
     },
 
     /// Error when a duplicate key is encountered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::DuplicateKey("name".into());
+    /// ```
     #[error("duplicate key: {0}")]
     DuplicateKey(String),
 
-    /// Repetition limit exceeded (security limit).
+    /// Repetition limit exceeded (security limit against billion-laughs).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::RepetitionLimitExceeded;
+    /// ```
     #[error("alias expansion limit exceeded")]
     RepetitionLimitExceeded,
 
     /// Unknown anchor encountered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::UnknownAnchor("missing".into());
+    /// ```
     #[error("unknown anchor: {0}")]
     UnknownAnchor(String),
 
     /// Unknown anchor encountered at a specific location.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Error, Location};
+    /// let _e = Error::UnknownAnchorAt {
+    ///     name: "x".into(),
+    ///     location: Location::default(),
+    ///     suggestion: None,
+    /// };
+    /// ```
     #[error("unknown anchor: {name} at {location}")]
     UnknownAnchorAt {
         /// The anchor name.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::UnknownAnchorAt {
+        ///     name: "x".into(),
+        ///     location: Location::default(),
+        ///     suggestion: None,
+        /// };
+        /// if let Error::UnknownAnchorAt { name, .. } = e {
+        ///     assert_eq!(name, "x");
+        /// }
+        /// ```
         name: String,
         /// The location where it was used.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::UnknownAnchorAt {
+        ///     name: "x".into(),
+        ///     location: Location::from_index("ab", 1),
+        ///     suggestion: None,
+        /// };
+        /// if let Error::UnknownAnchorAt { location, .. } = e {
+        ///     assert_eq!(location.column(), 2);
+        /// }
+        /// ```
         location: Location,
         /// Optional suggestion for a similar anchor.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::{Error, Location};
+        /// let e = Error::UnknownAnchorAt {
+        ///     name: "x".into(),
+        ///     location: Location::default(),
+        ///     suggestion: Some(("y".into(), Location::default())),
+        /// };
+        /// if let Error::UnknownAnchorAt { suggestion: Some((s, _)), .. } = e {
+        ///     assert_eq!(s, "y");
+        /// }
+        /// ```
         suggestion: Option<(String, Location)>,
     },
 
     /// Missing field in a mapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::MissingField("name".into());
+    /// ```
     #[error("missing field: {0}")]
     MissingField(String),
 
-    /// Unknown field in a mapping.
+    /// Unknown field in a mapping (with `deny_unknown_fields`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::UnknownField("extra".into());
+    /// ```
     #[error("unknown field: {0}")]
     UnknownField(String),
 
     /// Scalar encountered where a mapping was expected during merge.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::ScalarInMergeElement;
+    /// ```
     #[error("scalar in merge element")]
     ScalarInMergeElement,
 
     /// Sequence encountered where a mapping was expected during merge.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::SequenceInMergeElement;
+    /// ```
     #[error("sequence in merge element")]
     SequenceInMergeElement,
 
     /// Tagged value encountered during merge.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::TaggedInMerge;
+    /// ```
     #[error("tagged value in merge")]
     TaggedInMerge,
 
     /// Generic invalid construct error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::Invalid("bad construct".into());
+    /// ```
     #[error("invalid YAML: {0}")]
     Invalid(String),
 
     /// A type mismatch error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::TypeMismatch {
+    ///     expected: "integer",
+    ///     found: "string".into(),
+    /// };
+    /// ```
     #[error("type mismatch: expected {expected}, found {found}")]
     TypeMismatch {
         /// The expected type.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::Error;
+        /// let e = Error::TypeMismatch { expected: "int", found: "str".into() };
+        /// if let Error::TypeMismatch { expected, .. } = e {
+        ///     assert_eq!(expected, "int");
+        /// }
+        /// ```
         expected: &'static str,
         /// The type that was actually found.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use noyalib::Error;
+        /// let e = Error::TypeMismatch { expected: "int", found: "str".into() };
+        /// if let Error::TypeMismatch { found, .. } = e {
+        ///     assert_eq!(found, "str");
+        /// }
+        /// ```
         found: String,
     },
 
-    /// Shared error instance (for anchors).
+    /// Shared error instance (Arc-wrapped for cloning).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// let _e = noyalib::Error::Shared(Arc::new(noyalib::Error::EndOfStream));
+    /// ```
     #[error("{0}")]
     Shared(Arc<Error>),
 
     /// End of stream reached unexpectedly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::EndOfStream;
+    /// ```
     #[error("unexpected end of stream")]
     EndOfStream,
 
     /// More than one document found where one was expected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::MoreThanOneDocument;
+    /// ```
     #[error("multiple documents in stream; expected exactly one")]
     MoreThanOneDocument,
 
     /// Scalar in merge (legacy variant).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::ScalarInMerge;
+    /// ```
     #[error("scalar in merge")]
     ScalarInMerge,
 
     /// Empty tag encountered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::EmptyTag;
+    /// ```
     #[error("empty tag")]
     EmptyTag,
 
     /// Failed to parse a number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::FailedToParseNumber("not-a-number".into());
+    /// ```
     #[error("failed to parse number: {0}")]
     FailedToParseNumber(String),
 
     /// A message error from Serde (compat variant).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _e = noyalib::Error::Message("oops".into(), Some(42));
+    /// ```
     #[error("serde error: {0}")]
     Message(String, Option<usize>),
 }
 
 impl Error {
     /// Get the location of the error, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let err = from_str::<Value>("a: [unclosed").unwrap_err();
+    /// let _ = err.location();
+    /// ```
     pub fn location(&self) -> Option<Location> {
         match self {
             Error::ParseWithLocation { location, .. } => Some(*location),
@@ -221,6 +585,16 @@ impl Error {
     /// `line <n>:<col>` prefix, the offending line, and a caret (`^`)
     /// pointing at the column. Out-of-range lines fall back to plain
     /// `Display`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let source = "a: [unclosed";
+    /// let err = from_str::<Value>(source).unwrap_err();
+    /// let formatted = err.format_with_source(source);
+    /// assert!(formatted.contains("error"));
+    /// ```
     pub fn format_with_source(&self, source: &str) -> String {
         let loc = match self.location() {
             Some(l) => l,
@@ -245,6 +619,13 @@ impl Error {
     /// Convert the error into a shared Arc pointer. If the error is
     /// already `Error::Shared`, the inner `Arc` is reused without
     /// double-wrapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let shared = noyalib::Error::EndOfStream.into_shared();
+    /// assert!(matches!(&*shared, noyalib::Error::EndOfStream));
+    /// ```
     pub fn into_shared(self) -> Arc<Self> {
         match self {
             Error::Shared(arc) => arc,
@@ -253,11 +634,27 @@ impl Error {
     }
 
     /// Check if the error is a shared error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// let e = noyalib::Error::Shared(Arc::new(noyalib::Error::EndOfStream));
+    /// assert!(e.is_shared());
+    /// ```
     pub fn is_shared(&self) -> bool {
         matches!(self, Error::Shared(_))
     }
 
     /// Access the inner error if this is a shared error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// let e = noyalib::Error::Shared(Arc::new(noyalib::Error::EndOfStream));
+    /// assert!(e.as_inner().is_some());
+    /// ```
     pub fn as_inner(&self) -> Option<&Self> {
         match self {
             Error::Shared(arc) => Some(&**arc),
@@ -266,6 +663,13 @@ impl Error {
     }
 
     /// Create a new parse error at the given index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let e = noyalib::Error::parse_at("bad", "a: x", 3);
+    /// assert!(matches!(e, noyalib::Error::ParseWithLocation { .. }));
+    /// ```
     pub fn parse_at(message: impl Into<String>, source: &str, index: usize) -> Self {
         Error::ParseWithLocation {
             message: message.into(),
@@ -274,6 +678,13 @@ impl Error {
     }
 
     /// Create a new deserialization error at the given index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let e = noyalib::Error::deserialize_at("bad", "a: x", 3);
+    /// assert!(matches!(e, noyalib::Error::DeserializeWithLocation { .. }));
+    /// ```
     pub fn deserialize_at(message: impl Into<String>, source: &str, index: usize) -> Self {
         Error::DeserializeWithLocation {
             message: message.into(),
@@ -282,6 +693,14 @@ impl Error {
     }
 
     /// Create a new error from a shared error pointer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// let e = noyalib::Error::from_shared(Arc::new(noyalib::Error::EndOfStream));
+    /// assert!(e.is_shared());
+    /// ```
     pub fn from_shared(arc: Arc<Error>) -> Error {
         Error::Shared(arc)
     }
@@ -308,6 +727,16 @@ impl serde::de::Error for Error {
 }
 
 /// A result type where the error is [`Error`].
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::Result;
+/// fn parse() -> Result<noyalib::Value> {
+///     noyalib::from_str("k: 1")
+/// }
+/// assert!(parse().is_ok());
+/// ```
 pub type Result<T> = core::result::Result<T, Error>;
 
 #[cfg(feature = "miette")]

@@ -5,7 +5,7 @@
 //! serializes transparently during deserialization but emits style hints during
 //! serialization.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::fmt::{FlowSeq, LitString};
@@ -38,6 +38,17 @@ pub(crate) const MAGIC_ANCHOR_DEF: &str = "__noya_anchor_def";
 pub(crate) const MAGIC_ANCHOR_REF: &str = "__noya_anchor_ref";
 
 /// Force flow style `[a, b, c]` for a sequence value.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{to_string, FlowSeq};
+/// use serde::Serialize;
+/// #[derive(Serialize)]
+/// struct Doc { v: FlowSeq<Vec<i32>> }
+/// let yaml = to_string(&Doc { v: FlowSeq(vec![1, 2]) }).unwrap();
+/// assert!(yaml.contains("["));
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FlowSeq<T>(pub T);
 
@@ -62,6 +73,14 @@ impl<T> From<T> for FlowSeq<T> {
 
 impl<T> FlowSeq<T> {
     /// Unwrap into the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::FlowSeq;
+    /// let f = FlowSeq(vec![1, 2, 3]);
+    /// assert_eq!(f.into_inner(), vec![1, 2, 3]);
+    /// ```
     pub fn into_inner(self) -> T {
         self.0
     }
@@ -86,6 +105,20 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for FlowSeq<T> {
 }
 
 /// Force flow style `{k: v, ...}` for a mapping value.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{to_string, FlowMap};
+/// use serde::Serialize;
+/// use std::collections::BTreeMap;
+/// #[derive(Serialize)]
+/// struct Doc { m: FlowMap<BTreeMap<String, i32>> }
+/// let mut m = BTreeMap::new();
+/// let _ = m.insert("a".into(), 1);
+/// let yaml = to_string(&Doc { m: FlowMap(m) }).unwrap();
+/// assert!(yaml.contains("{"));
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FlowMap<T>(pub T);
 
@@ -110,6 +143,17 @@ impl<T> From<T> for FlowMap<T> {
 
 impl<T> FlowMap<T> {
     /// Unwrap into the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::FlowMap;
+    /// use std::collections::BTreeMap;
+    /// let mut m = BTreeMap::new();
+    /// let _ = m.insert("k".to_string(), 1);
+    /// let f = FlowMap(m);
+    /// assert_eq!(f.into_inner().len(), 1);
+    /// ```
     pub fn into_inner(self) -> T {
         self.0
     }
@@ -134,6 +178,14 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for FlowMap<T> {
 }
 
 /// Force literal block scalar `|` style for a borrowed string.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::fmt::LitStr;
+/// let s = LitStr("line1\nline2\n");
+/// assert_eq!(s.as_str(), "line1\nline2\n");
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LitStr<'a>(pub &'a str);
 
@@ -158,11 +210,27 @@ impl<'a> From<&'a str> for LitStr<'a> {
 
 impl<'a> LitStr<'a> {
     /// Get the inner string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::fmt::LitStr;
+    /// let s = LitStr("hello");
+    /// assert_eq!(s.as_str(), "hello");
+    /// ```
     pub fn as_str(&self) -> &str {
         self.0
     }
 
     /// Unwrap into the inner string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::fmt::LitStr;
+    /// let s = LitStr("hello");
+    /// assert_eq!(s.into_inner(), "hello");
+    /// ```
     pub fn into_inner(self) -> &'a str {
         self.0
     }
@@ -178,6 +246,14 @@ impl Serialize for LitStr<'_> {
 }
 
 /// Force literal block scalar `|` style for an owned string.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::LitString;
+/// let s = LitString("line1\nline2\n".to_string());
+/// assert_eq!(&*s, "line1\nline2\n");
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LitString(pub String);
 
@@ -208,6 +284,14 @@ impl From<&str> for LitString {
 
 impl LitString {
     /// Unwrap into the inner `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::LitString;
+    /// let s = LitString("hi".into());
+    /// assert_eq!(s.into_inner(), "hi");
+    /// ```
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -232,6 +316,14 @@ impl<'de> Deserialize<'de> for LitString {
 }
 
 /// Force folded block scalar `>` style for a borrowed string.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::fmt::FoldStr;
+/// let s = FoldStr("line1\n\nline2");
+/// assert_eq!(s.as_str(), "line1\n\nline2");
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FoldStr<'a>(pub &'a str);
 
@@ -256,11 +348,25 @@ impl<'a> From<&'a str> for FoldStr<'a> {
 
 impl<'a> FoldStr<'a> {
     /// Get the inner string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::fmt::FoldStr;
+    /// assert_eq!(FoldStr("x").as_str(), "x");
+    /// ```
     pub fn as_str(&self) -> &str {
         self.0
     }
 
     /// Unwrap into the inner string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::fmt::FoldStr;
+    /// assert_eq!(FoldStr("x").into_inner(), "x");
+    /// ```
     pub fn into_inner(self) -> &'a str {
         self.0
     }
@@ -276,6 +382,14 @@ impl Serialize for FoldStr<'_> {
 }
 
 /// Force folded block scalar `>` style for an owned string.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::FoldString;
+/// let s = FoldString("para one\n\npara two".to_string());
+/// assert_eq!(&*s, "para one\n\npara two");
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FoldString(pub String);
 
@@ -306,6 +420,13 @@ impl From<&str> for FoldString {
 
 impl FoldString {
     /// Unwrap into the inner `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::FoldString;
+    /// assert_eq!(FoldString("x".into()).into_inner(), "x");
+    /// ```
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -336,6 +457,17 @@ impl<'de> Deserialize<'de> for FoldString {
 /// **Note:** Comments are serialization-only metadata. When deserializing,
 /// the `comment` field is always empty because YAML comments are not
 /// part of the data model and cannot survive a roundtrip.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{to_string, Commented};
+/// use serde::Serialize;
+/// #[derive(Serialize)]
+/// struct Doc { v: Commented<i32> }
+/// let yaml = to_string(&Doc { v: Commented::new(42, "meaning") }).unwrap();
+/// assert!(yaml.contains("# meaning"));
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Commented<T> {
     /// The inner value.
@@ -355,6 +487,15 @@ impl<T: fmt::Debug> fmt::Debug for Commented<T> {
 
 impl<T> Commented<T> {
     /// Create a new commented value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Commented;
+    /// let c = Commented::new(42, "the answer");
+    /// assert_eq!(c.value, 42);
+    /// assert_eq!(c.comment, "the answer");
+    /// ```
     pub fn new(value: T, comment: impl Into<String>) -> Self {
         Self {
             value,
@@ -363,6 +504,14 @@ impl<T> Commented<T> {
     }
 
     /// Unwrap into the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Commented;
+    /// let c = Commented::new(7, "note");
+    /// assert_eq!(c.into_inner(), 7);
+    /// ```
     pub fn into_inner(self) -> T {
         self.value
     }
@@ -415,6 +564,14 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Commented<T> {
 }
 
 /// Emit a blank line after the value.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::SpaceAfter;
+/// let s = SpaceAfter("section".to_string());
+/// assert_eq!(s.0, "section");
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SpaceAfter<T>(pub T);
 
@@ -439,6 +596,13 @@ impl<T> From<T> for SpaceAfter<T> {
 
 impl<T> SpaceAfter<T> {
     /// Unwrap into the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::SpaceAfter;
+    /// assert_eq!(SpaceAfter("x".to_string()).into_inner(), "x");
+    /// ```
     pub fn into_inner(self) -> T {
         self.0
     }

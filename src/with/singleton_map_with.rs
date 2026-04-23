@@ -112,7 +112,7 @@ use serde::{Deserializer, Serialize, Serializer};
 /// * `serializer` - The serializer to use
 /// * `transform` - A function that transforms the variant name
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use serde::{Serialize, Serializer};
@@ -176,7 +176,7 @@ where
 /// * `transform` - A function that transforms the key back to the original
 ///   variant name
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use serde::de::DeserializeOwned;
@@ -243,7 +243,7 @@ where
 
 /// Common key transformation: convert to lowercase.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_with::to_lowercase;
@@ -258,7 +258,7 @@ pub fn to_lowercase(s: &str) -> String {
 
 /// Common key transformation: convert to UPPERCASE.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_with::to_uppercase;
@@ -273,7 +273,7 @@ pub fn to_uppercase(s: &str) -> String {
 
 /// Common key transformation: convert PascalCase to snake_case.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_with::to_snake_case;
@@ -296,7 +296,7 @@ pub fn to_snake_case(s: &str) -> String {
 
 /// Common key transformation: convert snake_case to PascalCase.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_with::to_pascal_case;
@@ -322,7 +322,7 @@ pub fn to_pascal_case(s: &str) -> String {
 
 /// Common key transformation: convert to kebab-case.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_with::to_kebab_case;
@@ -344,7 +344,7 @@ pub fn to_kebab_case(s: &str) -> String {
 
 /// Common key transformation: convert kebab-case to PascalCase.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_with::from_kebab_case;

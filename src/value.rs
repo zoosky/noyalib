@@ -23,7 +23,7 @@ type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 /// `IndexMap<String, Value>`. It provides a comprehensive API for working with
 /// YAML mappings.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{Mapping, Value};
@@ -457,7 +457,7 @@ impl<'de> Deserialize<'de> for Mapping {
 /// any [`Value`] as a key. This is useful for representing YAML mappings where
 /// keys might be numbers, booleans, or even nested structures.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{MappingAny, Value};
@@ -707,7 +707,7 @@ impl MappingAny {
     ///
     /// Returns `None` if any key is not a string value.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{Mapping, MappingAny, Value};
@@ -1285,7 +1285,7 @@ impl From<f64> for Number {
 
 /// Strips a leading `!` from a string, if present.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::nobang;
@@ -1312,7 +1312,7 @@ pub enum MaybeTag<T> {
 ///
 /// A value is considered a tag if its string representation starts with `!`.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{check_for_tag, MaybeTag};
@@ -1340,7 +1340,7 @@ pub fn check_for_tag<T: fmt::Display>(value: &T) -> MaybeTag<String> {
 /// Tag comparison ignores a leading `!` prefix, so `Tag::new("!foo") ==
 /// Tag::new("foo")`.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::Tag;
@@ -1441,7 +1441,7 @@ impl TryFrom<&[u8]> for Tag {
 /// Represents a value with an explicit YAML tag, such as `!custom_type value`.
 /// Tags are used to specify the type or interpretation of a value.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{Tag, TaggedValue, Value};
@@ -1885,7 +1885,7 @@ impl Value {
     /// - `"items[0].name"` - access key "name" in first element of sequence
     ///   "items"
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -1942,7 +1942,7 @@ impl Value {
     /// - Wildcard: `"items[*]"` or `"items.*"` — matches all children
     /// - Recursive descent: `"..name"` — finds `name` at any depth
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -1970,7 +1970,7 @@ impl Value {
     ///
     /// See [`get_path`](Self::get_path) for path syntax documentation.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -2010,7 +2010,7 @@ impl Value {
     /// - Scalars: `other` value replaces `self` value
     /// - Null in `other`: replaces `self` value
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -2067,7 +2067,7 @@ impl Value {
     /// Similar to [`merge`](Self::merge), but sequences are concatenated
     /// instead of replaced.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -2107,7 +2107,7 @@ impl Value {
     ///
     /// Returns the removed value if the key existed and this is a mapping.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -2130,7 +2130,7 @@ impl Value {
     /// Returns the previous value if the key existed. Returns `None` if this is
     /// not a mapping.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -2156,7 +2156,7 @@ impl Value {
     /// specified mappings should be inserted into the current mapping. If a key
     /// already exists in the current mapping, its value is NOT overridden.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -2537,7 +2537,7 @@ impl fmt::Display for Value {
 /// - `String` - for indexing into mappings by owned string
 /// - `&String` - for indexing into mappings by string reference
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{from_str, Value, ValueIndex};
@@ -3188,7 +3188,7 @@ impl Index<usize> for Value {
     ///
     /// Panics if the value is not a sequence or if the index is out of bounds.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};
@@ -3227,7 +3227,7 @@ impl Index<&str> for Value {
     ///
     /// Panics if the value is not a mapping or if the key is not found.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::{from_str, Value};

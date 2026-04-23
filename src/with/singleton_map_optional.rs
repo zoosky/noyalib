@@ -4,7 +4,7 @@
 //! serde's `#[serde(with = "...")]` attribute to serialize `Option<T>` fields
 //! where the inner type should use singleton map representation.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::with::singleton_map_optional;
@@ -50,7 +50,7 @@ use serde::{Deserializer, Serialize, Serializer};
 /// For `Some(value)`, this serializes the value using singleton map format.
 /// For `None`, this serializes as null.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_optional;
@@ -113,6 +113,25 @@ where
 ///
 /// This is the counterpart to [`serialize`], deserializing from the
 /// singleton map format back to `Option<T>`.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::with::singleton_map_optional;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, PartialEq, Debug)]
+/// enum Status { Active }
+///
+/// #[derive(Deserialize, Debug)]
+/// struct Doc {
+///     #[serde(with = "singleton_map_optional", default)]
+///     s: Option<Status>,
+/// }
+///
+/// let d: Doc = noyalib::from_str("s: ~\n").unwrap();
+/// assert!(d.s.is_none());
+/// ```
 pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     T: DeserializeOwned,

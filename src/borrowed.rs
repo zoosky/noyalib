@@ -8,7 +8,7 @@
 //! the input buffer when no escape processing was needed. This eliminates heap
 //! allocations for the majority of YAML content.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::borrowed::{from_str_borrowed, BorrowedValue};
@@ -28,30 +28,102 @@ use rustc_hash::FxBuildHasher;
 use serde::Serialize;
 
 /// A zero-copy YAML value that borrows strings from the input.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::borrowed::{from_str_borrowed, BorrowedValue};
+/// let v: BorrowedValue<'_> = from_str_borrowed("k: 1\n").unwrap();
+/// assert!(v.as_mapping().is_some());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BorrowedValue<'a> {
     /// YAML null.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::BorrowedValue;
+    /// assert!(BorrowedValue::Null.is_null());
+    /// ```
     Null,
     /// YAML boolean.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::BorrowedValue;
+    /// let v = BorrowedValue::Bool(true);
+    /// assert_eq!(v.as_bool(), Some(true));
+    /// ```
     Bool(bool),
     /// YAML number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{borrowed::BorrowedValue, Number};
+    /// let v = BorrowedValue::Number(Number::Integer(42));
+    /// assert_eq!(v.as_i64(), Some(42));
+    /// ```
     Number(crate::value::Number),
     /// YAML string — borrows from input when possible.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    /// use noyalib::borrowed::BorrowedValue;
+    /// let v = BorrowedValue::String(Cow::Borrowed("hi"));
+    /// assert_eq!(v.as_str(), Some("hi"));
+    /// ```
     String(Cow<'a, str>),
     /// YAML sequence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::BorrowedValue;
+    /// let v = BorrowedValue::Sequence(vec![BorrowedValue::Null]);
+    /// assert_eq!(v.as_sequence().unwrap().len(), 1);
+    /// ```
     Sequence(Vec<BorrowedValue<'a>>),
     /// YAML mapping with borrowed keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::{from_str_borrowed, BorrowedValue};
+    /// let v = from_str_borrowed("k: 1\n").unwrap();
+    /// assert!(matches!(v, BorrowedValue::Mapping(_)));
+    /// ```
     Mapping(IndexMap<Cow<'a, str>, BorrowedValue<'a>, FxBuildHasher>),
 }
 
 impl<'a> BorrowedValue<'a> {
     /// Returns `true` if this is a null value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::BorrowedValue;
+    /// assert!(BorrowedValue::Null.is_null());
+    /// ```
     #[must_use]
     pub fn is_null(&self) -> bool {
         matches!(self, Self::Null)
     }
 
     /// Returns the string value if this is a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    /// use noyalib::borrowed::BorrowedValue;
+    /// let v = BorrowedValue::String(Cow::Borrowed("hi"));
+    /// assert_eq!(v.as_str(), Some("hi"));
+    /// ```
     #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -61,6 +133,14 @@ impl<'a> BorrowedValue<'a> {
     }
 
     /// Returns the i64 value if this is an integer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{borrowed::BorrowedValue, Number};
+    /// let v = BorrowedValue::Number(Number::Integer(42));
+    /// assert_eq!(v.as_i64(), Some(42));
+    /// ```
     #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
@@ -70,6 +150,13 @@ impl<'a> BorrowedValue<'a> {
     }
 
     /// Returns the bool value if this is a boolean.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::BorrowedValue;
+    /// assert_eq!(BorrowedValue::Bool(true).as_bool(), Some(true));
+    /// ```
     #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -79,6 +166,14 @@ impl<'a> BorrowedValue<'a> {
     }
 
     /// Returns the sequence if this is a sequence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::BorrowedValue;
+    /// let v = BorrowedValue::Sequence(vec![BorrowedValue::Null]);
+    /// assert_eq!(v.as_sequence().unwrap().len(), 1);
+    /// ```
     #[must_use]
     pub fn as_sequence(&self) -> Option<&[BorrowedValue<'a>]> {
         match self {
@@ -88,6 +183,14 @@ impl<'a> BorrowedValue<'a> {
     }
 
     /// Returns the mapping if this is a mapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::from_str_borrowed;
+    /// let v = from_str_borrowed("k: 1\n").unwrap();
+    /// assert!(v.as_mapping().is_some());
+    /// ```
     #[must_use]
     pub fn as_mapping(&self) -> Option<&IndexMap<Cow<'a, str>, BorrowedValue<'a>, FxBuildHasher>> {
         match self {
@@ -101,7 +204,7 @@ impl<'a> BorrowedValue<'a> {
     /// Returns all matching values. Supports dot notation, bracket indexing,
     /// wildcards (`*`), and recursive descent (`..`).
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::borrowed::from_str_borrowed;
@@ -120,6 +223,14 @@ impl<'a> BorrowedValue<'a> {
     }
 
     /// Access a nested value via a dotted path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::from_str_borrowed;
+    /// let v = from_str_borrowed("a:\n  b: 2\n").unwrap();
+    /// assert_eq!(v.get_path("a.b").unwrap().as_i64(), Some(2));
+    /// ```
     #[must_use]
     pub fn get_path(&self, path: &str) -> Option<&BorrowedValue<'a>> {
         let segments = parse_query_path(path);
@@ -149,6 +260,15 @@ impl<'a> BorrowedValue<'a> {
     }
 
     /// Convert to an owned `Value`, cloning all borrowed strings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::borrowed::from_str_borrowed;
+    /// let v = from_str_borrowed("k: 1\n").unwrap();
+    /// let owned = v.into_owned();
+    /// assert!(owned.as_mapping().is_some());
+    /// ```
     #[must_use]
     pub fn into_owned(self) -> crate::Value {
         match self {
@@ -318,7 +438,7 @@ fn borrowed_query_recursive<'a, 'b>(
 /// because string scalars and mapping keys borrow directly from the input
 /// buffer instead of allocating on the heap.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::borrowed::{from_str_borrowed, BorrowedValue};
@@ -342,6 +462,15 @@ pub fn from_str_borrowed(input: &str) -> Result<BorrowedValue<'_>> {
 /// Returns an error when the input exceeds `max_document_length`, when
 /// the parser encounters invalid YAML, or when an unsupported construct
 /// (anchors/aliases on the borrowed path) is seen.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{borrowed::from_str_borrowed_with_config, ParserConfig};
+/// let cfg = ParserConfig::strict();
+/// let v = from_str_borrowed_with_config("k: 1\n", &cfg).unwrap();
+/// assert!(v.as_mapping().is_some());
+/// ```
 pub fn from_str_borrowed_with_config<'a>(
     input: &'a str,
     user_config: &crate::ParserConfig,

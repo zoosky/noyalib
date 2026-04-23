@@ -3,7 +3,7 @@
 //! This module provides functionality for parsing YAML documents that contain
 //! multiple documents separated by `---`.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::document::load_all;
@@ -36,6 +36,14 @@ use std::vec::IntoIter;
 /// An iterator over YAML documents in a string.
 ///
 /// Created by the [`load_all`] function.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::document::load_all;
+/// let iter = load_all("---\na: 1\n---\nb: 2\n").unwrap();
+/// assert_eq!(iter.len(), 2);
+/// ```
 #[derive(Debug)]
 pub struct DocumentIterator {
     docs: IntoIter<Value>,
@@ -46,12 +54,28 @@ pub struct DocumentIterator {
 
 impl DocumentIterator {
     /// Returns the total number of documents parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::document::load_all;
+    /// let iter = load_all("a: 1\n").unwrap();
+    /// assert_eq!(iter.len(), 1);
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.total
     }
 
     /// Returns true if there are no documents.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::document::load_all;
+    /// let iter = load_all("a: 1\n").unwrap();
+    /// assert!(!iter.is_empty());
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.total == 0
@@ -77,7 +101,7 @@ impl ExactSizeIterator for DocumentIterator {}
 /// This function parses a YAML string that may contain multiple documents
 /// separated by `---` markers. Default security limits are applied.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::document::load_all;
@@ -105,6 +129,15 @@ pub fn load_all(input: &str) -> Result<DocumentIterator> {
 ///
 /// Returns an error if the YAML syntax is invalid or the document
 /// exceeds the configured limits.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{document::load_all_with_config, ParserConfig};
+/// let cfg = ParserConfig::new();
+/// let iter = load_all_with_config("a: 1\n---\nb: 2\n", &cfg).unwrap();
+/// assert_eq!(iter.len(), 2);
+/// ```
 pub fn load_all_with_config(input: &str, config: &ParserConfig) -> Result<DocumentIterator> {
     if input.len() > config.max_document_length {
         return Err(crate::error::Error::Parse(format!(
@@ -142,7 +175,7 @@ pub fn load_all_with_config(input: &str, config: &ParserConfig) -> Result<Docume
 /// This is an alias for [`load_all`] which also returns errors on invalid
 /// syntax.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::document::try_load_all;
@@ -166,7 +199,7 @@ pub fn try_load_all(input: &str) -> Result<DocumentIterator> {
 
 /// Load all YAML documents and deserialize them into a typed vector.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::document::load_all_as;

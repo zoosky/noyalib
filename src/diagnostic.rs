@@ -3,6 +3,20 @@
 //! Converts validation errors on [`Spanned<T>`](crate::Spanned) values
 //! into rich [`miette::Report`] diagnostics with source spans, so that
 //! CLI tools get underlined error output for free.
+//!
+//! # Examples
+//!
+//! ```
+//! use noyalib::{from_str, Spanned, diagnostic::spanned_error};
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct Cfg { port: Spanned<u16> }
+//! let yaml = "port: 80\n";
+//! let cfg: Cfg = from_str(yaml).unwrap();
+//! let report = spanned_error(yaml, &cfg.port, "port must be >= 1024");
+//! assert!(format!("{report}").contains("port must be >= 1024"));
+//! ```
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
@@ -53,6 +67,20 @@ impl miette::Diagnostic for SpannedDiagnostic {
 /// This bridges noyalib's source-location tracking with miette's rich
 /// terminal diagnostic output, letting users validate deserialized
 /// config and report errors that point back to the exact YAML source.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str, Spanned, diagnostic::spanned_error};
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Cfg { port: Spanned<u16> }
+/// let yaml = "port: 80\n";
+/// let cfg: Cfg = from_str(yaml).unwrap();
+/// let report = spanned_error(yaml, &cfg.port, "too low");
+/// assert!(format!("{report}").contains("too low"));
+/// ```
 pub fn spanned_error<T, M: fmt::Display>(
     source: &str,
     span: &Spanned<T>,
@@ -76,7 +104,7 @@ pub fn spanned_error<T, M: fmt::Display>(
 /// Useful for errors involving two locations, such as an alias error that
 /// points to both the alias usage and the original anchor definition.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust,no_run
 /// # use noyalib::{from_str, Spanned, diagnostic::spanned_error_with_context};

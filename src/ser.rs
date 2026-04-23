@@ -50,7 +50,7 @@ pub enum ScalarStyle {
 
 /// Configuration options for YAML serialization.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{FlowStyle, ScalarStyle, SerializerConfig};
@@ -241,7 +241,7 @@ impl SerializerConfig {
 ///
 /// Returns an error if the type cannot be serialized to YAML.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use serde::Serialize;
@@ -275,7 +275,7 @@ where
 ///
 /// Returns an error if the type cannot be serialized to YAML.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::SerializerConfig;
@@ -355,7 +355,7 @@ where
 ///
 /// Returns an error if the type cannot be serialized to YAML.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{to_string_tracking_shared, RcAnchor};
@@ -1163,7 +1163,7 @@ fn write_folded_block(output: &mut String, s: &str, indent: usize, config: &Seri
 ///
 /// Returns an error if any value cannot be serialized.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// let docs = vec![1, 2, 3];

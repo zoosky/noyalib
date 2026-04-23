@@ -3,7 +3,7 @@
 //! This module provides `serialize` and `deserialize` functions that apply
 //! singleton map formatting recursively through nested structures.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::with::singleton_map_recursive;
@@ -63,7 +63,7 @@ fn transform_to_singleton_map(value: crate::Value) -> crate::Value {
 /// This applies singleton map formatting to all enum variants throughout
 /// the nested structure.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map_recursive;
@@ -100,6 +100,25 @@ where
 ///
 /// This is the counterpart to [`serialize`], deserializing from the
 /// singleton map format back to the original type.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::with::singleton_map_recursive;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, PartialEq, Debug)]
+/// enum Inner { A }
+///
+/// #[derive(Deserialize, Debug)]
+/// struct Doc {
+///     #[serde(with = "singleton_map_recursive")]
+///     items: Vec<Inner>,
+/// }
+///
+/// let d: Doc = noyalib::from_str("items:\n  - A: null\n").unwrap();
+/// assert_eq!(d.items.len(), 1);
+/// ```
 pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: DeserializeOwned,

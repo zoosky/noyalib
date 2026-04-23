@@ -34,6 +34,22 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// A newtype that validates its inner value using the [`garde`] crate.
 ///
 /// Requires the `garde` feature.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::Validated;
+/// use garde::Validate;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize, Validate)]
+/// struct Port {
+///     #[garde(range(min = 1024))]
+///     n: u16,
+/// }
+/// let v: Validated<Port> = noyalib::from_str("n: 8080\n").unwrap();
+/// assert_eq!(v.0.n, 8080);
+/// ```
 #[cfg(feature = "garde")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Validated<T>(pub T);
@@ -41,6 +57,22 @@ pub struct Validated<T>(pub T);
 /// A newtype that validates its inner value using the [`validator`] crate.
 ///
 /// Requires the `validator` feature.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::ValidatedValidator;
+/// use serde::Deserialize;
+/// use validator::Validate;
+///
+/// #[derive(Deserialize, Validate)]
+/// struct Port {
+///     #[validate(range(min = 1024))]
+///     n: u16,
+/// }
+/// let v: ValidatedValidator<Port> = noyalib::from_str("n: 8080\n").unwrap();
+/// assert_eq!(v.0.n, 8080);
+/// ```
 #[cfg(feature = "validator")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ValidatedValidator<T>(pub T);
@@ -48,6 +80,14 @@ pub struct ValidatedValidator<T>(pub T);
 #[cfg(feature = "garde")]
 impl<T> Validated<T> {
     /// Consume the wrapper and return the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Validated;
+    /// let v: Validated<u32> = Validated(42);
+    /// assert_eq!(v.into_inner(), 42);
+    /// ```
     #[inline]
     pub fn into_inner(self) -> T {
         self.0
@@ -57,6 +97,14 @@ impl<T> Validated<T> {
 #[cfg(feature = "validator")]
 impl<T> ValidatedValidator<T> {
     /// Consume the wrapper and return the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ValidatedValidator;
+    /// let v: ValidatedValidator<u32> = ValidatedValidator(42);
+    /// assert_eq!(v.into_inner(), 42);
+    /// ```
     #[inline]
     pub fn into_inner(self) -> T {
         self.0

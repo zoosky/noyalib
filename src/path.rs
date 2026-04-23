@@ -5,7 +5,7 @@
 //! messages that indicate exactly where in the YAML structure an error
 //! occurred.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::Path;
@@ -49,7 +49,7 @@ use core::fmt::Display;
 /// - [`Alias`](Path::Alias): Following an alias reference
 /// - [`Unknown`](Path::Unknown): Unknown or unspecified location
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::Path;
@@ -128,7 +128,7 @@ pub enum Path<'a> {
 impl<'a> Path<'a> {
     /// Creates a new sequence index path.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::Path;
@@ -152,7 +152,7 @@ impl<'a> Path<'a> {
 
     /// Creates a new map key path.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::Path;
@@ -170,7 +170,7 @@ impl<'a> Path<'a> {
 
     /// Creates a new alias path.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::Path;
@@ -191,7 +191,7 @@ impl<'a> Path<'a> {
 
     /// Returns `true` if this is the root path.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::Path;
@@ -211,7 +211,7 @@ impl<'a> Path<'a> {
     ///
     /// Returns `None` if this is the root path.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::Path;
@@ -235,7 +235,7 @@ impl<'a> Path<'a> {
 
     /// Returns the depth of this path (number of segments from root).
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use noyalib::Path;

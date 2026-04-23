@@ -131,6 +131,14 @@ pub(crate) mod shared_tracking {
 ///
 /// Serializes by delegating to the inner `T`. Deserializes by wrapping the
 /// result in `Rc`.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::RcAnchor;
+/// let a: RcAnchor<String> = RcAnchor::from("shared".to_string());
+/// assert_eq!(&*a, "shared");
+/// ```
 #[derive(Clone)]
 pub struct RcAnchor<T>(pub Rc<T>);
 
@@ -161,6 +169,15 @@ impl<T> From<Rc<T>> for RcAnchor<T> {
 
 impl<T> RcAnchor<T> {
     /// Unwrap into the inner `Rc`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcAnchor;
+    /// let a: RcAnchor<i32> = RcAnchor::from(7);
+    /// let inner = a.into_inner();
+    /// assert_eq!(*inner, 7);
+    /// ```
     pub fn into_inner(self) -> Rc<T> {
         self.0
     }
@@ -207,6 +224,14 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for RcAnchor<T> {
 ///
 /// Serializes by delegating to the inner `T`. Deserializes by wrapping the
 /// result in `Arc`.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::ArcAnchor;
+/// let a: ArcAnchor<String> = ArcAnchor::from("shared".to_string());
+/// assert_eq!(&*a, "shared");
+/// ```
 #[derive(Clone)]
 pub struct ArcAnchor<T>(pub Arc<T>);
 
@@ -237,6 +262,15 @@ impl<T> From<Arc<T>> for ArcAnchor<T> {
 
 impl<T> ArcAnchor<T> {
     /// Unwrap into the inner `Arc`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchor;
+    /// let a: ArcAnchor<i32> = ArcAnchor::from(7);
+    /// let inner = a.into_inner();
+    /// assert_eq!(*inner, 7);
+    /// ```
     pub fn into_inner(self) -> Arc<T> {
         self.0
     }
@@ -283,6 +317,14 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for ArcAnchor<T> {
 ///
 /// Serializes as `null` if the reference is dangling, otherwise serializes
 /// the inner value. Deserialization from `null` produces a dangling weak ref.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::RcWeakAnchor;
+/// let w: RcWeakAnchor<i32> = RcWeakAnchor::dangling();
+/// assert!(w.upgrade().is_none());
+/// ```
 #[derive(Clone)]
 pub struct RcWeakAnchor<T>(pub RcWeak<T>);
 
@@ -297,16 +339,41 @@ impl<T: fmt::Debug> fmt::Debug for RcWeakAnchor<T> {
 
 impl<T> RcWeakAnchor<T> {
     /// Create a dangling weak anchor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcWeakAnchor;
+    /// let w: RcWeakAnchor<String> = RcWeakAnchor::dangling();
+    /// assert!(w.upgrade().is_none());
+    /// ```
     pub fn dangling() -> Self {
         Self(RcWeak::new())
     }
 
     /// Unwrap into the inner `Weak`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcWeakAnchor;
+    /// let w: RcWeakAnchor<i32> = RcWeakAnchor::dangling();
+    /// let inner = w.into_inner();
+    /// assert!(inner.upgrade().is_none());
+    /// ```
     pub fn into_inner(self) -> RcWeak<T> {
         self.0
     }
 
     /// Attempt to upgrade to a strong `Rc`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcWeakAnchor;
+    /// let w: RcWeakAnchor<i32> = RcWeakAnchor::dangling();
+    /// assert!(w.upgrade().is_none());
+    /// ```
     pub fn upgrade(&self) -> Option<Rc<T>> {
         self.0.upgrade()
     }
@@ -360,6 +427,14 @@ impl<'de, T> Deserialize<'de> for RcWeakAnchor<T> {
 ///
 /// Serializes as `null` if the reference is dangling, otherwise serializes
 /// the inner value. Deserialization from `null` produces a dangling weak ref.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::ArcWeakAnchor;
+/// let w: ArcWeakAnchor<i32> = ArcWeakAnchor::dangling();
+/// assert!(w.upgrade().is_none());
+/// ```
 #[derive(Clone)]
 pub struct ArcWeakAnchor<T>(pub ArcWeak<T>);
 
@@ -374,16 +449,41 @@ impl<T: fmt::Debug> fmt::Debug for ArcWeakAnchor<T> {
 
 impl<T> ArcWeakAnchor<T> {
     /// Create a dangling weak anchor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcWeakAnchor;
+    /// let w: ArcWeakAnchor<String> = ArcWeakAnchor::dangling();
+    /// assert!(w.upgrade().is_none());
+    /// ```
     pub fn dangling() -> Self {
         Self(ArcWeak::new())
     }
 
     /// Unwrap into the inner `Weak`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcWeakAnchor;
+    /// let w: ArcWeakAnchor<i32> = ArcWeakAnchor::dangling();
+    /// let inner = w.into_inner();
+    /// assert!(inner.upgrade().is_none());
+    /// ```
     pub fn into_inner(self) -> ArcWeak<T> {
         self.0
     }
 
     /// Attempt to upgrade to a strong `Arc`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcWeakAnchor;
+    /// let w: ArcWeakAnchor<i32> = ArcWeakAnchor::dangling();
+    /// assert!(w.upgrade().is_none());
+    /// ```
     pub fn upgrade(&self) -> Option<Arc<T>> {
         self.0.upgrade()
     }
@@ -436,7 +536,7 @@ impl<'de, T> Deserialize<'de> for ArcWeakAnchor<T> {
 /// point to the same heap allocation via `Rc::clone`. This enables
 /// true shared-memory DAG structures rather than duplicated subtrees.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::AnchorRegistry;
@@ -467,6 +567,14 @@ impl<T> Default for AnchorRegistry<T> {
 
 impl<T> AnchorRegistry<T> {
     /// Create an empty registry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::AnchorRegistry;
+    /// let reg = AnchorRegistry::<String>::new();
+    /// assert!(reg.is_empty());
+    /// ```
     pub fn new() -> Self {
         Self {
             anchors: FxHashMap::default(),
@@ -477,6 +585,15 @@ impl<T> AnchorRegistry<T> {
     ///
     /// Returns the `Rc` wrapping the value. If an anchor with the
     /// same name already existed, the old entry is replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::AnchorRegistry;
+    /// let mut reg = AnchorRegistry::<i32>::new();
+    /// let rc = reg.register("n".into(), 7);
+    /// assert_eq!(*rc, 7);
+    /// ```
     pub fn register(&mut self, name: String, value: T) -> Rc<T> {
         let rc = Rc::new(value);
         let _ = self.anchors.insert(name, Rc::clone(&rc));
@@ -484,21 +601,58 @@ impl<T> AnchorRegistry<T> {
     }
 
     /// Resolve an anchor by name, returning a cloned `Rc` if present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::AnchorRegistry;
+    /// let mut reg = AnchorRegistry::<i32>::new();
+    /// let _ = reg.register("a".into(), 1);
+    /// assert_eq!(*reg.resolve("a").unwrap(), 1);
+    /// assert!(reg.resolve("missing").is_none());
+    /// ```
     pub fn resolve(&self, name: &str) -> Option<Rc<T>> {
         self.anchors.get(name).cloned()
     }
 
     /// Returns the number of registered anchors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::AnchorRegistry;
+    /// let mut reg = AnchorRegistry::<i32>::new();
+    /// let _ = reg.register("a".into(), 1);
+    /// assert_eq!(reg.len(), 1);
+    /// ```
     pub fn len(&self) -> usize {
         self.anchors.len()
     }
 
     /// Returns `true` if no anchors are registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::AnchorRegistry;
+    /// let reg = AnchorRegistry::<i32>::new();
+    /// assert!(reg.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.anchors.is_empty()
     }
 
     /// Remove all entries from the registry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::AnchorRegistry;
+    /// let mut reg = AnchorRegistry::<i32>::new();
+    /// let _ = reg.register("a".into(), 1);
+    /// reg.clear();
+    /// assert!(reg.is_empty());
+    /// ```
     pub fn clear(&mut self) {
         self.anchors.clear();
     }
@@ -509,7 +663,7 @@ impl<T> AnchorRegistry<T> {
 /// Thread-safe counterpart to [`AnchorRegistry`]. All aliases for the
 /// same anchor share one `Arc` allocation, enabling cross-thread DAGs.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::ArcAnchorRegistry;
@@ -540,6 +694,14 @@ impl<T> Default for ArcAnchorRegistry<T> {
 
 impl<T> ArcAnchorRegistry<T> {
     /// Create an empty registry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchorRegistry;
+    /// let reg = ArcAnchorRegistry::<String>::new();
+    /// assert!(reg.is_empty());
+    /// ```
     pub fn new() -> Self {
         Self {
             anchors: FxHashMap::default(),
@@ -549,6 +711,15 @@ impl<T> ArcAnchorRegistry<T> {
     /// Register a value under the given anchor name.
     ///
     /// Returns the `Arc` wrapping the value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchorRegistry;
+    /// let mut reg = ArcAnchorRegistry::<i32>::new();
+    /// let arc = reg.register("n".into(), 7);
+    /// assert_eq!(*arc, 7);
+    /// ```
     pub fn register(&mut self, name: String, value: T) -> Arc<T> {
         let arc = Arc::new(value);
         let _ = self.anchors.insert(name, Arc::clone(&arc));
@@ -556,21 +727,56 @@ impl<T> ArcAnchorRegistry<T> {
     }
 
     /// Resolve an anchor by name, returning a cloned `Arc` if present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchorRegistry;
+    /// let mut reg = ArcAnchorRegistry::<i32>::new();
+    /// let _ = reg.register("a".into(), 1);
+    /// assert_eq!(*reg.resolve("a").unwrap(), 1);
+    /// ```
     pub fn resolve(&self, name: &str) -> Option<Arc<T>> {
         self.anchors.get(name).cloned()
     }
 
     /// Returns the number of registered anchors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchorRegistry;
+    /// let reg = ArcAnchorRegistry::<i32>::new();
+    /// assert_eq!(reg.len(), 0);
+    /// ```
     pub fn len(&self) -> usize {
         self.anchors.len()
     }
 
     /// Returns `true` if no anchors are registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchorRegistry;
+    /// let reg = ArcAnchorRegistry::<i32>::new();
+    /// assert!(reg.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.anchors.is_empty()
     }
 
     /// Remove all entries from the registry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcAnchorRegistry;
+    /// let mut reg = ArcAnchorRegistry::<i32>::new();
+    /// let _ = reg.register("a".into(), 1);
+    /// reg.clear();
+    /// assert!(reg.is_empty());
+    /// ```
     pub fn clear(&mut self) {
         self.anchors.clear();
     }

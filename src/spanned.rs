@@ -43,7 +43,7 @@ pub(crate) const SPANNED_FIELDS: &[&str] = &[
 /// locations are populated. When deserializing via
 /// [`from_value`](crate::from_value), locations default to zero.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::Spanned;
@@ -57,10 +57,34 @@ pub(crate) const SPANNED_FIELDS: &[&str] = &[
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Spanned<T> {
     /// The deserialized value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Spanned;
+    /// let s = Spanned::new("x".to_string());
+    /// assert_eq!(s.value, "x");
+    /// ```
     pub value: T,
     /// Start location in the source.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Spanned;
+    /// let s: Spanned<i32> = Spanned::new(1);
+    /// assert_eq!(s.start.line(), 0);
+    /// ```
     pub start: Location,
     /// End location in the source.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Spanned;
+    /// let s: Spanned<i32> = Spanned::new(1);
+    /// assert_eq!(s.end.line(), 0);
+    /// ```
     pub end: Location,
 }
 
@@ -83,6 +107,14 @@ impl<T> Deref for Spanned<T> {
 
 impl<T> Spanned<T> {
     /// Create a new spanned value with default (zero) locations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Spanned;
+    /// let s = Spanned::new(42_u16);
+    /// assert_eq!(*s, 42);
+    /// ```
     pub fn new(value: T) -> Self {
         Self {
             value,
@@ -92,6 +124,14 @@ impl<T> Spanned<T> {
     }
 
     /// Unwrap into the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Spanned;
+    /// let s = Spanned::new("hello".to_string());
+    /// assert_eq!(s.into_inner(), "hello");
+    /// ```
     pub fn into_inner(self) -> T {
         self.value
     }

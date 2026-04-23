@@ -52,6 +52,20 @@ pub(crate) enum Scalar<'a> {
 /// Bypasses the intermediate `Value` AST for the supported subset of
 /// YAML. See the module-level documentation for when to use this type
 /// versus [`crate::from_str`].
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::StreamingDeserializer;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Doc { k: i32 }
+///
+/// let mut de = StreamingDeserializer::new("k: 42\n");
+/// let doc = Doc::deserialize(&mut de).unwrap();
+/// assert_eq!(doc.k, 42);
+/// ```
 pub struct StreamingDeserializer<'a> {
     parser: Parser<'a>,
     input: &'a str,

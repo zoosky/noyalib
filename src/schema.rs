@@ -9,7 +9,7 @@
 //!   floats (JSON-compatible).
 //! - **Core Schema**: The default schema, with more flexible tag resolution.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::{
@@ -45,7 +45,7 @@ use crate::value::{Number, Value};
 /// Returns an error if the value contains types not supported by the failsafe
 /// schema (nulls, booleans, numbers, or tagged values).
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{validate_failsafe_schema, Mapping, Value};
@@ -114,7 +114,7 @@ fn validate_failsafe_recursive(value: &Value, path: &mut String) -> Result<()> {
 /// Returns an error if the value contains types not supported by JSON schema
 /// (primarily tagged values with non-standard tags).
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{validate_json_schema, Value};
@@ -180,7 +180,7 @@ fn validate_json_recursive(value: &Value, path: &mut String) -> Result<()> {
 ///
 /// Returns an error only for malformed values (this is very permissive).
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::{validate_core_schema, Value};
@@ -232,12 +232,27 @@ fn validate_core_recursive(value: &Value, path: &mut String) -> Result<()> {
 ///
 /// This is equivalent to `validate_json_schema` but returns a boolean
 /// instead of a Result.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{is_json_compatible, Value};
+/// assert!(is_json_compatible(&Value::from(42)));
+/// ```
 #[must_use]
 pub fn is_json_compatible(value: &Value) -> bool {
     validate_json_schema(value).is_ok()
 }
 
 /// Check if a value uses only failsafe schema types.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{is_failsafe_compatible, Value};
+/// assert!(is_failsafe_compatible(&Value::String("x".into())));
+/// assert!(!is_failsafe_compatible(&Value::from(42)));
+/// ```
 #[must_use]
 pub fn is_failsafe_compatible(value: &Value) -> bool {
     validate_failsafe_schema(value).is_ok()

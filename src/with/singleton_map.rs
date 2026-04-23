@@ -4,7 +4,7 @@
 //! serde's `#[serde(with = "...")]` attribute to serialize enum variants as
 //! single-entry maps where the key is the variant name.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```rust
 //! use noyalib::with::singleton_map;
@@ -50,7 +50,7 @@ use serde::{Deserializer, Serialize, Serializer};
 /// For enums, this serializes the variant as a map where the key is the
 /// variant name and the value is the variant's data.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use noyalib::with::singleton_map;
@@ -104,6 +104,25 @@ where
 ///
 /// This is the counterpart to [`serialize`], deserializing from the
 /// singleton map format back to the original type.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::with::singleton_map;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, PartialEq, Debug)]
+/// enum Status { Active }
+///
+/// #[derive(Deserialize, Debug)]
+/// struct Doc {
+///     #[serde(with = "singleton_map")]
+///     s: Status,
+/// }
+///
+/// let d: Doc = noyalib::from_str("s:\n  Active: null\n").unwrap();
+/// assert_eq!(d.s, Status::Active);
+/// ```
 pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: DeserializeOwned,

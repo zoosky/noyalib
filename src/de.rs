@@ -2,6 +2,15 @@
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
 //! YAML Deserialization.
+//!
+//! # Examples
+//!
+//! ```
+//! use noyalib::from_str;
+//! use std::collections::BTreeMap;
+//! let m: BTreeMap<String, i32> = from_str("a: 1\nb: 2\n").unwrap();
+//! assert_eq!(m.get("a"), Some(&1));
+//! ```
 
 use crate::error::{Error, Result};
 use crate::parser::{self};
@@ -12,6 +21,14 @@ use serde::Deserialize;
 use std::io;
 
 /// Deserialization configuration.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::ParserConfig;
+/// let cfg = ParserConfig::new().max_depth(64);
+/// assert_eq!(cfg.max_depth, 64);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct ParserConfig {
     /// Maximum recursion depth allowed during parsing (default: 128).
@@ -49,6 +66,14 @@ impl Default for ParserConfig {
 
 impl ParserConfig {
     /// Create a new configuration with default values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new();
+    /// assert_eq!(cfg.max_depth, 128);
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -56,6 +81,14 @@ impl ParserConfig {
 
     /// Create a strict configuration (YAML 1.2 strict) with tighter
     /// security limits suitable for untrusted input.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::strict();
+    /// assert_eq!(cfg.max_depth, 64);
+    /// ```
     #[must_use]
     pub fn strict() -> Self {
         ParserConfig {
@@ -71,6 +104,14 @@ impl ParserConfig {
     }
 
     /// Set the maximum recursion depth.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_depth(32);
+    /// assert_eq!(cfg.max_depth, 32);
+    /// ```
     #[must_use]
     pub fn max_depth(mut self, depth: usize) -> Self {
         self.max_depth = depth;
@@ -78,6 +119,14 @@ impl ParserConfig {
     }
 
     /// Set the maximum document length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_document_length(1024);
+    /// assert_eq!(cfg.max_document_length, 1024);
+    /// ```
     #[must_use]
     pub fn max_document_length(mut self, len: usize) -> Self {
         self.max_document_length = len;
@@ -85,6 +134,14 @@ impl ParserConfig {
     }
 
     /// Set the maximum alias expansions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_alias_expansions(50);
+    /// assert_eq!(cfg.max_alias_expansions, 50);
+    /// ```
     #[must_use]
     pub fn max_alias_expansions(mut self, expansions: usize) -> Self {
         self.max_alias_expansions = expansions;
@@ -92,6 +149,14 @@ impl ParserConfig {
     }
 
     /// Set the maximum number of mapping keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_mapping_keys(100);
+    /// assert_eq!(cfg.max_mapping_keys, 100);
+    /// ```
     #[must_use]
     pub fn max_mapping_keys(mut self, max: usize) -> Self {
         self.max_mapping_keys = max;
@@ -99,6 +164,14 @@ impl ParserConfig {
     }
 
     /// Set the maximum sequence length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_sequence_length(100);
+    /// assert_eq!(cfg.max_sequence_length, 100);
+    /// ```
     #[must_use]
     pub fn max_sequence_length(mut self, max: usize) -> Self {
         self.max_sequence_length = max;
@@ -106,6 +179,14 @@ impl ParserConfig {
     }
 
     /// Set the duplicate key policy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{DuplicateKeyPolicy, ParserConfig};
+    /// let cfg = ParserConfig::new().duplicate_key_policy(DuplicateKeyPolicy::Error);
+    /// assert_eq!(cfg.duplicate_key_policy, DuplicateKeyPolicy::Error);
+    /// ```
     #[must_use]
     pub fn duplicate_key_policy(mut self, policy: DuplicateKeyPolicy) -> Self {
         self.duplicate_key_policy = policy;
@@ -113,6 +194,14 @@ impl ParserConfig {
     }
 
     /// Enable or disable strict booleans.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().strict_booleans(true);
+    /// assert!(cfg.strict_booleans);
+    /// ```
     #[must_use]
     pub fn strict_booleans(mut self, strict: bool) -> Self {
         self.strict_booleans = strict;
@@ -120,6 +209,14 @@ impl ParserConfig {
     }
 
     /// Enable or disable legacy booleans.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().legacy_booleans(true);
+    /// assert!(cfg.legacy_booleans);
+    /// ```
     #[must_use]
     pub fn legacy_booleans(mut self, legacy: bool) -> Self {
         self.legacy_booleans = legacy;
@@ -128,6 +225,13 @@ impl ParserConfig {
 }
 
 /// Policy for handling duplicate keys in a YAML mapping.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::DuplicateKeyPolicy;
+/// assert_eq!(DuplicateKeyPolicy::default(), DuplicateKeyPolicy::Last);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DuplicateKeyPolicy {
     /// Use the first occurrence of the key; ignore subsequent ones.
@@ -140,6 +244,13 @@ pub enum DuplicateKeyPolicy {
 }
 
 /// Deserialize YAML from a string.
+///
+/// # Examples
+///
+/// ```
+/// let n: i32 = noyalib::from_str("42").unwrap();
+/// assert_eq!(n, 42);
+/// ```
 pub fn from_str<T>(s: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -148,6 +259,15 @@ where
 }
 
 /// Deserialize YAML from a string with custom security limits.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str_with_config, ParserConfig};
+/// let cfg = ParserConfig::strict();
+/// let n: i32 = from_str_with_config("7", &cfg).unwrap();
+/// assert_eq!(n, 7);
+/// ```
 pub fn from_str_with_config<T>(s: &str, config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -183,6 +303,13 @@ where
 }
 
 /// Deserialize YAML from a byte slice.
+///
+/// # Examples
+///
+/// ```
+/// let n: i32 = noyalib::from_slice(b"42").unwrap();
+/// assert_eq!(n, 42);
+/// ```
 pub fn from_slice<T>(b: &[u8]) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -192,6 +319,15 @@ where
 }
 
 /// Deserialize YAML from a byte slice with custom configuration.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_slice_with_config, ParserConfig};
+/// let cfg = ParserConfig::new();
+/// let n: i32 = from_slice_with_config(b"7", &cfg).unwrap();
+/// assert_eq!(n, 7);
+/// ```
 pub fn from_slice_with_config<T>(b: &[u8], config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -201,6 +337,14 @@ where
 }
 
 /// Deserialize YAML from an IO reader.
+///
+/// # Examples
+///
+/// ```
+/// let yaml = b"42".to_vec();
+/// let n: i32 = noyalib::from_reader(&yaml[..]).unwrap();
+/// assert_eq!(n, 42);
+/// ```
 pub fn from_reader<R, T>(reader: R) -> Result<T>
 where
     R: io::Read,
@@ -210,6 +354,16 @@ where
 }
 
 /// Deserialize YAML from an IO reader with custom configuration.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_reader_with_config, ParserConfig};
+/// let cfg = ParserConfig::new();
+/// let bytes = b"7".to_vec();
+/// let n: i32 = from_reader_with_config(&bytes[..], &cfg).unwrap();
+/// assert_eq!(n, 7);
+/// ```
 pub fn from_reader_with_config<R, T>(mut reader: R, config: &ParserConfig) -> Result<T>
 where
     R: io::Read,
@@ -221,6 +375,15 @@ where
 }
 
 /// Deserialize a Value into a Rust type.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_value, Value};
+/// let v = Value::from(42_i64);
+/// let n: i32 = from_value(&v).unwrap();
+/// assert_eq!(n, 42);
+/// ```
 pub fn from_value<T>(value: &Value) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -229,6 +392,17 @@ where
 }
 
 /// A YAML deserializer.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{Deserializer, Value};
+/// use serde::Deserialize;
+/// let v = Value::from(42_i64);
+/// let de = Deserializer::new(&v);
+/// let n: i32 = Deserialize::deserialize(de).unwrap();
+/// assert_eq!(n, 42);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Deserializer<'de> {
     pub(crate) value: &'de Value,
@@ -237,6 +411,14 @@ pub struct Deserializer<'de> {
 
 impl<'de> Deserializer<'de> {
     /// Create a new deserializer from a value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Deserializer, Value};
+    /// let v = Value::from(1_i64);
+    /// let _de = Deserializer::new(&v);
+    /// ```
     #[must_use]
     pub fn new(value: &'de Value) -> Self {
         Deserializer {
@@ -246,6 +428,21 @@ impl<'de> Deserializer<'de> {
     }
 
     /// Create a new deserializer from a value with an associated span context.
+    ///
+    /// The span context carries source-location information used to attach
+    /// line/column details to errors and `Spanned<T>` fields. This
+    /// constructor is primarily used internally by `from_str`; most callers
+    /// should prefer [`Deserializer::new`].
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // Constructed internally by from_str — external callers use Deserializer::new.
+    /// use noyalib::Deserializer;
+    /// # let value = unimplemented!();
+    /// # let span_ctx = unimplemented!();
+    /// let _de = Deserializer::with_span_context(value, span_ctx);
+    /// ```
     #[must_use]
     pub fn with_span_context(value: &'de Value, span_ctx: &'de span_context::SpanContext) -> Self {
         Deserializer {
