@@ -146,6 +146,11 @@ mod ser;
 pub(crate) mod span_context;
 pub(crate) mod spanned;
 mod streaming;
+/// Declarative post-deserialise validation via [`garde`] (requires the
+/// `garde` feature).
+#[cfg(feature = "garde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "garde")))]
+pub mod validated;
 mod value;
 pub mod with;
 
@@ -179,6 +184,9 @@ pub use ser::{
 #[cfg(feature = "std")]
 pub use ser::{to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_with_config};
 pub use spanned::Spanned;
+#[cfg(feature = "garde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "garde")))]
+pub use validated::Validated;
 pub use value::{
     check_for_tag, nobang, Mapping, MappingAny, MaybeTag, Number, ParseNumberError, Sequence, Tag,
     TaggedValue, Value, ValueIndex,

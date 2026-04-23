@@ -213,6 +213,7 @@ itoa = "1"
 ryu = "1"
 memchr = "2.7"
 miette = { version = "7", optional = true }
+garde = { version = "0.22", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -242,6 +243,7 @@ default = ["std"]
 std = []
 miette = ["dep:miette"]
 robotics = []
+garde = ["dep:garde"]
 noyavalidate = ["std", "miette", "miette/fancy"]
 
 [package.metadata.docs.rs]
