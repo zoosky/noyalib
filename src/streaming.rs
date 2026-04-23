@@ -467,11 +467,10 @@ impl<'a> StreamingDeserializer<'a> {
         let mut balance: i64 = 0;
         loop {
             match self.next_event()? {
-                Event::Scalar { .. } | Event::Alias { .. } => {
-                    if balance == 0 {
-                        return Ok(());
-                    }
+                Event::Scalar { .. } | Event::Alias { .. } if balance == 0 => {
+                    return Ok(());
                 }
+                Event::Scalar { .. } | Event::Alias { .. } => {}
                 Event::SequenceStart { .. } | Event::MappingStart { .. } => {
                     balance += 1;
                 }
