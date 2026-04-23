@@ -177,6 +177,20 @@ path = "examples/nostd.rs"
 name = "preserve"
 path = "examples/preserve.rs"
 
+## ── Competitive Features ──
+[[example]]
+name = "replay"
+path = "examples/replay.rs"
+[[example]]
+name = "registry"
+path = "examples/registry.rs"
+[[example]]
+name = "scientific"
+path = "examples/scientific.rs"
+[[example]]
+name = "validation"
+path = "examples/validation.rs"
+
 [[example]]
 name = "all"
 path = "examples/all.rs"

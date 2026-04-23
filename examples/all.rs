@@ -54,6 +54,11 @@ const EXAMPLES: &[&str] = &[
     "diagnostic",
     "nostd",
     "preserve",
+    // Competitive Features
+    "replay",
+    "registry",
+    "scientific",
+    "validation",
     // Final
     "async_io",
     "recursive",
