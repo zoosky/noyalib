@@ -14,7 +14,7 @@
 
 use crate::prelude::*;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 
@@ -174,11 +174,139 @@ fn try_parse_float(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
 }
 
+/// Extract the set of key names that appear at the top level of the given
+/// buffered mapping body. Used during merge expansion to skip merged keys
+/// that locals will override.
+///
+/// `buf` is the rest of the current mapping's events, *including* the
+/// terminating `MapEnd`. Depth tracking honours nested mappings/sequences
+/// so their inner scalars do not leak into the local-key set.
+fn extract_local_keys(buf: &[BufferedEvent]) -> FxHashSet<String> {
+    let mut keys: FxHashSet<String> = FxHashSet::default();
+    let mut depth: usize = 0;
+    let mut expecting_key = true;
+    for ev in buf {
+        match ev {
+            BufferedEvent::Scalar { value, .. } => {
+                if depth == 0 {
+                    if expecting_key {
+                        let _ = keys.insert(value.clone());
+                    }
+                    expecting_key = !expecting_key;
+                }
+            }
+            BufferedEvent::MapStart | BufferedEvent::SeqStart => {
+                depth += 1;
+            }
+            BufferedEvent::MapEnd | BufferedEvent::SeqEnd => {
+                if depth == 1 {
+                    // Returning to top level — next scalar is a key.
+                    expecting_key = true;
+                }
+                depth = depth.saturating_sub(1);
+            }
+        }
+    }
+    keys
+}
+
+/// Walk the body of a merge target mapping (outer `MapStart`/`MapEnd`
+/// already stripped) and emit only `(key, value_block)` pairs whose key
+/// is NOT in `local_keys`. Preserves nested structure within values.
+///
+/// Returns `None` if the shape is malformed (non-scalar key, truncated
+/// value block) so the caller can fall back safely.
+fn filter_merge_entries(
+    inner: &[BufferedEvent],
+    local_keys: &FxHashSet<String>,
+) -> Option<Vec<BufferedEvent>> {
+    let mut out: Vec<BufferedEvent> = Vec::with_capacity(inner.len());
+    let mut i = 0;
+    while i < inner.len() {
+        // Extract the key — must be a scalar.
+        let key = match &inner[i] {
+            BufferedEvent::Scalar { value, .. } => value.clone(),
+            _ => return None,
+        };
+        // The value block may be a single scalar or a balanced compound.
+        let val_start = i + 1;
+        if val_start >= inner.len() {
+            return None;
+        }
+        let val_end = match &inner[val_start] {
+            BufferedEvent::Scalar { .. } => val_start + 1,
+            BufferedEvent::MapStart | BufferedEvent::SeqStart => {
+                let mut depth: i32 = 1;
+                let mut j = val_start + 1;
+                while j < inner.len() && depth > 0 {
+                    match &inner[j] {
+                        BufferedEvent::MapStart | BufferedEvent::SeqStart => depth += 1,
+                        BufferedEvent::MapEnd | BufferedEvent::SeqEnd => depth -= 1,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                if depth != 0 {
+                    return None;
+                }
+                j
+            }
+            _ => return None,
+        };
+        if !local_keys.contains(&key) {
+            out.extend_from_slice(&inner[i..val_end]);
+        }
+        i = val_end;
+    }
+    Some(out)
+}
+
 /// A streaming YAML deserializer that operates directly on parser events.
 ///
 /// Bypasses the intermediate `Value` AST for typed deserialization,
-/// eliminating all intermediate allocations.
-struct StreamingDeserializer<'a> {
+/// eliminating all intermediate allocations for the supported subset of
+/// YAML.
+///
+/// # Usage
+///
+/// ```rust
+/// use noyalib::StreamingDeserializer;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Config {
+///     name: String,
+///     port: u16,
+/// }
+///
+/// let yaml = "name: myapp\nport: 8080\n";
+/// let mut de = StreamingDeserializer::new(yaml);
+/// let cfg = Config::deserialize(&mut de).unwrap();
+/// assert_eq!(cfg.name, "myapp");
+/// assert_eq!(cfg.port, 8080);
+/// ```
+///
+/// # When to use
+///
+/// Prefer this type when you want to avoid the `Value` AST allocation and
+/// you control the input shape. For general-purpose parsing that accepts
+/// any valid YAML input, [`crate::from_str`] is simpler — it uses the
+/// streaming path when possible and falls back to the AST automatically.
+///
+/// # Unsupported constructs
+///
+/// Some YAML features require the full AST and produce an internal
+/// fallback error when seen by this deserializer:
+///
+/// - Non-default YAML tags (`!!tag`, `!custom`) on values.
+/// - `Spanned<T>` fields — the streaming path does not carry source spans.
+/// - Merge keys (`<<`) that are not the first key of a mapping, or whose
+///   value is a sequence of anchors.
+///
+/// For inputs that may contain these, call [`crate::from_str`] instead —
+/// it transparently switches to the AST path when streaming cannot proceed.
+#[derive(Debug)]
+pub struct StreamingDeserializer<'a> {
     parser: Parser<'a>,
     /// The current event (peeked but not consumed).
     current: Option<Event<'a>>,
@@ -207,7 +335,44 @@ struct StreamingDeserializer<'a> {
 }
 
 impl<'a> StreamingDeserializer<'a> {
-    fn new(input: &'a str, config: &ParseConfig) -> Self {
+    /// Create a streaming deserializer with default parser settings.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use noyalib::StreamingDeserializer;
+    /// use serde::Deserialize;
+    ///
+    /// let mut de = StreamingDeserializer::new("value: 42\n");
+    /// let m: std::collections::BTreeMap<String, i32> =
+    ///     Deserialize::deserialize(&mut de).unwrap();
+    /// assert_eq!(m["value"], 42);
+    /// ```
+    pub fn new(input: &'a str) -> Self {
+        Self::with_parse_config(input, &ParseConfig::from(&crate::ParserConfig::default()))
+    }
+
+    /// Create a streaming deserializer with a custom parser configuration.
+    ///
+    /// Use this to tighten security limits (max depth, alias expansions,
+    /// document length) for untrusted input, or to adjust scalar parsing
+    /// behaviour (strict booleans, YAML 1.1 legacy booleans).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use noyalib::{ParserConfig, StreamingDeserializer};
+    ///
+    /// let config = ParserConfig::strict();
+    /// let mut de = StreamingDeserializer::with_config("k: 1\n", &config);
+    /// let _: std::collections::BTreeMap<String, i32> =
+    ///     serde::Deserialize::deserialize(&mut de).unwrap();
+    /// ```
+    pub fn with_config(input: &'a str, config: &crate::ParserConfig) -> Self {
+        Self::with_parse_config(input, &ParseConfig::from(config))
+    }
+
+    pub(crate) fn with_parse_config(input: &'a str, config: &ParseConfig) -> Self {
         StreamingDeserializer {
             parser: Parser::new(input),
             current: None,
@@ -220,6 +385,37 @@ impl<'a> StreamingDeserializer<'a> {
             replay_stack: Vec::new(),
             recording: None,
         }
+    }
+
+    /// Peek at the next event without consuming it AND without resolving
+    /// an `Event::Alias`. Required by merge-key detection: `peek_event`
+    /// would transparently expand the `*anchor` into its buffered contents
+    /// before the merge handler can observe the alias name.
+    ///
+    /// Replay-stack events still surface (replays do not contain aliases
+    /// because `maybe_record` skips them).
+    fn peek_event_raw(&mut self) -> Result<&Event<'a>> {
+        if self.current.is_none() {
+            if let Some(buf) = self.replay_stack.last_mut() {
+                if let Some(be) = buf.pop() {
+                    if buf.is_empty() {
+                        let _ = self.replay_stack.pop();
+                    }
+                    self.current = Some(self.buffered_to_event(be));
+                    return Ok(self.current.as_ref().expect("internal: current set above"));
+                }
+                let _ = self.replay_stack.pop();
+            }
+            let event = self
+                .parser
+                .next_event()
+                .map_err(|e| Error::parse_at(&*e.message, self.input, e.index))?;
+            self.current = Some(event);
+        }
+        Ok(self
+            .current
+            .as_ref()
+            .expect("internal: current set by peek_event_raw"))
     }
 
     /// Peek at the next event without consuming it.
@@ -437,33 +633,123 @@ impl<'a> StreamingDeserializer<'a> {
         Ok(self.buffered_to_event(first))
     }
 
-    /// Inject the inner events of an anchored mapping onto the replay stack
-    /// so the caller streams the mapping's contents as if they appeared
-    /// inline. Used to expand `<<: *anchor` merge keys natively.
+    /// Expand `<<: *anchor` inline. Buffers the rest of the current mapping
+    /// so local key names are known up-front, filters the merge target to
+    /// exclude any key also present in the locals (YAML "local wins"),
+    /// then queues merged-then-locals onto the replay stack.
     ///
-    /// Returns the fallback sentinel if the target is not a mapping (empty
-    /// or scalar/sequence), at which point the caller should propagate the
-    /// error to restart deserialization on the AST path.
+    /// Returns the fallback sentinel when native expansion is unsafe —
+    /// merge target not a mapping, local buffer contains an alias (nested
+    /// merges lose identity through recording), or merge target contains
+    /// a non-scalar key.
     fn inject_merge_mapping_contents(&mut self, name: &str, alias_start: usize) -> Result<()> {
-        let buf = match self.anchor_events.get(name) {
+        // Fetch the merge target's events; require mapping shape.
+        let target_buf = match self.anchor_events.get(name) {
             Some(b) => b.clone(),
             None => return Err(self.build_unknown_anchor(name, alias_start)),
         };
-        // Require the target to be a mapping: [MapStart, ..., MapEnd].
-        if buf.len() < 2
-            || !matches!(buf.first(), Some(BufferedEvent::MapStart))
-            || !matches!(buf.last(), Some(BufferedEvent::MapEnd))
+        if target_buf.len() < 2
+            || !matches!(target_buf.first(), Some(BufferedEvent::MapStart))
+            || !matches!(target_buf.last(), Some(BufferedEvent::MapEnd))
         {
             return Err(self.fallback());
         }
-        // Strip outer MapStart/MapEnd; reverse for pop-from-end semantics.
-        let mut inner: Vec<BufferedEvent> = buf[1..buf.len() - 1].to_vec();
-        if inner.is_empty() {
-            return Ok(());
+
+        // Buffer the rest of the current mapping up to and including its
+        // MappingEnd. We own emission of the MappingEnd once replay drains.
+        let local_buf = self.buffer_rest_of_mapping()?;
+        let local_keys = extract_local_keys(&local_buf);
+
+        // Filter the merge target: drop (key, value_block) pairs whose key
+        // is overridden by a local. Strip outer MapStart/MapEnd first.
+        let target_inner = &target_buf[1..target_buf.len() - 1];
+        let merged_filtered = match filter_merge_entries(target_inner, &local_keys) {
+            Some(v) => v,
+            None => return Err(self.fallback()),
+        };
+
+        // Queue both onto the replay stack. Each inner Vec is popped
+        // end-first; the outer stack pops the last-pushed Vec first. So:
+        //   push locals first  → will be consumed second (after merged)
+        //   push merged second → will be consumed first
+        if !local_buf.is_empty() {
+            let mut rev = local_buf;
+            rev.reverse();
+            self.replay_stack.push(rev);
         }
-        inner.reverse();
-        self.replay_stack.push(inner);
+        if !merged_filtered.is_empty() {
+            let mut rev = merged_filtered;
+            rev.reverse();
+            self.replay_stack.push(rev);
+        }
         Ok(())
+    }
+
+    /// Consume parser events until the current mapping's `MappingEnd`
+    /// (inclusive). Returns the buffered events as `BufferedEvent`s. Aliases
+    /// inside the local content cause a fallback — recording aliases
+    /// losslessly would require changes to the anchor recording layer and
+    /// is out of scope.
+    fn buffer_rest_of_mapping(&mut self) -> Result<Vec<BufferedEvent>> {
+        let mut buf: Vec<BufferedEvent> = Vec::new();
+        let mut depth: usize = 0;
+        loop {
+            let ev = self.next_event_raw()?;
+            match ev {
+                Event::MappingEnd { .. } => {
+                    buf.push(BufferedEvent::MapEnd);
+                    if depth == 0 {
+                        return Ok(buf);
+                    }
+                    depth -= 1;
+                }
+                Event::MappingStart { .. } => {
+                    buf.push(BufferedEvent::MapStart);
+                    depth += 1;
+                }
+                Event::SequenceStart { .. } => {
+                    buf.push(BufferedEvent::SeqStart);
+                    depth += 1;
+                }
+                Event::SequenceEnd { .. } => {
+                    buf.push(BufferedEvent::SeqEnd);
+                    depth = depth.saturating_sub(1);
+                }
+                Event::Scalar { value, style, .. } => {
+                    buf.push(BufferedEvent::Scalar {
+                        value: value.into_owned(),
+                        style,
+                    });
+                }
+                Event::Alias { .. } => {
+                    // Nested aliases in locals aren't representable in the
+                    // replay buffer — fall back so the AST path handles it.
+                    return Err(self.fallback());
+                }
+                _ => { /* StreamStart/End, DocumentStart/End — skip */ }
+            }
+        }
+    }
+
+    /// Fetch the next parser event without auto-resolving aliases. Mirrors
+    /// the structure of `next_event` but strips out the transparent-alias
+    /// expansion; used while buffering local content for merge expansion.
+    fn next_event_raw(&mut self) -> Result<Event<'a>> {
+        if let Some(ev) = self.current.take() {
+            return Ok(ev);
+        }
+        if let Some(buf) = self.replay_stack.last_mut() {
+            if let Some(be) = buf.pop() {
+                if buf.is_empty() {
+                    let _ = self.replay_stack.pop();
+                }
+                return Ok(self.buffered_to_event(be));
+            }
+            let _ = self.replay_stack.pop();
+        }
+        self.parser
+            .next_event()
+            .map_err(|e| Error::parse_at(&*e.message, self.input, e.index))
     }
 
     /// Build an `UnknownAnchorAt` error, attaching a "did you mean …?"
@@ -1303,19 +1589,24 @@ impl<'de> MapAccess<'de> for StreamingMapAccess<'_, 'de> {
                         // YAML "local > merged" semantics. Fall back.
                         return Err(self.de.fallback());
                     }
-                    // Consume the `<<` key event and peek the value.
+                    // Consume the `<<` key event, then inspect the raw
+                    // value event without auto-resolving a `*anchor`.
+                    // `peek_event` would transparently expand the alias,
+                    // hiding the anchor name the merge handler needs.
                     self.de.skip_event()?;
-                    let next_ev = self.de.peek_event()?;
-                    let (anchor_name, alias_start) = if let Event::Alias { anchor, span } = next_ev
-                    {
-                        (anchor.clone(), span.start)
-                    } else {
-                        // <<: sequence or inline mapping — fall back.
-                        return Err(self.de.fallback());
+                    let (anchor_name, alias_start) = {
+                        let next_ev = self.de.peek_event_raw()?;
+                        if let Event::Alias { anchor, span } = next_ev {
+                            (anchor.clone(), span.start)
+                        } else {
+                            // <<: sequence or inline mapping — fall back.
+                            return Err(self.de.fallback());
+                        }
                     };
-                    // Consume the alias event and inject the merge target's
-                    // inner events onto the replay stack.
-                    self.de.skip_event()?;
+                    // Discard the buffered Alias directly. Calling
+                    // `next_event` would auto-resolve the alias onto the
+                    // replay stack, double-injecting the merge target.
+                    self.de.current = None;
                     self.de
                         .inject_merge_mapping_contents(&anchor_name, alias_start)?;
                     // Loop back to pick up the first merged key (or a
@@ -1500,7 +1791,7 @@ where
         ))));
     }
 
-    let mut de = StreamingDeserializer::new(s, config);
+    let mut de = StreamingDeserializer::with_parse_config(s, config);
     let result = T::deserialize(&mut de);
 
     match result {

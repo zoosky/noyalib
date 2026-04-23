@@ -184,6 +184,7 @@ pub use ser::{
 #[cfg(feature = "std")]
 pub use ser::{to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_with_config};
 pub use spanned::Spanned;
+pub use streaming::StreamingDeserializer;
 #[cfg(feature = "garde")]
 #[cfg_attr(docsrs, doc(cfg(feature = "garde")))]
 pub use validated::Validated;
