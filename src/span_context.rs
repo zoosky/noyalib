@@ -7,7 +7,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::error::Location;
 use crate::value::Value;
 
 /// Parallel tree of source spans, built alongside `Value` during loading.
@@ -72,19 +71,6 @@ pub(crate) fn set_span_context(ctx: SpanContext) -> SpanContextGuard {
         *cell.borrow_mut() = Some(ctx);
     });
     SpanContextGuard { ctx: cloned }
-}
-
-/// Look up source locations for a `Value` pointer address.
-#[allow(dead_code)]
-pub(crate) fn lookup_span(value_ptr: usize) -> Option<(Location, Location)> {
-    SPAN_CONTEXT.with(|cell| {
-        let borrow = cell.borrow();
-        let ctx = borrow.as_ref()?;
-        let &(start, end) = ctx.spans.get(&value_ptr)?;
-        let start_loc = Location::from_index(&ctx.source, start);
-        let end_loc = Location::from_index(&ctx.source, end);
-        Some((start_loc, end_loc))
-    })
 }
 
 /// Walk a `Value` tree and a `SpanTree` in lockstep, collecting pointer → span
