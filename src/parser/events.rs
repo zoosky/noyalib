@@ -109,6 +109,25 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Drain captured comments. Used by the public
+    /// [`crate::load_comments`] API. Returns comments in source order.
+    pub(crate) fn take_comments(&mut self) -> Vec<crate::comments::Comment> {
+        self.scanner
+            .take_comments()
+            .into_iter()
+            .map(|c| crate::comments::Comment {
+                text: c.text,
+                start: c.start,
+                end: c.end,
+                kind: if c.inline {
+                    crate::comments::CommentKind::Inline
+                } else {
+                    crate::comments::CommentKind::Line
+                },
+            })
+            .collect()
+    }
+
     pub(crate) fn next_event(&mut self) -> Result<Event<'a>, ScanError> {
         match self.state {
             State::StreamStart => self.parse_stream_start(),

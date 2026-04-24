@@ -124,6 +124,7 @@ pub(crate) mod prelude {
 mod anchors;
 /// Zero-copy YAML values that borrow from the input.
 pub mod borrowed;
+mod comments;
 mod de;
 /// Spanned-to-miette diagnostic bridge (requires `miette` feature).
 #[cfg(feature = "miette")]
@@ -158,6 +159,7 @@ pub mod with;
 pub use anchors::{
     AnchorRegistry, ArcAnchor, ArcAnchorRegistry, ArcWeakAnchor, RcAnchor, RcWeakAnchor,
 };
+pub use comments::{load_comments, Comment, CommentKind};
 #[cfg(feature = "std")]
 pub use de::{from_reader, from_reader_with_config};
 pub use de::{

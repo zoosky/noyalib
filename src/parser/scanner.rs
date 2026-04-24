@@ -149,6 +149,21 @@ pub(crate) struct Scanner<'a> {
     stream_started: bool,
     /// True once we've emitted StreamEnd.
     stream_ended: bool,
+    /// Captured comments in source order. Populated as the scanner
+    /// skips comment bytes; readers drain via `take_comments`.
+    comments: Vec<ScannedComment>,
+}
+
+/// Internal comment record captured by the scanner.
+///
+/// Public at the crate level so the parser can hand it off to callers;
+/// the public API lives in [`crate::comments`].
+#[derive(Debug, Clone)]
+pub(crate) struct ScannedComment {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) text: String,
+    pub(crate) inline: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -176,7 +191,14 @@ impl<'a> Scanner<'a> {
             explicit_key_pending: false,
             stream_started: false,
             stream_ended: false,
+            comments: Vec::new(),
         }
+    }
+
+    /// Drain captured comments, leaving the scanner's internal buffer
+    /// empty. Used by the public [`crate::load_comments`] path.
+    pub(super) fn take_comments(&mut self) -> Vec<ScannedComment> {
+        core::mem::take(&mut self.comments)
     }
 
     /// Fetch the next token from the scanner.
@@ -345,16 +367,34 @@ impl<'a> Scanner<'a> {
 
     fn skip_to_next_token(&mut self) -> ScanResult<()> {
         loop {
+            // Whether the `#` we're about to process (if any) sits at
+            // the start of a line (after only whitespace) or trails
+            // real content on the same line.
+            let inline = self.col > 0;
             // Skip whitespace (tabs are only allowed in some contexts).
             self.skip_blank();
 
-            // Skip comment — bulk-scan to next line break.
+            // Skip comment — bulk-scan to next line break, capturing
+            // the span and text for callers that want to read it back.
             if self.peek() == b'#' {
+                let comment_start = self.pos;
                 let remaining = &self.input[self.pos..];
                 let end = remaining
                     .iter()
                     .position(|&b| b == b'\n' || b == b'\r')
                     .unwrap_or(remaining.len());
+                let comment_end = comment_start + end;
+                // `#` itself is at `comment_start`; the text starts
+                // one byte later. Skip the `#` but keep any following
+                // space so reconstruction preserves formatting.
+                let text_start = comment_start + 1;
+                let text = self.input_str[text_start..comment_end].to_owned();
+                self.comments.push(ScannedComment {
+                    start: comment_start,
+                    end: comment_end,
+                    text,
+                    inline,
+                });
                 self.col += end;
                 self.pos += end;
             }
