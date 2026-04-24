@@ -14,6 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use smallvec::SmallVec;
+use std::sync::Arc;
 
 use crate::error::{closest_name, Error, Result};
 use crate::parser::{Event, ParseConfig, Parser, ScalarStyle};
@@ -70,6 +71,7 @@ pub struct StreamingDeserializer<'a> {
     parser: Parser<'a>,
     input: &'a str,
     config: ParseConfig,
+    tag_registry: Option<Arc<crate::TagRegistry>>,
     depth: usize,
     current: Option<Event<'a>>,
     raw_str_mode: bool,
@@ -121,6 +123,7 @@ impl<'a> StreamingDeserializer<'a> {
             parser: Parser::new(input),
             input,
             config: config.into(),
+            tag_registry: None,
             depth: 0,
             current: None,
             raw_str_mode: false,
@@ -131,6 +134,33 @@ impl<'a> StreamingDeserializer<'a> {
             alias_count: 0,
             alias_bytes: 0,
         }
+    }
+
+    /// Install a [`TagRegistry`](crate::TagRegistry) on this
+    /// deserializer. Custom tags listed in the registry will be
+    /// stripped on the streaming path instead of forcing a fallback to
+    /// the `Value` AST.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{StreamingDeserializer, TagRegistry};
+    /// use serde::Deserialize;
+    /// use std::sync::Arc;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Temp(f64);
+    ///
+    /// let reg = Arc::new(TagRegistry::new().with("!Celsius"));
+    /// let mut de = StreamingDeserializer::new("!Celsius 42.0")
+    ///     .with_tag_registry(reg);
+    /// let t = Temp::deserialize(&mut de).unwrap();
+    /// assert_eq!(t.0, 42.0);
+    /// ```
+    #[must_use]
+    pub fn with_tag_registry(mut self, registry: Arc<crate::TagRegistry>) -> Self {
+        self.tag_registry = Some(registry);
+        self
     }
 
     fn peek_parser_event(&mut self) -> Result<&Event<'a>> {
@@ -515,6 +545,36 @@ impl<'a> StreamingDeserializer<'a> {
         t
     }
 
+    /// Is `(handle, suffix)` registered in the tag registry as
+    /// strip-through? Matches against the reconstructed full tag
+    /// string (`"{handle}{suffix}"`, so `!Celsius` for `("!",
+    /// "Celsius")`).
+    ///
+    /// Core YAML 1.2 tags (`!!str`, `!!int`, `!!bool`, `!!float`,
+    /// `!!null`, `!!seq`, `!!map`) are never stripped — their tag
+    /// carries semantic information (e.g. `!!str 42` forces string
+    /// resolution) that the AST resolver must see. Registering one of
+    /// those tags is a no-op.
+    fn tag_in_registry(&self, tag: &(String, String)) -> bool {
+        if matches!(
+            (tag.0.as_str(), tag.1.as_str()),
+            ("!!", "int")
+                | ("!!", "float")
+                | ("!!", "str")
+                | ("!!", "bool")
+                | ("!!", "null")
+                | ("!!", "seq")
+                | ("!!", "map")
+        ) {
+            return false;
+        }
+        let Some(registry) = self.tag_registry.as_ref() else {
+            return false;
+        };
+        let full = format!("{}{}", tag.0, tag.1);
+        registry.contains(&full)
+    }
+
     /// Put a tag back onto the currently-cached event. Used to restore
     /// state before returning a fallback error so the AST path sees the
     /// tagged node unchanged.
@@ -555,8 +615,13 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         // correct `Value::Tagged(...)` / `Value::String` / `Value::Number`
         // variant for tagged scalars. Restore the tag and fall back.
         if let Some(t) = self.take_tag_from_current() {
-            self.restore_tag_to_current(t);
-            return Err(self.fallback());
+            // TagRegistry opt-in: if the tag is registered as
+            // strip-through, proceed without restoring so the inner
+            // value deserializes directly into the target type.
+            if !self.tag_in_registry(&t) {
+                self.restore_tag_to_current(t);
+                return Err(self.fallback());
+            }
         }
         match self.next_event()? {
             Event::Scalar { value, style, .. } => match self.resolve_scalar(&value, style) {
@@ -689,8 +754,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         // A tag (`!!str`, `!custom`, …) routes through the AST so the
         // tagged string is resolved correctly.
         if let Some(t) = self.take_tag_from_current() {
-            self.restore_tag_to_current(t);
-            return Err(self.fallback());
+            if !self.tag_in_registry(&t) {
+                self.restore_tag_to_current(t);
+                return Err(self.fallback());
+            }
         }
         match self.peek_event()? {
             Event::Scalar { .. } => {
@@ -792,6 +859,12 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                 | ("!!", "seq")
                 | ("!!", "map") => {}
                 _ => {
+                    // TagRegistry opt-in: drop the tag and let the
+                    // inner value deserialize straight into the
+                    // newtype's target type.
+                    if self.tag_in_registry(&t) {
+                        return visitor.visit_newtype_struct(self);
+                    }
                     return visitor.visit_map(StreamingTagMapAccess {
                         de: self,
                         tag: t,
@@ -809,10 +882,13 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
     {
         self.skip_to_content()?;
         // Tagged sequences route through the AST fallback so the tag is
-        // preserved on the resulting `Value::Tagged(...)`.
+        // preserved on the resulting `Value::Tagged(...)`. The registry
+        // opts a specific tag out of that behaviour.
         if let Some(t) = self.take_tag_from_current() {
-            self.restore_tag_to_current(t);
-            return Err(self.fallback());
+            if !self.tag_in_registry(&t) {
+                self.restore_tag_to_current(t);
+                return Err(self.fallback());
+            }
         }
         if let Event::SequenceStart { .. } = self.next_event()? {
             self.depth += 1;
@@ -840,10 +916,13 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
     {
         self.skip_to_content()?;
         // Tagged mappings route through the AST fallback so the tag is
-        // preserved on the resulting `Value::Tagged(...)`.
+        // preserved on the resulting `Value::Tagged(...)`. The registry
+        // opts a specific tag out of that behaviour.
         if let Some(t) = self.take_tag_from_current() {
-            self.restore_tag_to_current(t);
-            return Err(self.fallback());
+            if !self.tag_in_registry(&t) {
+                self.restore_tag_to_current(t);
+                return Err(self.fallback());
+            }
         }
         if let Event::MappingStart { .. } = self.next_event()? {
             self.depth += 1;
@@ -1319,17 +1398,21 @@ impl<'de> de::VariantAccess<'de> for StreamingTagVariantAccess<'_, 'de> {
     }
 }
 
-pub(crate) fn from_str_streaming<T>(s: &str, config: &ParseConfig) -> Option<Result<T>>
+pub(crate) fn from_str_streaming<T>(s: &str, config: &crate::de::ParserConfig) -> Option<Result<T>>
 where
     T: for<'de> Deserialize<'de>,
 {
-    if s.len() > config.max_document_length {
+    let parse_config = ParseConfig::from(config);
+    if s.len() > parse_config.max_document_length {
         return Some(Err(Error::Parse(format!(
             "document exceeds maximum length of {} bytes",
-            config.max_document_length
+            parse_config.max_document_length
         ))));
     }
-    let mut de = StreamingDeserializer::with_config(s, *config);
+    let mut de = StreamingDeserializer::with_config(s, parse_config);
+    if let Some(registry) = config.tag_registry.as_ref() {
+        de = de.with_tag_registry(Arc::clone(registry));
+    }
     let res = T::deserialize(&mut de);
     match res {
         Ok(val) => {

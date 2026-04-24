@@ -19,6 +19,7 @@ use crate::value::{Number, Value};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use std::io;
+use std::sync::Arc;
 
 /// Deserialization configuration.
 ///
@@ -29,7 +30,7 @@ use std::io;
 /// let cfg = ParserConfig::new().max_depth(64);
 /// assert_eq!(cfg.max_depth, 64);
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ParserConfig {
     /// Maximum recursion depth allowed during parsing (default: 128).
     pub max_depth: usize,
@@ -47,6 +48,12 @@ pub struct ParserConfig {
     pub strict_booleans: bool,
     /// If true, accepts YAML 1.1 booleans like `yes`, `no`, `on`, `off`.
     pub legacy_booleans: bool,
+    /// Optional registry of custom tags to strip on the streaming path.
+    ///
+    /// See [`TagRegistry`](crate::TagRegistry) for the full rationale.
+    /// `None` (default) preserves the legacy behaviour of routing every
+    /// custom-tagged value through the AST fallback.
+    pub tag_registry: Option<Arc<crate::TagRegistry>>,
 }
 
 impl Default for ParserConfig {
@@ -60,6 +67,7 @@ impl Default for ParserConfig {
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
             legacy_booleans: false,
+            tag_registry: None,
         }
     }
 }
@@ -100,6 +108,7 @@ impl ParserConfig {
             strict_booleans: true,
             legacy_booleans: false,
             duplicate_key_policy: DuplicateKeyPolicy::Error,
+            tag_registry: None,
         }
     }
 
@@ -222,6 +231,28 @@ impl ParserConfig {
         self.legacy_booleans = legacy;
         self
     }
+
+    /// Attach a [`TagRegistry`](crate::TagRegistry) so the streaming
+    /// deserializer strips listed custom tags instead of routing them
+    /// through the AST.
+    ///
+    /// See the [`tag_registry`](crate::tag_registry) module
+    /// documentation for when to use this versus `#[serde(rename)]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{ParserConfig, TagRegistry};
+    /// use std::sync::Arc;
+    /// let reg = Arc::new(TagRegistry::new().with("!Celsius"));
+    /// let cfg = ParserConfig::new().tag_registry(Arc::clone(&reg));
+    /// assert!(cfg.tag_registry.is_some());
+    /// ```
+    #[must_use]
+    pub fn tag_registry(mut self, registry: Arc<crate::TagRegistry>) -> Self {
+        self.tag_registry = Some(registry);
+        self
+    }
 }
 
 /// Policy for handling duplicate keys in a YAML mapping.
@@ -273,7 +304,7 @@ where
     T: for<'de> Deserialize<'de>,
 {
     // Try streaming path first (faster, no intermediate Value AST).
-    if let Some(res) = crate::streaming::from_str_streaming(s, &config.into()) {
+    if let Some(res) = crate::streaming::from_str_streaming(s, config) {
         return res;
     }
 
