@@ -240,6 +240,10 @@ harness = false
 name = "architecture"
 harness = false
 
+[[bench]]
+name = "validation_overhead"
+harness = false
+
 [features]
 default = ["std"]
 std = []

@@ -4,8 +4,9 @@
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 use crate::value::Value;
 
@@ -32,7 +33,7 @@ pub(crate) enum SpanTree {
 #[derive(Debug)]
 pub struct SpanContext {
     /// Maps `&Value` pointer address → `(start_byte, end_byte)`.
-    pub spans: HashMap<usize, (usize, usize)>,
+    pub spans: FxHashMap<usize, (usize, usize)>,
     /// The original source string (for `Location::from_index`).
     pub source: Arc<str>,
 }
@@ -41,7 +42,9 @@ thread_local! {
     static SPAN_CONTEXT: RefCell<Option<SpanContext>> = const { RefCell::new(None) };
 }
 
-/// RAII guard that clears the thread-local on drop.
+/// RAII guard that owns the span context and clears the thread-local on
+/// drop. Holding the guard keeps the context alive so callers can borrow
+/// it via [`SpanContextGuard::as_ref`] without cloning the span map.
 pub(crate) struct SpanContextGuard {
     ctx: SpanContext,
 }
@@ -60,28 +63,31 @@ impl Drop for SpanContextGuard {
     }
 }
 
-/// Set the thread-local span context. Returns an RAII guard that clears it on
-/// drop.
+/// Install a thread-local span context. Returns an RAII guard that owns
+/// the context and clears the thread-local on drop. The thread-local
+/// stores only the source `Arc<str>` (the hot lookup path consults the
+/// guard's `SpanContext` directly, avoiding a map clone per parse).
 pub(crate) fn set_span_context(ctx: SpanContext) -> SpanContextGuard {
-    let cloned = SpanContext {
-        spans: ctx.spans.clone(),
+    let thread_local_ctx = SpanContext {
+        spans: FxHashMap::default(),
         source: Arc::clone(&ctx.source),
     };
     SPAN_CONTEXT.with(|cell| {
-        *cell.borrow_mut() = Some(ctx);
+        *cell.borrow_mut() = Some(thread_local_ctx);
     });
-    SpanContextGuard { ctx: cloned }
+    SpanContextGuard { ctx }
 }
 
 /// Walk a `Value` tree and a `SpanTree` in lockstep, collecting pointer → span
 /// mappings.
-pub(crate) fn build_span_map(value: &Value, tree: &SpanTree) -> HashMap<usize, (usize, usize)> {
-    let mut map = HashMap::new();
+pub(crate) fn build_span_map(value: &Value, tree: &SpanTree) -> FxHashMap<usize, (usize, usize)> {
+    let mut map = FxHashMap::default();
     walk(value, tree, &mut map);
     map
 }
 
-fn walk(value: &Value, tree: &SpanTree, map: &mut HashMap<usize, (usize, usize)>) {
+fn walk(value: &Value, tree: &SpanTree, map: &mut FxHashMap<usize, (usize, usize)>) {
+    // Walk the tree in DFS order to build the pointer → span map.
     let p: *const Value = value;
     let ptr = p as usize;
     match tree {

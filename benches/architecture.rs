@@ -179,8 +179,33 @@ fn bench_streaming_vs_ast(c: &mut Criterion) {
 
 // ── Benchmark: Span Tracking Overhead ────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct SpannedConfig {
+    host: noyalib::Spanned<String>,
+    port: noyalib::Spanned<u16>,
+    name: noyalib::Spanned<String>,
+    version: noyalib::Spanned<u32>,
+    debug: noyalib::Spanned<bool>,
+    timeout: noyalib::Spanned<u64>,
+    retries: noyalib::Spanned<u8>,
+    workers: noyalib::Spanned<u8>,
+}
+
 fn bench_span_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("span_overhead");
+
+    // Typed struct with Spanned<T> fields — hits the HashMap lookup
+    // path inside ValueSeqAccess / SpannedMapAccess for every field.
+    group.bench_function("spanned_fields/8_fields", |b| {
+        b.iter(|| {
+            let _: SpannedConfig = noyalib::from_str_with_config(
+                black_box(ZERO_COPY),
+                &noyalib::ParserConfig::default(),
+            )
+            .unwrap();
+        });
+    });
 
     // from_str (streaming, no spans)
     group.bench_function("no_spans/from_str", |b| {
