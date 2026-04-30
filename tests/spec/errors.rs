@@ -142,21 +142,30 @@ fn no_panic_on_any_input() {
 #[test]
 fn comment_indicator_must_be_preceded_by_whitespace() {
     let result: Result<Value, _> = from_str("key: \"value\"# invalid comment\n");
-    assert!(result.is_err(), "expected rejection of inline `#` without preceding whitespace");
+    assert!(
+        result.is_err(),
+        "expected rejection of inline `#` without preceding whitespace"
+    );
 }
 
 // yaml-test-suite X4QW — same rule inside the `>`/`|` header line.
 #[test]
 fn block_scalar_header_rejects_adjacent_hash() {
     let result: Result<Value, _> = from_str("block: >#comment\n  scalar\n");
-    assert!(result.is_err(), "expected rejection of `>#` with no whitespace");
+    assert!(
+        result.is_err(),
+        "expected rejection of `>#` with no whitespace"
+    );
 }
 
 // yaml-test-suite SF5V — at most one %YAML directive per document.
 #[test]
 fn duplicate_yaml_directive_rejected() {
     let result: Result<Value, _> = from_str("%YAML 1.2\n%YAML 1.2\n---\n");
-    assert!(result.is_err(), "expected rejection of duplicate %YAML directive");
+    assert!(
+        result.is_err(),
+        "expected rejection of duplicate %YAML directive"
+    );
 }
 
 // yaml-test-suite Y79Y :4..:7 — tab immediately before a block-structural
@@ -181,4 +190,33 @@ fn tab_as_inline_separation_accepted() {
     let outer = v.as_mapping().expect("mapping");
     let seq = outer.get("a").expect("key 'a'").as_sequence().expect("seq");
     assert_eq!(seq[0].as_str(), Some("b"));
+}
+
+// yaml-test-suite 3HFZ — content after `...` document-end marker on the
+// same line is invalid.
+#[test]
+fn document_end_marker_rejects_trailing_content() {
+    let result: Result<Value, _> = from_str("---\nkey: value\n... invalid\n");
+    assert!(result.is_err());
+}
+
+// yaml-test-suite RXY3 / 5TRB — a `---` or `...` document indicator at
+// column 0 inside a multi-line quoted scalar is invalid (it would
+// prematurely close the document).
+#[test]
+fn doc_marker_inside_quoted_scalar_rejected() {
+    let r1: Result<Value, _> = from_str("---\n'\n...\n'\n");
+    assert!(r1.is_err(), "single-quoted scalar containing `...`");
+    let r2: Result<Value, _> = from_str("---\n\"\n---\n\"\n");
+    assert!(r2.is_err(), "double-quoted scalar containing `---`");
+}
+
+// yaml-test-suite 2G84 — block scalar indent indicator must be a single
+// digit 1..9; `0` and multi-digit forms are rejected.
+#[test]
+fn block_scalar_indent_indicator_validation() {
+    let r1: Result<Value, _> = from_str("--- |0\n");
+    assert!(r1.is_err(), "indent indicator 0 is invalid");
+    let r2: Result<Value, _> = from_str("--- |10\n");
+    assert!(r2.is_err(), "two-digit indent indicator is invalid");
 }

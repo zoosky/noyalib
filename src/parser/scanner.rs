@@ -724,6 +724,20 @@ impl<'a> Scanner<'a> {
             self.emit(TokenKind::DocumentEnd);
             // Directives are scoped to a single document.
             self.yaml_directive_seen = false;
+            // Per YAML 1.2.2 §6.8: a `...` document-end marker must be
+            // followed only by whitespace, an optional comment, and a
+            // line break. Walk past any inline blanks; if non-comment,
+            // non-break content follows on the same line, reject.
+            let mut look = self.pos;
+            while look < self.input.len() && Self::is_blank(self.input[look]) {
+                look += 1;
+            }
+            if look < self.input.len()
+                && !Self::is_break(self.input[look])
+                && self.input[look] != b'#'
+            {
+                return Err(self.error("unexpected content after document-end marker '...'"));
+            }
         }
         Ok(())
     }
@@ -785,6 +799,35 @@ impl<'a> Scanner<'a> {
         self.advance();
         self.emit(TokenKind::FlowEntry);
         Ok(())
+    }
+
+    /// Per YAML 1.2.2 §6.8 / §6.7, a `---` or `...` indicator at column 0
+    /// terminates the surrounding document. A multi-line quoted scalar
+    /// that crosses such a marker is invalid (the indicator is not
+    /// content; it would prematurely close the document). Called from
+    /// each quoted-scalar break handler immediately after a line break
+    /// has been consumed and `pos` sits at column 0 of the next line.
+    fn reject_doc_marker_in_quoted(&self, style: &'static str) -> ScanResult<()> {
+        if self.col != 0 || self.is_eof() {
+            return Ok(());
+        }
+        let p0 = self.peek();
+        if p0 != b'-' && p0 != b'.' {
+            return Ok(());
+        }
+        if self.peek_at(1) != p0 || self.peek_at(2) != p0 {
+            return Ok(());
+        }
+        if self.pos + 3 < self.input.len() && !Self::is_blank_or_break(self.peek_at(3)) {
+            return Ok(());
+        }
+        Err(ScanError {
+            message: Cow::Owned(format!(
+                "document marker '{}{}{}' is not allowed inside a {style} scalar",
+                p0 as char, p0 as char, p0 as char,
+            )),
+            index: self.pos,
+        })
     }
 
     /// After a block-structural indicator (`-`, `?`, `:`), verify the
@@ -1415,6 +1458,8 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
 
+                    self.reject_doc_marker_in_quoted("single-quoted")?;
+
                     while Self::is_blank(self.peek()) {
                         self.advance();
                     }
@@ -1587,6 +1632,8 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
 
+                    self.reject_doc_marker_in_quoted("double-quoted")?;
+
                     // Skip leading blanks on the new line.
                     while Self::is_blank(self.peek()) {
                         self.advance();
@@ -1694,6 +1741,18 @@ impl<'a> Scanner<'a> {
                     _ => break,
                 }
             }
+        }
+
+        // Per YAML 1.2.2 §8.1.1.1, the explicit indentation indicator
+        // is a single digit 1..9. `0` is invalid (zero indent), and a
+        // second digit (e.g. `|10`) is also invalid (the indicator is
+        // a single digit). Anything still hanging on the header that
+        // isn't blank/break/comment is malformed.
+        let next = self.peek();
+        if next.is_ascii_digit() {
+            return Err(self.error(
+                "invalid block scalar indentation indicator (must be a single digit 1..9)",
+            ));
         }
 
         // Skip to end of line (including optional comment). Per
