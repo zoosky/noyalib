@@ -3,13 +3,16 @@
 
 //! Public `Document` handle and parse / mutation entry points.
 
+use core::fmt::Write as _;
+
 use crate::cst::builder::parse_full;
-use crate::cst::green::GreenNode;
+use crate::cst::green::{GreenChild, GreenNode};
+use crate::cst::syntax::SyntaxKind;
 use crate::error::{Error, Result};
 use crate::path::{parse_query_path, QuerySegment};
 use crate::prelude::*;
 use crate::span_context::SpanTree;
-use crate::value::Value;
+use crate::value::{Number, Value};
 
 /// A YAML document with byte-faithful source preservation, typed
 /// data access, and path-targeted edits.
@@ -219,6 +222,52 @@ impl Document {
             .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
         self.replace_span(s, e, fragment)
     }
+
+    /// Replace the value at `path` with a typed [`Value`], formatting
+    /// the YAML fragment to match the existing scalar style at the
+    /// target site.
+    ///
+    /// Style matching:
+    /// - `PlainScalar` — emit plain when safe, double-quoted otherwise.
+    /// - `SingleQuotedScalar` — wrap in `'…'` (only string values).
+    /// - `DoubleQuotedScalar` — wrap in `"…"` with standard escapes
+    ///   (only string values).
+    /// - `LiteralScalar` / `FoldedScalar` — currently rejected; block
+    ///   scalar formatting is a follow-up.
+    ///
+    /// Non-string values (numbers, booleans, null) are emitted plain
+    /// regardless of the existing style — quoting them would change
+    /// the parsed type round-trip.
+    ///
+    /// # Errors
+    ///
+    /// - Path not found.
+    /// - Target is a collection or block scalar.
+    /// - Caller passed a `Sequence` / `Mapping` (use `set` with a
+    ///   pre-formatted fragment for those — `set_value` is scalar-only
+    ///   for now).
+    /// - The same errors as [`Document::replace_span`] otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    /// use noyalib::Value;
+    ///
+    /// let mut doc = parse_document("name: noyalib\nversion: 0.0.1\n").unwrap();
+    /// doc.set_value("version", &Value::String("0.0.2".into())).unwrap();
+    /// assert_eq!(doc.to_string(), "name: noyalib\nversion: 0.0.2\n");
+    /// ```
+    pub fn set_value(&mut self, path: &str, value: &Value) -> Result<()> {
+        let (s, e) = self
+            .span_at(path)
+            .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
+        let kind = leaf_kind_at(&self.green, s).ok_or_else(|| {
+            Error::Parse("could not locate green-tree leaf at target span".into())
+        })?;
+        let fragment = format_value_for_site(value, kind)?;
+        self.replace_span(s, e, &fragment)
+    }
 }
 
 impl fmt::Display for Document {
@@ -332,4 +381,226 @@ fn resolve_span(
         // multi-span API.
         _ => None,
     }
+}
+
+// ── Green-tree leaf lookup ──────────────────────────────────────────
+
+/// Return the [`SyntaxKind`] of the leaf containing byte position
+/// `target` in `node`. Walks the green tree once with a running
+/// offset; for the current flat layout the inner recursion never
+/// fires, but it is correct for the structural variant that follows.
+fn leaf_kind_at(node: &GreenNode, target: usize) -> Option<SyntaxKind> {
+    let mut pos = 0;
+    for child in node.children() {
+        let len = child.text_len();
+        match child {
+            GreenChild::Token { kind, .. } => {
+                if pos <= target && target < pos + len {
+                    return Some(*kind);
+                }
+            }
+            GreenChild::Node(inner) => {
+                if pos <= target && target < pos + len {
+                    return leaf_kind_at(inner, target - pos);
+                }
+            }
+        }
+        pos += len;
+    }
+    None
+}
+
+// ── Value → YAML scalar fragment ────────────────────────────────────
+
+fn format_value_for_site(value: &Value, kind: SyntaxKind) -> Result<String> {
+    match value {
+        Value::Null => Ok("null".to_string()),
+        Value::Bool(true) => Ok("true".to_string()),
+        Value::Bool(false) => Ok("false".to_string()),
+        Value::Number(n) => Ok(format_number(n)),
+        Value::String(s) => format_string_for_site(s, kind),
+        Value::Sequence(_) | Value::Mapping(_) => Err(Error::Parse(
+            "set_value cannot replace a scalar with a collection (use `set` with a fragment)"
+                .into(),
+        )),
+        Value::Tagged(t) => format_value_for_site(t.value(), kind),
+    }
+}
+
+fn format_number(n: &Number) -> String {
+    // `Number`'s `Display` matches the YAML 1.2 plain representation
+    // for the integer/float variants we emit here.
+    n.to_string()
+}
+
+fn format_string_for_site(s: &str, kind: SyntaxKind) -> Result<String> {
+    match kind {
+        SyntaxKind::PlainScalar => {
+            if is_plain_safe(s) {
+                Ok(s.to_string())
+            } else {
+                Ok(format_double_quoted(s))
+            }
+        }
+        SyntaxKind::SingleQuotedScalar => Ok(format_single_quoted(s)),
+        SyntaxKind::DoubleQuotedScalar => Ok(format_double_quoted(s)),
+        SyntaxKind::LiteralScalar | SyntaxKind::FoldedScalar => Err(Error::Parse(
+            "set_value: replacing a block scalar (|, >) is not yet supported".into(),
+        )),
+        _ => Err(Error::Parse(
+            "set_value: target site is not a scalar leaf".into(),
+        )),
+    }
+}
+
+/// `true` if `s` can be safely emitted as a YAML plain scalar without
+/// being misparsed as a different type (bool, null, number) or
+/// triggering a structural indicator. Conservative — when in doubt,
+/// the caller falls back to a quoted style.
+fn is_plain_safe(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    // Reserved scalars that resolve to non-string types.
+    if matches!(
+        s,
+        "null"
+            | "Null"
+            | "NULL"
+            | "~"
+            | "true"
+            | "True"
+            | "TRUE"
+            | "false"
+            | "False"
+            | "FALSE"
+            | "yes"
+            | "Yes"
+            | "YES"
+            | "no"
+            | "No"
+            | "NO"
+            | "on"
+            | "On"
+            | "ON"
+            | "off"
+            | "Off"
+            | "OFF"
+    ) {
+        return false;
+    }
+    if looks_like_number(s) {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    // Cannot start with structural / flow / quote indicators.
+    let first = bytes[0];
+    if matches!(
+        first,
+        b'-' | b'?'
+            | b':'
+            | b','
+            | b'['
+            | b']'
+            | b'{'
+            | b'}'
+            | b'#'
+            | b'&'
+            | b'*'
+            | b'!'
+            | b'|'
+            | b'>'
+            | b'\''
+            | b'"'
+            | b'%'
+            | b'@'
+            | b'`'
+            | b' '
+            | b'\t'
+    ) {
+        return false;
+    }
+    // Cannot end with whitespace.
+    if matches!(*bytes.last().unwrap(), b' ' | b'\t') {
+        return false;
+    }
+    // Disallow line breaks and control characters; disallow `: ` and
+    // ` #` which terminate plain scalars in block context.
+    let mut prev: u8 = 0;
+    for &b in bytes {
+        if b < 0x20 || b == 0x7F {
+            return false;
+        }
+        if b == b' ' && prev == b':' {
+            return false;
+        }
+        if b == b'#' && prev == b' ' {
+            return false;
+        }
+        prev = b;
+    }
+    true
+}
+
+fn looks_like_number(s: &str) -> bool {
+    // Leading sign or digit makes it a number candidate.
+    let mut chars = s.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    let candidate = matches!(first, '-' | '+' | '.') || first.is_ascii_digit();
+    if !candidate {
+        return false;
+    }
+    // Defer the actual parse to `Number`'s integer/float resolvers via
+    // the streaming scalar resolver (which is the source of truth for
+    // what the parser would treat as a number).
+    let scalar = crate::streaming::resolve_plain(s, false, false);
+    matches!(
+        scalar,
+        crate::streaming::Scalar::Int(_) | crate::streaming::Scalar::Float(_)
+    )
+}
+
+fn format_single_quoted(s: &str) -> String {
+    // YAML 1.2 §7.3.3: single quote is the only escape — `''` for `'`.
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn format_double_quoted(s: &str) -> String {
+    // YAML 1.2 §5.7 + §7.3.2: standard JSON-like escapes plus the
+    // YAML extras (`\0`, `\a`, `\v`, `\e`, `\N`, `\_`, `\L`, `\P`).
+    // For Phase 2B we emit the JSON-compatible subset; the others
+    // are unnecessary for round-tripping textual content and would
+    // complicate the diff if we surface them.
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(&mut out, "\\u{:04X}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

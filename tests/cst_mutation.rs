@@ -12,6 +12,7 @@
 #![allow(missing_docs)]
 
 use noyalib::cst::parse_document;
+use noyalib::Value;
 
 #[test]
 fn set_replaces_only_the_target_value() {
@@ -110,4 +111,96 @@ fn replace_span_rejects_non_char_boundary() {
     // The crab emoji is 4 bytes starting at index 7. Position 8 is mid-glyph.
     let err = doc.replace_span(8, 9, "x").unwrap_err();
     assert!(err.to_string().contains("character boundary"));
+}
+
+// ── set_value: typed mutation with style matching ────────────────
+
+#[test]
+fn set_value_string_into_plain_site_emits_plain() {
+    let mut doc = parse_document("name: foo\n").unwrap();
+    doc.set_value("name", &Value::String("bar".into())).unwrap();
+    assert_eq!(doc.to_string(), "name: bar\n");
+}
+
+#[test]
+fn set_value_string_into_double_quoted_site_quotes() {
+    let mut doc = parse_document("name: \"foo\"\n").unwrap();
+    doc.set_value("name", &Value::String("bar".into())).unwrap();
+    assert_eq!(doc.to_string(), "name: \"bar\"\n");
+}
+
+#[test]
+fn set_value_string_into_single_quoted_site_quotes() {
+    let mut doc = parse_document("name: 'foo'\n").unwrap();
+    doc.set_value("name", &Value::String("bar".into())).unwrap();
+    assert_eq!(doc.to_string(), "name: 'bar'\n");
+}
+
+#[test]
+fn set_value_string_with_embedded_quote_escapes_in_double_quoted_site() {
+    let mut doc = parse_document("title: \"hello\"\n").unwrap();
+    doc.set_value("title", &Value::String("she said \"hi\"".into()))
+        .unwrap();
+    assert_eq!(doc.to_string(), "title: \"she said \\\"hi\\\"\"\n");
+}
+
+#[test]
+fn set_value_string_with_embedded_quote_doubles_in_single_quoted_site() {
+    let mut doc = parse_document("title: 'a'\n").unwrap();
+    doc.set_value("title", &Value::String("it's nice".into()))
+        .unwrap();
+    assert_eq!(doc.to_string(), "title: 'it''s nice'\n");
+}
+
+#[test]
+fn set_value_string_falls_back_to_double_quoted_when_plain_is_unsafe() {
+    // Existing site is a plain scalar but the new content cannot be
+    // expressed plainly (`true` would resolve to a bool).
+    let mut doc = parse_document("kind: foo\n").unwrap();
+    doc.set_value("kind", &Value::String("true".into()))
+        .unwrap();
+    assert_eq!(doc.to_string(), "kind: \"true\"\n");
+}
+
+#[test]
+fn set_value_number_emits_plain_regardless_of_existing_style() {
+    let mut doc = parse_document("count: \"7\"\n").unwrap();
+    doc.set_value("count", &Value::Number(42.into())).unwrap();
+    assert_eq!(doc.to_string(), "count: 42\n");
+    // Round-trip: the new value parses back as a number, not a string.
+    assert!(doc.as_value()["count"].as_i64() == Some(42));
+}
+
+#[test]
+fn set_value_bool_and_null() {
+    let mut doc = parse_document("a: 1\nb: 1\n").unwrap();
+    doc.set_value("a", &Value::Bool(false)).unwrap();
+    doc.set_value("b", &Value::Null).unwrap();
+    assert_eq!(doc.to_string(), "a: false\nb: null\n");
+}
+
+#[test]
+fn set_value_into_sequence_index_emits_matching_style() {
+    let mut doc = parse_document("xs: ['one', 'two']\n").unwrap();
+    doc.set_value("xs[1]", &Value::String("TWO".into()))
+        .unwrap();
+    assert_eq!(doc.to_string(), "xs: ['one', 'TWO']\n");
+}
+
+#[test]
+fn set_value_rejects_collection_replacement() {
+    let mut doc = parse_document("items: 1\n").unwrap();
+    let err = doc
+        .set_value("items", &Value::Sequence(vec![Value::Number(1.into())]))
+        .unwrap_err();
+    assert!(err.to_string().contains("collection"));
+}
+
+#[test]
+fn set_value_rejects_block_scalar_target_for_now() {
+    let mut doc = parse_document("text: |\n  line1\n  line2\n").unwrap();
+    let err = doc
+        .set_value("text", &Value::String("hello".into()))
+        .unwrap_err();
+    assert!(err.to_string().contains("block scalar"));
 }
