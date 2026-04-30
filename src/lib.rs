@@ -125,6 +125,10 @@ mod anchors;
 /// Zero-copy YAML values that borrow from the input.
 pub mod borrowed;
 mod comments;
+/// Side-table CST for byte-faithful round-tripping (Phase 1: read-only).
+///
+/// See `docs/design/green-tree.md` for the architectural plan.
+pub mod cst;
 mod de;
 /// Spanned-to-miette diagnostic bridge (requires `miette` feature).
 #[cfg(feature = "miette")]

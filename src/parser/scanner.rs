@@ -156,6 +156,12 @@ pub(crate) struct Scanner<'a> {
     /// document (cleared on each `DocumentStart`). Per YAML 1.2.2 §6.8.1
     /// a document may contain at most one `%YAML` directive.
     yaml_directive_seen: bool,
+    /// When set, the scanner records inter-token trivia and source-
+    /// bearing token spans for the green-tree builder. Off by default
+    /// to keep the streaming/AST fast path zero-cost.
+    recording: bool,
+    trivia: Vec<Trivia>,
+    recorded_tokens: Vec<RecordedToken>,
 }
 
 /// Internal comment record captured by the scanner.
@@ -170,9 +176,102 @@ pub(crate) struct ScannedComment {
     pub(crate) inline: bool,
 }
 
+/// Categorical kind of a piece of inter-token trivia recorded by the
+/// scanner when the green-tree path is enabled. Used by `cst::Builder`
+/// to materialise leaves that exactly reproduce source bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TriviaKind {
+    /// Run of inline blanks (spaces and tabs).
+    Whitespace,
+    /// A single line break (`\n` or `\r\n`).
+    Newline,
+    /// A UTF-8 byte-order mark consumed at stream start.
+    Bom,
+    /// A `%YAML` / `%TAG` / reserved directive line. The scanner
+    /// validates and consumes these without emitting a token; the CST
+    /// builder needs them to reproduce the source.
+    Directive,
+}
+
+/// Inter-token trivia recorded for the green-tree builder. Only
+/// populated when [`Scanner::enable_recording`] is set.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Trivia {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) kind: TriviaKind,
+}
+
+/// Categorical tag for tokens recorded for the green-tree builder.
+/// A simplified mirror of [`TokenKind`] that excludes synthetic tokens
+/// (StreamStart/End, BlockMappingStart, BlockSequenceStart, BlockEnd)
+/// — the builder only needs source-bearing tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordedTokenKind {
+    DocStart,
+    DocEnd,
+    DashIndicator,
+    QuestionIndicator,
+    ColonIndicator,
+    Comma,
+    OpenBracket,
+    CloseBracket,
+    OpenBrace,
+    CloseBrace,
+    AnchorMark,
+    AliasMark,
+    TagMark,
+    PlainScalar,
+    SingleQuotedScalar,
+    DoubleQuotedScalar,
+    LiteralScalar,
+    FoldedScalar,
+}
+
+impl RecordedTokenKind {
+    fn from_token(kind: &TokenKind<'_>) -> Option<Self> {
+        Some(match kind {
+            TokenKind::DocumentStart => Self::DocStart,
+            TokenKind::DocumentEnd => Self::DocEnd,
+            TokenKind::BlockEntry => Self::DashIndicator,
+            TokenKind::FlowEntry => Self::Comma,
+            TokenKind::Key => Self::QuestionIndicator,
+            TokenKind::Value => Self::ColonIndicator,
+            TokenKind::FlowSequenceStart => Self::OpenBracket,
+            TokenKind::FlowSequenceEnd => Self::CloseBracket,
+            TokenKind::FlowMappingStart => Self::OpenBrace,
+            TokenKind::FlowMappingEnd => Self::CloseBrace,
+            TokenKind::Anchor(_) => Self::AnchorMark,
+            TokenKind::Alias(_) => Self::AliasMark,
+            TokenKind::Tag(_, _) => Self::TagMark,
+            TokenKind::Scalar(style, _) => match style {
+                ScalarStyle::Plain => Self::PlainScalar,
+                ScalarStyle::SingleQuoted => Self::SingleQuotedScalar,
+                ScalarStyle::DoubleQuoted => Self::DoubleQuotedScalar,
+                ScalarStyle::Literal => Self::LiteralScalar,
+                ScalarStyle::Folded => Self::FoldedScalar,
+            },
+            TokenKind::StreamStart
+            | TokenKind::StreamEnd
+            | TokenKind::BlockSequenceStart
+            | TokenKind::BlockMappingStart
+            | TokenKind::BlockEnd => return None,
+        })
+    }
+}
+
+/// Source-bearing token recorded by the scanner for the green-tree
+/// builder. Only populated when [`Scanner::enable_recording`] is set.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RecordedToken {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) kind: RecordedTokenKind,
+}
+
 impl<'a> Scanner<'a> {
     /// Create a new scanner for the given input.
-    pub(super) fn new(input: &'a str) -> Self {
+    pub(crate) fn new(input: &'a str) -> Self {
         // Pre-allocate based on input size heuristics:
         // ~1 token per 8 bytes, ~1 indent level per 64 bytes.
         let estimated_tokens = (input.len() / 8).max(16);
@@ -197,17 +296,37 @@ impl<'a> Scanner<'a> {
             stream_ended: false,
             comments: Vec::new(),
             yaml_directive_seen: false,
+            recording: false,
+            trivia: Vec::new(),
+            recorded_tokens: Vec::new(),
         }
+    }
+
+    /// Enable recording of inter-token trivia and source-bearing
+    /// token spans for the green-tree builder. Must be called before
+    /// any tokens are fetched.
+    pub(crate) fn enable_recording(&mut self) {
+        self.recording = true;
+    }
+
+    /// Drain the recorded inter-token trivia.
+    pub(crate) fn take_trivia(&mut self) -> Vec<Trivia> {
+        core::mem::take(&mut self.trivia)
+    }
+
+    /// Drain the recorded source-bearing tokens.
+    pub(crate) fn take_recorded_tokens(&mut self) -> Vec<RecordedToken> {
+        core::mem::take(&mut self.recorded_tokens)
     }
 
     /// Drain captured comments, leaving the scanner's internal buffer
     /// empty. Used by the public [`crate::load_comments`] path.
-    pub(super) fn take_comments(&mut self) -> Vec<ScannedComment> {
+    pub(crate) fn take_comments(&mut self) -> Vec<ScannedComment> {
         core::mem::take(&mut self.comments)
     }
 
     /// Fetch the next token from the scanner.
-    pub(super) fn next_token(&mut self) -> ScanResult<Token<'a>> {
+    pub(crate) fn next_token(&mut self) -> ScanResult<Token<'a>> {
         // Ensure we have at least one token buffered.
         while self.needs_more_tokens() {
             self.fetch_next_token()?;
@@ -216,6 +335,19 @@ impl<'a> Scanner<'a> {
             // Move the token out instead of cloning — avoids heap-allocating
             // copies of owned Strings inside Scalar/Anchor/Alias/Tag variants.
             let t = core::mem::take(&mut self.tokens[self.tokens_consumed]);
+            // Record source-bearing tokens for the green-tree builder
+            // when recording is enabled. Synthetic tokens
+            // (StreamStart/End, BlockMappingStart, etc.) carry no
+            // source bytes and are filtered by `RecordedTokenKind`.
+            if self.recording {
+                if let Some(kind) = RecordedTokenKind::from_token(&t.kind) {
+                    self.recorded_tokens.push(RecordedToken {
+                        start: t.span.start,
+                        end: t.span.end,
+                        kind,
+                    });
+                }
+            }
             self.tokens_consumed += 1;
             self.tokens_produced += 1;
             // Compact when we've consumed enough to avoid unbounded growth.
@@ -377,7 +509,15 @@ impl<'a> Scanner<'a> {
             // real content on the same line.
             let inline = self.col > 0;
             // Skip whitespace (tabs are only allowed in some contexts).
+            let blank_start = self.pos;
             self.skip_blank();
+            if self.recording && self.pos > blank_start {
+                self.trivia.push(Trivia {
+                    start: blank_start,
+                    end: self.pos,
+                    kind: TriviaKind::Whitespace,
+                });
+            }
 
             // Skip comment — bulk-scan to next line break, capturing
             // the span and text for callers that want to read it back.
@@ -420,7 +560,15 @@ impl<'a> Scanner<'a> {
 
             // Skip line break.
             if Self::is_break(self.peek()) {
+                let break_start = self.pos;
                 self.skip_line();
+                if self.recording {
+                    self.trivia.push(Trivia {
+                        start: break_start,
+                        end: self.pos,
+                        kind: TriviaKind::Newline,
+                    });
+                }
                 // In block context, allow simple key at line start.
                 if self.flow_level == 0 {
                     self.simple_key_allowed = true;
@@ -657,7 +805,15 @@ impl<'a> Scanner<'a> {
             && self.input[self.pos + 1] == 0xBB
             && self.input[self.pos + 2] == 0xBF
         {
+            let bom_start = self.pos;
             self.advance_by(3);
+            if self.recording {
+                self.trivia.push(Trivia {
+                    start: bom_start,
+                    end: self.pos,
+                    kind: TriviaKind::Bom,
+                });
+            }
         }
         self.mark = self.pos;
         self.emit(TokenKind::StreamStart);
@@ -679,6 +835,7 @@ impl<'a> Scanner<'a> {
         self.remove_simple_key()?;
         self.simple_key_allowed = false;
 
+        let directive_start = self.pos;
         // Skip the leading `%` and parse the directive name.
         self.advance();
         let name_start = self.pos;
@@ -718,6 +875,13 @@ impl<'a> Scanner<'a> {
             self.advance_by(pos);
         } else {
             self.pos = self.input.len();
+        }
+        if self.recording {
+            self.trivia.push(Trivia {
+                start: directive_start,
+                end: self.pos,
+                kind: TriviaKind::Directive,
+            });
         }
         Ok(())
     }

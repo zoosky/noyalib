@@ -14,6 +14,9 @@ mod scanner;
 pub(crate) use events::{Event, Parser};
 pub(crate) use loader::{DuplicateKeyPolicy as InternalDuplicateKeyPolicy, ParseConfig};
 pub(crate) use scanner::ScalarStyle;
+pub(crate) use scanner::{
+    RecordedToken, RecordedTokenKind, ScannedComment, Scanner, TokenKind, Trivia, TriviaKind,
+};
 
 /// Returns a default (zero) `Span` for use in synthesized events.
 pub(crate) fn scanner_span_default() -> scanner::Span {
