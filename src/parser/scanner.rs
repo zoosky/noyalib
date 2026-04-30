@@ -162,6 +162,13 @@ pub(crate) struct Scanner<'a> {
     recording: bool,
     trivia: Vec<Trivia>,
     recorded_tokens: Vec<RecordedToken>,
+    /// `true` when the most recently emitted token was `:`/`?`/`-`
+    /// (a block-collection-opener). The next token may legitimately
+    /// appear at a column deeper than the current indent — e.g. the
+    /// value of a key on the following line. Cleared as soon as the
+    /// next token is dispatched. Used by the indent-rigor check
+    /// added for §6.5 / §8.1 strict mode (4HVU, EW3V, …).
+    last_token_opens_block: bool,
 }
 
 /// Internal comment record captured by the scanner.
@@ -299,6 +306,9 @@ impl<'a> Scanner<'a> {
             recording: false,
             trivia: Vec::new(),
             recorded_tokens: Vec::new(),
+            // Initial value: at stream start, *any* column is valid
+            // for the first token (root may be indented arbitrarily).
+            last_token_opens_block: true,
         }
     }
 
@@ -707,6 +717,29 @@ impl<'a> Scanner<'a> {
         let adjacent_value = adj && self.pos == pos_before_skip;
         self.stale_simple_keys()?;
         self.unroll_indent(self.column() as i32);
+
+        // Indent-rigor check (YAML 1.2.2 §6.5 / §8.1): after
+        // unrolling, a column deeper than the current block indent
+        // is only legal when the previous token opened a block
+        // (`:` / `?` / `-`). The flag is set in `fetch_value` /
+        // `fetch_key` / `fetch_block_entry` and cleared at the end
+        // of node-emitting fetchers (scalar, alias, flow open) —
+        // node-property tokens (anchor, tag) leave it alone so the
+        // block-open intent flows through to the actual node.
+        // Catches 4HVU, EW3V, DMG6, N4JP, U44R-class cases.
+        if self.flow_level == 0
+            && self.indent >= 0
+            && (self.column() as i32) > self.indent
+            && !self.last_token_opens_block
+            && self.simple_key_allowed
+            && !self.is_eof()
+        {
+            return Err(self.error(
+                "inconsistent indentation: token at a column that does not match \
+                 any open block scope",
+            ));
+        }
+
         self.mark = self.pos;
 
         if self.is_eof() {
@@ -939,6 +972,10 @@ impl<'a> Scanner<'a> {
         } else {
             self.emit(TokenKind::FlowMappingStart);
         }
+        // The collection itself is the node that the pending block-
+        // open targeted; clear so subsequent tokens inside the flow
+        // are checked against their own scope.
+        self.last_token_opens_block = false;
         Ok(())
     }
 
@@ -1067,6 +1104,7 @@ impl<'a> Scanner<'a> {
         // (e.g. `- foo` and `-\t foo` are valid; `-\tfoo` is not).
         self.reject_tab_indent_after_indicator("'-'")?;
         self.emit(TokenKind::BlockEntry);
+        self.last_token_opens_block = true;
         Ok(())
     }
 
@@ -1093,6 +1131,7 @@ impl<'a> Scanner<'a> {
         self.advance();
         self.reject_tab_indent_after_indicator("'?'")?;
         self.emit(TokenKind::Key);
+        self.last_token_opens_block = true;
         Ok(())
     }
 
@@ -1158,6 +1197,7 @@ impl<'a> Scanner<'a> {
         self.advance();
         self.reject_tab_indent_after_indicator("':'")?;
         self.emit(TokenKind::Value);
+        self.last_token_opens_block = true;
         Ok(())
     }
 
@@ -1178,6 +1218,9 @@ impl<'a> Scanner<'a> {
         self.advance(); // skip '*'
         let name = self.scan_anchor_name()?;
         self.emit(TokenKind::Alias(name));
+        // An alias is a complete node — close any pending block-open
+        // intent so the next dispatch is checked against the indent.
+        self.last_token_opens_block = false;
         Ok(())
     }
 
@@ -1386,6 +1429,7 @@ impl<'a> Scanner<'a> {
                 let s = Cow::Borrowed(self.slice_str(self.pos, self.pos + len));
                 self.advance_by(len);
                 self.emit(TokenKind::Scalar(ScalarStyle::Plain, s));
+                self.last_token_opens_block = false;
                 return Ok(());
             }
         }
@@ -1545,6 +1589,7 @@ impl<'a> Scanner<'a> {
         }
 
         self.emit(TokenKind::Scalar(ScalarStyle::Plain, Cow::Owned(string)));
+        self.last_token_opens_block = false;
         Ok(())
     }
 
@@ -1566,6 +1611,7 @@ impl<'a> Scanner<'a> {
             ScalarStyle::SingleQuoted
         };
         self.emit(TokenKind::Scalar(style, Cow::Owned(string)));
+        self.last_token_opens_block = false;
         // Both single- and double-quoted scalars are JSON-like nodes:
         // a following `:` is an adjacent value indicator in flow context.
         if self.flow_level > 0 {
@@ -1894,6 +1940,7 @@ impl<'a> Scanner<'a> {
             ScalarStyle::Folded
         };
         self.emit(TokenKind::Scalar(style, Cow::Owned(string)));
+        self.last_token_opens_block = false;
         Ok(())
     }
 

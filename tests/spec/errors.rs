@@ -242,6 +242,36 @@ fn yaml_directive_rejects_non_numeric_extras() {
     let _: Value = from_str("%YAML 1.1 1.2\n---\n").unwrap();
 }
 
+// yaml-test-suite 4HVU / EW3V / DMG6 / N4JP / U44R — block-context
+// content at a column that does not match any open block scope
+// (i.e. "between levels") is rejected. The check fires only at
+// positions where a *new* mapping key or sequence entry could
+// start, so separator tokens like `:` mid-pair are unaffected.
+#[test]
+fn between_levels_indentation_rejected() {
+    // 4HVU — sequence entries at col 3 then a `-` at col 2.
+    let r: Result<Value, _> = from_str("key:\n   - ok\n   - also ok\n  - wrong\n");
+    assert!(r.is_err());
+
+    // EW3V — second mapping key at col 1, parent at col 0.
+    let r: Result<Value, _> = from_str("k1: v1\n k2: v2\n");
+    assert!(r.is_err());
+
+    // DMG6 — nested mapping then over-indented sibling.
+    let r: Result<Value, _> = from_str("key:\n  ok: 1\n wrong: 2\n");
+    assert!(r.is_err());
+}
+
+// Counter-examples: nested blocks (each level deeper) and sibling
+// alignments (each at the same level) must continue to parse.
+#[test]
+fn correctly_indented_blocks_still_parse() {
+    let _: Value = from_str("a:\n  b:\n    c: 1\n").unwrap();
+    let _: Value = from_str("a: 1\nb: 2\nc: 3\n").unwrap();
+    let _: Value = from_str("xs:\n  - 1\n  - 2\n  - 3\n").unwrap();
+    let _: Value = from_str("# comment\nkey: value\n").unwrap();
+}
+
 // yaml-test-suite 9KBC / CXX2 — `from_str` previously stopped lazily
 // at the first complete value, silently swallowing the spec
 // violations that follow. The streaming deserializer now drains
