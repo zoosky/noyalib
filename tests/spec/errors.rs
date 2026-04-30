@@ -272,6 +272,42 @@ fn correctly_indented_blocks_still_parse() {
     let _: Value = from_str("# comment\nkey: value\n").unwrap();
 }
 
+// yaml-test-suite QB6E — continuation lines of a multi-line quoted
+// scalar in block context must be indented more than the parent.
+#[test]
+fn quoted_scalar_continuation_must_be_indented() {
+    // Continuation at col 0 inside an indented mapping → reject.
+    let r: Result<Value, _> = from_str("---\nquoted: \"a\nb\nc\"\n");
+    assert!(r.is_err());
+    // Indented continuation parses.
+    let _: Value = from_str("---\nquoted: \"a\n  b\n  c\"\n").unwrap();
+}
+
+// yaml-test-suite 7LBH / D49Q / G7JE — implicit (`?`-less) keys in
+// block context must fit on a single line. Quoted, single-quoted,
+// and plain-scalar variants all reject.
+#[test]
+fn multiline_implicit_key_rejected_in_block_context() {
+    // 7LBH — double-quoted multi-line key.
+    let r: Result<Value, _> = from_str("\"a\\nb\": 1\n\"c\n d\": 1\n");
+    assert!(r.is_err());
+    // D49Q — single-quoted multi-line key.
+    let r: Result<Value, _> = from_str("'a\\nb': 1\n'c\n d': 1\n");
+    assert!(r.is_err());
+    // G7JE — plain multi-line key.
+    let r: Result<Value, _> = from_str("a\\nb: 1\nc\n d: 1\n");
+    assert!(r.is_err());
+}
+
+// yaml-test-suite 6M2F — `&b b\n: *a` is *valid*: the `:` on the next
+// line is an empty implicit key indicator (a new pair), not a value
+// separator for the anchored scalar above. The strict implicit-key
+// check must distinguish this from a genuinely multi-line key.
+#[test]
+fn empty_implicit_key_after_anchored_value_parses() {
+    let _: Value = from_str("? &a a\n: &b b\n: *a\n").unwrap();
+}
+
 // yaml-test-suite 9KBC / CXX2 — `from_str` previously stopped lazily
 // at the first complete value, silently swallowing the spec
 // violations that follow. The streaming deserializer now drains

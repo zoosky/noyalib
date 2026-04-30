@@ -1020,6 +1020,36 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    /// Per YAML 1.2.2 §7.3.2 / §7.3.3, continuation lines of a
+    /// multi-line quoted scalar in *block* context must be indented
+    /// strictly more than the parent block's indent — otherwise the
+    /// scalar's continuation could be confused with a sibling at the
+    /// parent level. Called by each quoted-scalar break handler
+    /// after the trailing line break and any leading blanks have
+    /// been consumed; `pos` therefore sits at the first content
+    /// byte of the new line. Skipped in flow context, where the
+    /// indent rule is governed by `s-flow-line-prefix(n)` and
+    /// already enforced by the surrounding flow scaffolding.
+    fn require_quoted_continuation_indent(&self, style: &'static str) -> ScanResult<()> {
+        if self.flow_level != 0 {
+            return Ok(());
+        }
+        if self.is_eof() || Self::is_break(self.peek()) {
+            // Trailing whitespace / blank line — the closing quote
+            // (or another break) handles termination.
+            return Ok(());
+        }
+        if (self.col as i32) <= self.indent {
+            return Err(ScanError {
+                message: Cow::Owned(format!(
+                    "{style} continuation must be indented more than the parent block"
+                )),
+                index: self.pos,
+            });
+        }
+        Ok(())
+    }
+
     /// Per YAML 1.2.2 §6.8 / §6.7, a `---` or `...` indicator at column 0
     /// terminates the surrounding document. A multi-line quoted scalar
     /// that crosses such a marker is invalid (the indicator is not
@@ -1137,7 +1167,58 @@ impl<'a> Scanner<'a> {
 
     fn fetch_value(&mut self) -> ScanResult<()> {
         // Check if there's a pending simple key.
-        if let Some(sk) = self.simple_keys.last().cloned() {
+        if let Some(mut sk) = self.simple_keys.last().cloned() {
+            if sk.possible && self.flow_level == 0 {
+                // Two distinct YAML 1.2.2 §7.4.2 rules conflated as
+                // "implicit key" violations:
+                //
+                //   (rule 2)  the key itself spans a `\n` —
+                //             `"c\n d": 1` (7LBH/D49Q) or
+                //             `c\n d: 1` (G7JE). Error.
+                //
+                //   (rule 1)  the key ends on one line and `:` lands
+                //             on the next — `&b b\n: *a` (6M2F). The
+                //             key is *single-line* but the `:` is for
+                //             a *different* (empty implicit) pair.
+                //             Invalidate, fall through to else.
+                //
+                // The latest emitted token's source span is the
+                // simple key's actual end; trimming its trailing
+                // whitespace strips the `\n` the multi-line plain
+                // scalar reader consumes during termination.
+                let key_end = self.tokens.last().map(|t| t.span.end).unwrap_or(sk.index);
+                let key_end_trimmed = {
+                    let mut e = key_end;
+                    while e > sk.index
+                        && matches!(
+                            self.input.get(e - 1).copied(),
+                            Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
+                        )
+                    {
+                        e -= 1;
+                    }
+                    e
+                };
+
+                let key_content = &self.input[sk.index..key_end_trimmed];
+                if key_content.iter().any(|&b| b == b'\n' || b == b'\r') {
+                    return Err(self.error(
+                        "implicit mapping key in block context cannot span multiple lines",
+                    ));
+                }
+
+                if self.input[key_end_trimmed..self.pos]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    // Rule 1 violation — invalidate and fall through.
+                    sk.possible = false;
+                    if let Some(last) = self.simple_keys.last_mut() {
+                        last.possible = false;
+                    }
+                }
+            }
+
             if sk.possible {
                 // Insert Key token before the simple key.
                 let idx = sk.token_number - self.tokens_produced;
@@ -1691,6 +1772,8 @@ impl<'a> Scanner<'a> {
                     while Self::is_blank(self.peek()) {
                         self.advance();
                     }
+
+                    self.require_quoted_continuation_indent("single-quoted")?;
                 }
                 _ => {
                     // Flush any pending fold/whitespace before content.
@@ -1866,6 +1949,8 @@ impl<'a> Scanner<'a> {
                     while Self::is_blank(self.peek()) {
                         self.advance();
                     }
+
+                    self.require_quoted_continuation_indent("double-quoted")?;
                 }
                 _ => {
                     if leading_break {
@@ -2006,7 +2091,33 @@ impl<'a> Scanner<'a> {
             self.skip_line();
         }
 
-        // Determine the indentation level.
+        // Determine the indentation level and validate leading empty lines.
+        let mut max_leading_empty_spaces = 0;
+        let mut detected = 0;
+        let mut has_content = false;
+        let save_pos = self.pos;
+        let save_col = self.col;
+        loop {
+            let mut spaces = 0;
+            while self.peek() == b' ' {
+                spaces += 1;
+                self.advance();
+            }
+            if Self::is_break(self.peek()) {
+                max_leading_empty_spaces = max_leading_empty_spaces.max(spaces);
+                self.skip_line();
+                continue;
+            }
+            if self.is_eof() {
+                break;
+            }
+            detected = spaces;
+            has_content = true;
+            break;
+        }
+        self.pos = save_pos;
+        self.col = save_col;
+
         let block_indent;
         if increment > 0 {
             block_indent = if self.indent >= 0 {
@@ -2015,26 +2126,6 @@ impl<'a> Scanner<'a> {
                 increment
             };
         } else {
-            // Auto-detect: find the first non-empty line's indentation.
-            let mut detected = 0;
-            let save = self.pos;
-            loop {
-                let mut spaces = 0;
-                while self.peek() == b' ' {
-                    spaces += 1;
-                    self.advance();
-                }
-                if Self::is_break(self.peek()) {
-                    self.skip_line();
-                    continue;
-                }
-                if self.is_eof() {
-                    break;
-                }
-                detected = spaces;
-                break;
-            }
-            self.pos = save;
             let min_indent = if self.indent >= 0 {
                 self.indent as usize + 1
             } else {
@@ -2042,7 +2133,18 @@ impl<'a> Scanner<'a> {
                 // (parent indent is -1, so any column ≥ 0 is more indented).
                 0
             };
-            block_indent = detected.max(min_indent);
+            let actual_detected = if has_content {
+                detected
+            } else {
+                max_leading_empty_spaces
+            };
+            block_indent = actual_detected.max(min_indent);
+        }
+
+        // YAML 1.2.2 §8.1.1.2: If any leading empty line contains more spaces than
+        // the indentation level, it is an error.
+        if max_leading_empty_spaces > block_indent {
+            return Err(self.error("a leading all-space line must not have too many spaces"));
         }
 
         // Read the block scalar content.

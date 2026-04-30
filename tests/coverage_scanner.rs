@@ -301,11 +301,27 @@ fn plain_scalar_continues_across_lines() {
 
 // ── Simple key resolution ───────────────────────────────────────────────
 
+// Per YAML 1.2.2 §7.4.2, an implicit key must reach its `:` on the
+// same line. `key\n: value` no longer promotes `key` to a key — the
+// `:` on the next line is for an empty implicit key (per the
+// cluster-level fix that made 6M2F parse correctly). The parser
+// either rejects the input outright or produces a structure where
+// `key` is not the mapping key for `value`.
 #[test]
-fn simple_key_with_value_on_next_line() {
+fn simple_key_with_value_on_next_line_is_not_promoted() {
     let yaml = "key\n: value\n";
-    let v: Value = from_str(yaml).unwrap();
-    assert_eq!(v["key"], Value::String("value".to_string()));
+    match from_str::<Value>(yaml) {
+        Err(_) => { /* strict rejection — fine */ }
+        Ok(v) => {
+            if let Some(map) = v.as_mapping() {
+                assert_ne!(
+                    map.get("key").and_then(Value::as_str),
+                    Some("value"),
+                    "must not promote `key` to a mapping key for `value`"
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -43,8 +43,10 @@ fn single_quoted_line_folding() {
 
 #[test]
 fn single_quoted_multiple_breaks() {
-    // scanner.rs:984-991 — multiple consecutive breaks in single-quoted
-    let yaml = "key: 'para1\n\n\npara2'";
+    // scanner.rs:984-991 — multiple consecutive breaks in single-quoted.
+    // Per YAML 1.2.2 §7.3.3, continuation lines of a multi-line quoted
+    // scalar must be indented more than the parent block.
+    let yaml = "key: 'para1\n\n\n  para2'";
     let v: Value = from_str(yaml).unwrap();
     let s = v["key"].as_str().unwrap();
     assert!(s.contains("\n\n"), "expected double newline, got: {s}");
@@ -225,8 +227,10 @@ fn double_quoted_line_folding() {
 
 #[test]
 fn double_quoted_multiple_breaks() {
-    // scanner.rs:1148-1155 — multiple consecutive breaks
-    let yaml = "key: \"first\n\n\nsecond\"";
+    // scanner.rs:1148-1155 — multiple consecutive breaks.
+    // Per YAML 1.2.2 §7.3.2, continuation lines must be indented
+    // more than the parent block.
+    let yaml = "key: \"first\n\n\n  second\"";
     let v: Value = from_str(yaml).unwrap();
     let s = v["key"].as_str().unwrap();
     assert!(s.contains("\n\n"), "expected double newline, got: {s}");
@@ -234,8 +238,9 @@ fn double_quoted_multiple_breaks() {
 
 #[test]
 fn double_quoted_whitespace_before_break() {
-    // scanner.rs:1163-1199 — whitespace handling before line break
-    let yaml = "key: \"word   \nmore\"";
+    // scanner.rs:1163-1199 — whitespace handling before line break.
+    // Continuation must be indented more than the parent block.
+    let yaml = "key: \"word   \n  more\"";
     let v: Value = from_str(yaml).unwrap();
     // trailing spaces before break are folded
     let s = v["key"].as_str().unwrap();
