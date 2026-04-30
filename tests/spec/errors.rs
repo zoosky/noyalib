@@ -137,3 +137,48 @@ fn no_panic_on_any_input() {
         let _ = from_str::<Value>(input);
     }
 }
+
+// yaml-test-suite SU5Z — `#` adjacent to prior content is not a comment.
+#[test]
+fn comment_indicator_must_be_preceded_by_whitespace() {
+    let result: Result<Value, _> = from_str("key: \"value\"# invalid comment\n");
+    assert!(result.is_err(), "expected rejection of inline `#` without preceding whitespace");
+}
+
+// yaml-test-suite X4QW — same rule inside the `>`/`|` header line.
+#[test]
+fn block_scalar_header_rejects_adjacent_hash() {
+    let result: Result<Value, _> = from_str("block: >#comment\n  scalar\n");
+    assert!(result.is_err(), "expected rejection of `>#` with no whitespace");
+}
+
+// yaml-test-suite SF5V — at most one %YAML directive per document.
+#[test]
+fn duplicate_yaml_directive_rejected() {
+    let result: Result<Value, _> = from_str("%YAML 1.2\n%YAML 1.2\n---\n");
+    assert!(result.is_err(), "expected rejection of duplicate %YAML directive");
+}
+
+// yaml-test-suite Y79Y :4..:7 — tab immediately before a block-structural
+// indicator is forbidden (cannot stand in for indentation).
+#[test]
+fn tab_before_block_indicator_rejected() {
+    for input in &["-\t-\n", "- \t-\n", "?\t-\n", "? -\n:\t-\n"] {
+        let result: Result<Value, _> = from_str(input);
+        assert!(
+            result.is_err(),
+            "expected rejection of tab-as-indentation in {input:?}"
+        );
+    }
+}
+
+// yaml-test-suite A2M4 (spec example 6.2) — tab as inline separation
+// before plain content is *valid*; only tabs before another structural
+// indicator are rejected.
+#[test]
+fn tab_as_inline_separation_accepted() {
+    let v: Value = from_str("? a\n: -\tb\n  -  -\tc\n     - d\n").unwrap();
+    let outer = v.as_mapping().expect("mapping");
+    let seq = outer.get("a").expect("key 'a'").as_sequence().expect("seq");
+    assert_eq!(seq[0].as_str(), Some("b"));
+}

@@ -152,6 +152,10 @@ pub(crate) struct Scanner<'a> {
     /// Captured comments in source order. Populated as the scanner
     /// skips comment bytes; readers drain via `take_comments`.
     comments: Vec<ScannedComment>,
+    /// Whether a `%YAML` directive has been seen for the current
+    /// document (cleared on each `DocumentStart`). Per YAML 1.2.2 §6.8.1
+    /// a document may contain at most one `%YAML` directive.
+    yaml_directive_seen: bool,
 }
 
 /// Internal comment record captured by the scanner.
@@ -192,6 +196,7 @@ impl<'a> Scanner<'a> {
             stream_started: false,
             stream_ended: false,
             comments: Vec::new(),
+            yaml_directive_seen: false,
         }
     }
 
@@ -377,6 +382,20 @@ impl<'a> Scanner<'a> {
             // Skip comment — bulk-scan to next line break, capturing
             // the span and text for callers that want to read it back.
             if self.peek() == b'#' {
+                // Per YAML 1.2.2 §6.6: a `#` starts a comment only when
+                // preceded by whitespace, a line break, or the start of
+                // the input. Look at the byte immediately before the `#`
+                // — if it's any non-whitespace content character, this
+                // is an inline `#` adjacent to prior content (e.g.
+                // `"value"# bad`) and is not a valid comment indicator.
+                if self.pos > 0 {
+                    let prev = self.input[self.pos - 1];
+                    if !Self::is_blank_or_break(prev) {
+                        return Err(self.error(
+                            "comment indicator '#' must be preceded by a space, tab, or line break",
+                        ));
+                    }
+                }
                 let comment_start = self.pos;
                 let remaining = &self.input[self.pos..];
                 let end = remaining
@@ -659,8 +678,32 @@ impl<'a> Scanner<'a> {
         self.unroll_indent(-1);
         self.remove_simple_key()?;
         self.simple_key_allowed = false;
-        // We don't really need to interpret %YAML or %TAG directives for
-        // our purposes; just skip to the end of the line.
+
+        // Skip the leading `%` and parse the directive name.
+        self.advance();
+        let name_start = self.pos;
+        while !self.is_eof() && !Self::is_blank_or_break(self.peek()) {
+            self.advance();
+        }
+        let name = self.slice_str(name_start, self.pos).to_owned();
+
+        // Per YAML 1.2.2 §6.8.1: only one `%YAML` directive per document.
+        // (The "extra arguments" form `%YAML 1.1 1.2` is technically out
+        // of grammar but the test suite classifies it as "valid YAML
+        // according to the 1.2 productions, just not usefully valid",
+        // so we accept it like libyaml does. The clearly-malformed
+        // `%YAML 1.2 foo` case is left for a future stricter mode.)
+        if name == "YAML" {
+            if self.yaml_directive_seen {
+                return Err(
+                    self.error("duplicate %YAML directive (at most one allowed per document)")
+                );
+            }
+            self.yaml_directive_seen = true;
+        }
+
+        // Skip to end of line — directive contents past validation are
+        // not interpreted further (consumers don't need the version).
         if let Some(pos) = memchr::memchr2(b'\n', b'\r', &self.input[self.pos..]) {
             self.advance_by(pos);
         } else {
@@ -679,6 +722,8 @@ impl<'a> Scanner<'a> {
             self.emit(TokenKind::DocumentStart);
         } else {
             self.emit(TokenKind::DocumentEnd);
+            // Directives are scoped to a single document.
+            self.yaml_directive_seen = false;
         }
         Ok(())
     }
@@ -742,6 +787,43 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    /// After a block-structural indicator (`-`, `?`, `:`), verify the
+    /// separation does not end in a tab immediately followed by another
+    /// structural indicator. Per YAML 1.2.2 §6.1 tabs are valid as
+    /// inline whitespace (spec example 6.3: `:\t bar` is fine), but a
+    /// tab cannot stand in for indentation when the next token would
+    /// itself open a new block scope — that is the Y79Y-class issue.
+    fn reject_tab_indent_after_indicator(&self, indicator: &'static str) -> ScanResult<()> {
+        if self.flow_level != 0 {
+            return Ok(());
+        }
+        let mut look = self.pos;
+        let mut last_ws: u8 = 0;
+        while look < self.input.len() && Self::is_blank(self.input[look]) {
+            last_ws = self.input[look];
+            look += 1;
+        }
+        if last_ws != b'\t' || look >= self.input.len() {
+            return Ok(());
+        }
+        let next = self.input[look];
+        // Only reject when the following content is itself a structural
+        // token whose position is interpreted as indentation. Plain
+        // content after a tab is permitted (it is folded as scalar
+        // whitespace, not indentation).
+        let is_structural = matches!(next, b'-' | b'?' | b':')
+            && (look + 1 >= self.input.len() || Self::is_blank_or_break(self.input[look + 1]));
+        if !is_structural {
+            return Ok(());
+        }
+        Err(ScanError {
+            message: Cow::Owned(format!(
+                "tab character cannot precede a block-structural indicator after {indicator}"
+            )),
+            index: self.pos,
+        })
+    }
+
     fn fetch_block_entry(&mut self) -> ScanResult<()> {
         if self.flow_level == 0 {
             if !self.simple_key_allowed && !self.explicit_key_pending {
@@ -754,6 +836,11 @@ impl<'a> Scanner<'a> {
         self.simple_key_allowed = true;
         self.mark = self.pos;
         self.advance();
+        // YAML 1.2.2 §6.1: tabs may appear as inline separation but
+        // not as indentation. After a block-structural indicator the
+        // *last* whitespace character before content must be a space
+        // (e.g. `- foo` and `-\t foo` are valid; `-\tfoo` is not).
+        self.reject_tab_indent_after_indicator("'-'")?;
         self.emit(TokenKind::BlockEntry);
         Ok(())
     }
@@ -779,6 +866,7 @@ impl<'a> Scanner<'a> {
         }
         self.mark = self.pos;
         self.advance();
+        self.reject_tab_indent_after_indicator("'?'")?;
         self.emit(TokenKind::Key);
         Ok(())
     }
@@ -843,6 +931,7 @@ impl<'a> Scanner<'a> {
         self.explicit_key_pending = false;
         self.mark = self.pos;
         self.advance();
+        self.reject_tab_indent_after_indicator("':'")?;
         self.emit(TokenKind::Value);
         Ok(())
     }
@@ -1607,11 +1696,18 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // Skip to end of line (including optional comment).
+        // Skip to end of line (including optional comment). Per
+        // YAML 1.2.2 §6.6, an inline `#` must be preceded by a space or
+        // tab — `>#` or `|2#` is invalid because the comment indicator
+        // is adjacent to the header content.
+        let pos_before_blank = self.pos;
         while Self::is_blank(self.peek()) {
             self.advance();
         }
         if self.peek() == b'#' {
+            if self.pos == pos_before_blank {
+                return Err(self.error("comment indicator '#' must be preceded by a space or tab"));
+            }
             while !self.is_eof() && !Self::is_break(self.peek()) {
                 self.advance();
             }
