@@ -268,6 +268,47 @@ impl Document {
         let fragment = format_value_for_site(value, kind)?;
         self.replace_span(s, e, &fragment)
     }
+
+    /// Remove the value at `path` along with its surrounding entry
+    /// (key + colon for mappings, `-` indicator for sequences).
+    /// Trailing whitespace and the line break are removed too so the
+    /// surrounding entries close up with no orphan blank line.
+    ///
+    /// Restrictions in this phase:
+    /// - Block context only — flow-collection entry removal (`[a, b, c]`
+    ///   → `[a, c]`) is a follow-up.
+    /// - The value must end on the line where its key / `-` indicator
+    ///   appears (single-line scalars). Multi-line values and nested
+    ///   collections are deferred to the same follow-up that handles
+    ///   block-scalar replacement in `set_value`.
+    /// - Removing the only entry of a block mapping or sequence is
+    ///   rejected — the result would parse differently (an empty
+    ///   block becomes `null`), and the caller needs to express that
+    ///   intent explicitly.
+    ///
+    /// # Errors
+    ///
+    /// - Path not found.
+    /// - Restrictions above.
+    /// - The same parse-after-edit errors as
+    ///   [`Document::replace_span`]; on failure the document is left
+    ///   unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("a: 1\nb: 2\nc: 3\n").unwrap();
+    /// doc.remove("b").unwrap();
+    /// assert_eq!(doc.to_string(), "a: 1\nc: 3\n");
+    /// ```
+    pub fn remove(&mut self, path: &str) -> Result<()> {
+        let segments = parse_query_path(path);
+        let (line_start, line_end) =
+            entry_line_span(&self.value, &self.span_tree, &self.source, &segments)?;
+        self.replace_span(line_start, line_end, "")
+    }
 }
 
 impl fmt::Display for Document {
@@ -381,6 +422,156 @@ fn resolve_span(
         // multi-span API.
         _ => None,
     }
+}
+
+// ── Entry-line resolution (used by `remove`) ────────────────────────
+
+/// Find the byte range of the *entire* mapping entry or sequence entry
+/// addressed by `segments` — including its key / `-` indicator,
+/// leading indentation, and trailing line break — so a caller can
+/// splice the empty string in to delete it.
+fn entry_line_span(
+    value: &Value,
+    span_tree: &SpanTree,
+    source: &str,
+    segments: &[QuerySegment],
+) -> Result<(usize, usize)> {
+    if segments.is_empty() {
+        return Err(Error::Parse(
+            "remove requires a non-empty path (cannot remove the document root)".into(),
+        ));
+    }
+
+    let (head, tail) = segments
+        .split_first()
+        .ok_or_else(|| Error::Parse("path not found".into()))?;
+
+    // Recurse into nested mappings / sequences until the segment list
+    // identifies the *parent* of the entry to remove.
+    if !tail.is_empty() {
+        let (child_value, child_tree) = match (head, value, span_tree) {
+            (QuerySegment::Key(k), Value::Mapping(m), SpanTree::Mapping { entries, .. }) => {
+                let pos = m
+                    .iter()
+                    .position(|(mk, _)| mk == k)
+                    .ok_or_else(|| Error::Parse(format!("path not found: missing key {k:?}")))?;
+                (
+                    m.iter().nth(pos).map(|(_, v)| v).expect("pos in range"),
+                    &entries[pos].1,
+                )
+            }
+            (QuerySegment::Index(i), Value::Sequence(seq), SpanTree::Sequence { items, .. }) => (
+                seq.get(*i).ok_or_else(|| {
+                    Error::Parse(format!("path not found: index {i} out of bounds"))
+                })?,
+                items.get(*i).ok_or_else(|| {
+                    Error::Parse(format!("path not found: index {i} out of bounds"))
+                })?,
+            ),
+            _ => return Err(Error::Parse("path not found".into())),
+        };
+        return entry_line_span(child_value, child_tree, source, tail);
+    }
+
+    // Final segment — locate this entry's key / dash and value.
+    match (head, value, span_tree) {
+        (QuerySegment::Key(k), Value::Mapping(m), SpanTree::Mapping { entries, .. }) => {
+            if m.len() <= 1 {
+                return Err(Error::Parse(
+                    "remove cannot delete the only entry of a mapping".into(),
+                ));
+            }
+            let pos = m
+                .iter()
+                .position(|(mk, _)| mk == k)
+                .ok_or_else(|| Error::Parse(format!("path not found: missing key {k:?}")))?;
+            let ((key_start, _key_end), child_tree) = &entries[pos];
+            let raw_value_end = match child_tree {
+                SpanTree::Leaf(_, e) => *e,
+                SpanTree::Sequence { end, .. } | SpanTree::Mapping { end, .. } => *end,
+            };
+            let (_, value_end) = trim_trailing_blank(source, *key_start, raw_value_end);
+            require_single_line(source, *key_start, value_end)?;
+            Ok(line_extent(source, *key_start, value_end))
+        }
+        (QuerySegment::Index(i), Value::Sequence(seq), SpanTree::Sequence { items, .. }) => {
+            if seq.len() <= 1 {
+                return Err(Error::Parse(
+                    "remove cannot delete the only entry of a sequence".into(),
+                ));
+            }
+            let item_tree = items
+                .get(*i)
+                .ok_or_else(|| Error::Parse(format!("path not found: index {i} out of bounds")))?;
+            let (value_start, raw_value_end) = match item_tree {
+                SpanTree::Leaf(s, e) => (*s, *e),
+                SpanTree::Sequence { start, end, .. } | SpanTree::Mapping { start, end, .. } => {
+                    (*start, *end)
+                }
+            };
+            let (_, value_end) = trim_trailing_blank(source, value_start, raw_value_end);
+            // The `-` indicator sits before the value on the same line,
+            // separated by inline whitespace. Walk backward to find it.
+            let dash_pos = locate_preceding_dash(source, value_start).ok_or_else(|| {
+                Error::Parse(
+                    "remove: could not locate '-' indicator preceding sequence item".into(),
+                )
+            })?;
+            require_single_line(source, dash_pos, value_end)?;
+            Ok(line_extent(source, dash_pos, value_end))
+        }
+        _ => Err(Error::Parse("path not found".into())),
+    }
+}
+
+/// Walk backward from `value_start` past inline whitespace and find
+/// the `-` indicator that opened this sequence entry. Returns its
+/// byte offset, or `None` if no dash is found on the same line.
+fn locate_preceding_dash(source: &str, value_start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut i = value_start;
+    while i > 0 {
+        i -= 1;
+        match bytes[i] {
+            b' ' | b'\t' => {}
+            b'-' => return Some(i),
+            b'\n' | b'\r' => return None,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Reject ranges that span multiple lines — Phase 2C `remove` only
+/// handles entries whose value ends on the same line as the key /
+/// dash.
+fn require_single_line(source: &str, start: usize, end: usize) -> Result<()> {
+    let segment = &source.as_bytes()[start..end];
+    if segment.contains(&b'\n') {
+        return Err(Error::Parse(
+            "remove: multi-line / nested-value entries are not yet supported".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Extend `(start, end)` outward to a full-line byte range:
+/// - leftward to the byte after the previous `\n` (or 0).
+/// - rightward through the trailing `\n` (or to EOF).
+fn line_extent(source: &str, start: usize, end: usize) -> (usize, usize) {
+    let bytes = source.as_bytes();
+    let mut s = start;
+    while s > 0 && bytes[s - 1] != b'\n' {
+        s -= 1;
+    }
+    let mut e = end;
+    while e < bytes.len() && bytes[e] != b'\n' {
+        e += 1;
+    }
+    if e < bytes.len() {
+        e += 1;
+    }
+    (s, e)
 }
 
 // ── Green-tree leaf lookup ──────────────────────────────────────────

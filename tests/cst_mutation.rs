@@ -204,3 +204,88 @@ fn set_value_rejects_block_scalar_target_for_now() {
         .unwrap_err();
     assert!(err.to_string().contains("block scalar"));
 }
+
+// ── remove: drop a mapping key or sequence index ─────────────────
+
+#[test]
+fn remove_middle_mapping_key() {
+    let mut doc = parse_document("a: 1\nb: 2\nc: 3\n").unwrap();
+    doc.remove("b").unwrap();
+    assert_eq!(doc.to_string(), "a: 1\nc: 3\n");
+}
+
+#[test]
+fn remove_first_mapping_key() {
+    let mut doc = parse_document("a: 1\nb: 2\nc: 3\n").unwrap();
+    doc.remove("a").unwrap();
+    assert_eq!(doc.to_string(), "b: 2\nc: 3\n");
+}
+
+#[test]
+fn remove_last_mapping_key() {
+    let mut doc = parse_document("a: 1\nb: 2\nc: 3\n").unwrap();
+    doc.remove("c").unwrap();
+    assert_eq!(doc.to_string(), "a: 1\nb: 2\n");
+}
+
+#[test]
+fn remove_nested_mapping_key() {
+    let src = "package:\n  name: foo\n  version: 0.0.1\n  build: 7\n";
+    let mut doc = parse_document(src).unwrap();
+    doc.remove("package.version").unwrap();
+    assert_eq!(doc.to_string(), "package:\n  name: foo\n  build: 7\n");
+}
+
+#[test]
+fn remove_sequence_index() {
+    let src = "items:\n  - one\n  - two\n  - three\n";
+    let mut doc = parse_document(src).unwrap();
+    doc.remove("items[1]").unwrap();
+    assert_eq!(doc.to_string(), "items:\n  - one\n  - three\n");
+}
+
+#[test]
+fn remove_first_sequence_item() {
+    let src = "items:\n  - one\n  - two\n";
+    let mut doc = parse_document(src).unwrap();
+    doc.remove("items[0]").unwrap();
+    assert_eq!(doc.to_string(), "items:\n  - two\n");
+}
+
+#[test]
+fn remove_returns_path_not_found_for_missing_key() {
+    let mut doc = parse_document("a: 1\nb: 2\n").unwrap();
+    let err = doc.remove("missing").unwrap_err();
+    assert!(err.to_string().contains("path not found"));
+}
+
+#[test]
+fn remove_rejects_only_entry_of_mapping() {
+    let mut doc = parse_document("only: 1\n").unwrap();
+    let err = doc.remove("only").unwrap_err();
+    assert!(err.to_string().contains("only entry"));
+}
+
+#[test]
+fn remove_rejects_only_entry_of_sequence() {
+    let mut doc = parse_document("xs:\n  - a\n").unwrap();
+    let err = doc.remove("xs[0]").unwrap_err();
+    assert!(err.to_string().contains("only entry"));
+}
+
+#[test]
+fn remove_rejects_multi_line_value() {
+    // Removing a key whose value is a block scalar is deferred —
+    // the entry's bytes span multiple lines.
+    let mut doc = parse_document("a: 1\ntext: |\n  hello\n  world\nb: 2\n").unwrap();
+    let err = doc.remove("text").unwrap_err();
+    assert!(err.to_string().contains("multi-line"));
+}
+
+#[test]
+fn remove_preserves_surrounding_comments() {
+    let src = "# header\na: 1\nb: 2  # tail\nc: 3\n";
+    let mut doc = parse_document(src).unwrap();
+    doc.remove("b").unwrap();
+    assert_eq!(doc.to_string(), "# header\na: 1\nc: 3\n");
+}
