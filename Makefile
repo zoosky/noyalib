@@ -13,7 +13,7 @@
 #   make examples  — run all examples sequentially
 #   make clean    — remove build artifacts
 
-.PHONY: all check clippy test fmt deny doc miri sbom examples clean
+.PHONY: all check clippy test fmt deny doc miri sbom examples compliance clean
 
 all: check clippy test
 
@@ -25,6 +25,9 @@ clippy:
 
 test:
 	cargo test --all-features
+
+compliance:
+	cargo test --test yaml_compliance_report -- --nocapture
 
 fmt:
 	cargo fmt --check
