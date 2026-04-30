@@ -69,10 +69,6 @@ const SKIP_LIST: &[(&str, &str)] = &[
     ("K527", "tab in indentation context"),
     // These test YAML 1.1 features not in YAML 1.2 core
     ("9WXW", "YAML 1.1 merge key semantics"),
-    // Colon in anchor/alias names — YAML 1.2 spec allows it but
-    // it is ambiguous with value indicators; deferred to v0.0.2.
-    ("2SXE", "colon in anchor name"),
-    ("W5VH", "colon in anchor/alias name"),
     // Compact block mapping with non-scalar complex key — requires
     // mapping-as-key support in the block sequence parser.
     ("V9D5", "compact block mapping with complex key"),

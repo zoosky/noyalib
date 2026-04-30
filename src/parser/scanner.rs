@@ -877,13 +877,16 @@ impl<'a> Scanner<'a> {
                 return Err(self.error("anchor name exceeds maximum length of 1024 bytes"));
             }
             let c = self.peek();
+            // Per YAML 1.2.2 §6.9.2: ns-anchor-char = ns-char - c-flow-indicator.
+            // Terminators are whitespace and flow indicators only. `:` is part
+            // of the anchor name; structural ambiguity with value separators
+            // is resolved by requiring whitespace before the separator.
             if Self::is_blank_or_break(c)
                 || c == b','
                 || c == b'['
                 || c == b']'
                 || c == b'{'
                 || c == b'}'
-                || c == b':'
             {
                 break;
             }
@@ -1187,18 +1190,11 @@ impl<'a> Scanner<'a> {
             if Self::is_break(self.peek()) {
                 leading_blanks = true;
                 whitespace.clear();
-                // Consume the break.
-                let c = self.peek();
-                if c == b'\r' && self.peek_at(1) == b'\n' {
-                    whitespace.push('\n');
-                    self.advance_by(2);
-                } else {
-                    whitespace.push('\n');
-                    self.advance();
-                }
-
-                // Consume subsequent line breaks.
-                while Self::is_break(self.peek()) {
+                // Consume runs of `break (blanks? break)*` so a line that
+                // is only whitespace between two breaks is recorded as an
+                // empty line (one extra `\n` in `whitespace`) rather than
+                // collapsed silently. Mirrors quoted-scalar handling.
+                loop {
                     let c = self.peek();
                     if c == b'\r' && self.peek_at(1) == b'\n' {
                         whitespace.push('\n');
@@ -1207,11 +1203,12 @@ impl<'a> Scanner<'a> {
                         whitespace.push('\n');
                         self.advance();
                     }
-                }
-
-                // Skip leading blanks on the new line, check indent.
-                while Self::is_blank(self.peek()) {
-                    self.advance();
+                    while Self::is_blank(self.peek()) {
+                        self.advance();
+                    }
+                    if !Self::is_break(self.peek()) {
+                        break;
+                    }
                 }
 
                 if self.flow_level == 0 && (self.column() as i32) < indent {
@@ -1278,36 +1275,50 @@ impl<'a> Scanner<'a> {
             match self.peek() {
                 b'\'' => {
                     if self.peek_at(1) == b'\'' {
-                        // Escaped single quote.
-                        string.push_str(&whitespace);
+                        // Escaped single quote — flush pending fold/buffered whitespace.
+                        if leading_break {
+                            if whitespace.is_empty() {
+                                string.push(' ');
+                            } else {
+                                string.push_str(&whitespace);
+                            }
+                            leading_break = false;
+                        } else if !whitespace.is_empty() {
+                            string.push_str(&whitespace);
+                        }
                         whitespace.clear();
-                        leading_break = false;
                         string.push('\'');
                         self.advance_by(2);
                     } else {
-                        // End of string.
+                        // End of string. Flush pending fold; trailing
+                        // whitespace before the close-quote on the same
+                        // line is preserved (mirrors double-quoted).
+                        if leading_break {
+                            if whitespace.is_empty() {
+                                string.push(' ');
+                            } else {
+                                string.push_str(&whitespace);
+                            }
+                        } else if !whitespace.is_empty() {
+                            string.push_str(&whitespace);
+                        }
                         self.advance();
                         return Ok(string);
                     }
                 }
                 c if Self::is_break(c) => {
-                    // Line folding.
-                    if !whitespace.is_empty() && !leading_break {
-                        string.push_str(&whitespace);
-                        whitespace.clear();
-                    }
-
+                    // Per YAML 1.2.2 §7.3.2: trailing whitespace before a
+                    // break is stripped, and an empty line between content
+                    // contributes a preserved `\n`. Mirrors the
+                    // double-quoted handler — each break is processed in
+                    // its own iteration so blanks-between-breaks are
+                    // recognised as empty lines.
                     if leading_break {
-                        if whitespace.is_empty() {
-                            string.push(' ');
-                        } else {
-                            string.push_str(&whitespace);
-                        }
+                        whitespace.push('\n');
+                    } else {
                         whitespace.clear();
+                        leading_break = true;
                     }
-
-                    leading_break = true;
-                    whitespace.clear();
 
                     if self.peek() == b'\r' && self.peek_at(1) == b'\n' {
                         self.advance_by(2);
@@ -1315,21 +1326,12 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
 
-                    // Consume subsequent breaks and leading spaces.
-                    while Self::is_break(self.peek()) {
-                        whitespace.push('\n');
-                        if self.peek() == b'\r' && self.peek_at(1) == b'\n' {
-                            self.advance_by(2);
-                        } else {
-                            self.advance();
-                        }
-                    }
-
                     while Self::is_blank(self.peek()) {
                         self.advance();
                     }
                 }
                 _ => {
+                    // Flush any pending fold/whitespace before content.
                     if leading_break {
                         if whitespace.is_empty() {
                             string.push(' ');
@@ -1343,14 +1345,28 @@ impl<'a> Scanner<'a> {
                         whitespace.clear();
                     }
 
-                    // Read a character. Handle UTF-8 properly.
-                    let start = self.pos;
-                    self.advance();
-                    // Check for multi-byte UTF-8.
-                    while self.pos < self.input.len() && (self.input[self.pos] & 0xC0) == 0x80 {
+                    // Spaces and tabs adjacent to a break or close-quote
+                    // are buffered as candidate-trailing-whitespace; spaces
+                    // adjacent to content are flushed and read inline.
+                    if Self::is_blank(self.peek()) {
+                        let start = self.pos;
+                        while Self::is_blank(self.peek()) {
+                            self.advance();
+                        }
+                        if Self::is_break(self.peek()) || self.peek() == b'\'' {
+                            whitespace.push_str(self.slice_str(start, self.pos));
+                            continue;
+                        }
+                        string.push_str(self.slice_str(start, self.pos));
+                    } else {
+                        // Read a character (UTF-8 aware).
+                        let start = self.pos;
                         self.advance();
+                        while self.pos < self.input.len() && (self.input[self.pos] & 0xC0) == 0x80 {
+                            self.advance();
+                        }
+                        string.push_str(self.slice_str(start, self.pos));
                     }
-                    string.push_str(self.slice_str(start, self.pos));
                 }
             }
         }
@@ -1456,23 +1472,25 @@ impl<'a> Scanner<'a> {
                     }
                 }
                 c if Self::is_break(c) => {
-                    // Line folding in double-quoted scalars.
-                    if !whitespace.is_empty() && !leading_break {
-                        string.push_str(&whitespace);
-                        whitespace.clear();
-                    }
-
+                    // Line folding in double-quoted scalars per YAML 1.2.2
+                    // §7.3.2 / §6.5: trailing whitespace before a break is
+                    // stripped; an "empty line" (a line containing only
+                    // whitespace, *or* nothing) between content lines
+                    // contributes a preserved `\n`. Each break is handled
+                    // in its own loop iteration so blanks-between-breaks
+                    // are recognised as empty lines.
                     if leading_break {
-                        if whitespace.is_empty() {
-                            string.push(' ');
-                        } else {
-                            string.push_str(&whitespace);
-                        }
+                        // We're already in a break sequence — the previous
+                        // iteration ended on a break and its trailing
+                        // blanks have been consumed below. Reaching another
+                        // break means the line in between was empty.
+                        whitespace.push('\n');
+                    } else {
+                        // First break of a sequence — discard any buffered
+                        // trailing whitespace before this break.
                         whitespace.clear();
+                        leading_break = true;
                     }
-
-                    leading_break = true;
-                    whitespace.clear();
 
                     if self.peek() == b'\r' && self.peek_at(1) == b'\n' {
                         self.advance_by(2);
@@ -1480,17 +1498,7 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
 
-                    // Consume subsequent breaks.
-                    while Self::is_break(self.peek()) {
-                        whitespace.push('\n');
-                        if self.peek() == b'\r' && self.peek_at(1) == b'\n' {
-                            self.advance_by(2);
-                        } else {
-                            self.advance();
-                        }
-                    }
-
-                    // Skip leading blanks on new line.
+                    // Skip leading blanks on the new line.
                     while Self::is_blank(self.peek()) {
                         self.advance();
                     }
@@ -1646,7 +1654,9 @@ impl<'a> Scanner<'a> {
             let min_indent = if self.indent >= 0 {
                 self.indent as usize + 1
             } else {
-                1
+                // Root-level block scalar: content can start at column 0
+                // (parent indent is -1, so any column ≥ 0 is more indented).
+                0
             };
             block_indent = detected.max(min_indent);
         }
@@ -1657,6 +1667,21 @@ impl<'a> Scanner<'a> {
         let mut leading_blank = false;
 
         while !self.is_eof() {
+            // Document boundary terminates the block scalar (matters when
+            // `block_indent == 0`; otherwise the indent check below handles it).
+            if self.col == 0 {
+                let p0 = self.peek();
+                let is_marker_byte = p0 == b'-' || p0 == b'.';
+                if is_marker_byte
+                    && self.peek_at(1) == p0
+                    && self.peek_at(2) == p0
+                    && (self.pos + 3 >= self.input.len()
+                        || Self::is_blank_or_break(self.peek_at(3)))
+                {
+                    break;
+                }
+            }
+
             // Count leading spaces.
             let mut spaces = 0;
             while self.peek() == b' ' {
@@ -1669,53 +1694,74 @@ impl<'a> Scanner<'a> {
                 break;
             }
 
-            // Handle extra indentation.
-            if spaces > block_indent {
-                // More-indented line: include extra spaces in the content.
-                if !trailing_breaks.is_empty() {
-                    string.push_str(&trailing_breaks);
-                    trailing_breaks.clear();
-                    if !literal && leading_blank {
-                        // nothing special
-                    }
-                }
-                let extra = spaces - block_indent;
-                for _ in 0..extra {
-                    string.push(' ');
-                }
-            }
-
+            // Empty line (blank-only or break-only) — record and continue
+            // before any fold decision so empty lines accumulate as `\n`s
+            // in `trailing_breaks` rather than being treated as content.
+            //
+            // For *literal* style, a whitespace-only line whose leading
+            // spaces exceed `block_indent` carries content: per YAML
+            // 1.2.2 §8.1.1.4, every character at or beyond the content
+            // indentation is preserved literally. The exception is
+            // *leading* whitespace-only lines (before any real content
+            // has been emitted) — those are part of the leading
+            // empty-line region and contribute only their `\n`, not
+            // their indent characters.
             if Self::is_break(self.peek()) || self.is_eof() {
-                // Empty line.
                 if !Self::is_break(self.peek()) {
                     break;
+                }
+                let extra = spaces.saturating_sub(block_indent);
+                if literal && extra > 0 && !string.is_empty() {
+                    if !trailing_breaks.is_empty() {
+                        string.push_str(&trailing_breaks);
+                        trailing_breaks.clear();
+                    }
+                    for _ in 0..extra {
+                        string.push(' ');
+                    }
                 }
                 trailing_breaks.push('\n');
                 self.skip_line();
                 continue;
             }
 
-            // Fold or preserve line breaks.
+            // Determine more-indented status of the current content line.
+            // YAML 1.2.2 §8.1.1.5: a line is "more-indented" if it has
+            // extra leading spaces beyond `block_indent`, or if its first
+            // non-leading-space character is a tab. The break(s) into and
+            // out of a more-indented line are preserved (not folded).
+            let extra = spaces.saturating_sub(block_indent);
+            let starts_with_tab = self.peek() == b'\t';
+            let is_more_indented = extra > 0 || starts_with_tab;
+
+            // Apply fold logic. Order of cases:
+            //   * literal style: every break preserved as-is.
+            //   * before any content has been emitted: leading empty
+            //     lines preserved (`b-l-folded` does not fold a leading
+            //     break against the implicit header break).
+            //   * either side is more-indented: every break preserved.
+            //   * single break between regular content lines: fold to ' '.
+            //   * multiple breaks between regular content: drop the
+            //     leading break (the fold-into-empty-line) and keep the
+            //     rest as `\n`s.
             if !trailing_breaks.is_empty() {
-                if literal {
+                let preserve_all =
+                    literal || string.is_empty() || is_more_indented || leading_blank;
+                if preserve_all {
                     string.push_str(&trailing_breaks);
+                } else if trailing_breaks.len() == 1 {
+                    string.push(' ');
                 } else {
-                    // Folded: single break becomes space, multiple breaks preserved.
-                    if trailing_breaks.len() == 1 {
-                        if leading_blank || self.peek() == b' ' || self.peek() == b'\t' {
-                            string.push('\n');
-                        } else {
-                            string.push(' ');
-                        }
-                    } else {
-                        // Keep all but first break.
-                        string.push_str(&trailing_breaks[1..]);
-                    }
+                    string.push_str(&trailing_breaks[1..]);
                 }
                 trailing_breaks.clear();
             }
 
-            leading_blank = self.peek() == b' ' || self.peek() == b'\t';
+            for _ in 0..extra {
+                string.push(' ');
+            }
+
+            leading_blank = is_more_indented;
 
             // Read content of the line.
             while !self.is_eof() && !Self::is_break(self.peek()) {
@@ -1734,19 +1780,16 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // Apply chomping.
+        // Apply chomping. YAML 1.2.2 §8.1.1.2:
+        //   `+` (keep): preserve every trailing line break.
+        //   default (clip): a single trailing `\n` if and only if the
+        //     scalar has any content. An empty scalar with `>`/`|` and
+        //     trailing blank lines stays empty.
+        //   `-` (strip): no trailing line break.
         match chomping {
-            1 => {
-                // Keep: append all trailing breaks.
-                string.push_str(&trailing_breaks);
-            }
-            // Clip: append single trailing newline.
-            0 if !string.is_empty() || !trailing_breaks.is_empty() => {
-                string.push('\n');
-            }
-            _ => {
-                // Strip (or clip with empty content): don't append anything.
-            }
+            1 => string.push_str(&trailing_breaks),
+            0 if !string.is_empty() => string.push('\n'),
+            _ => {}
         }
 
         Ok(string)

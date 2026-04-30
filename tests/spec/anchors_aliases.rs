@@ -83,3 +83,13 @@ fn anchor_in_flow_sequence() {
     assert_eq!(v[0], vec![1, 2]);
     assert_eq!(v[1], vec![1, 2]);
 }
+
+// yaml-test-suite Y2GN — `:` is a valid character inside an anchor name.
+// Anchor names terminate only at whitespace and flow indicators per
+// YAML 1.2.2 §6.9.2 (ns-anchor-char = ns-char - c-flow-indicator).
+#[test]
+fn anchor_name_may_contain_colon() {
+    use std::collections::HashMap;
+    let m: HashMap<String, String> = from_str("---\nkey: &an:chor value\n").unwrap();
+    assert_eq!(m["key"], "value");
+}
