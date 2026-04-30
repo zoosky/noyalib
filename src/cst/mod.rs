@@ -14,14 +14,23 @@
 //! is unchanged. Trivia capture is enabled only on this path; the
 //! fast path pays no extra cost.
 //!
-//! # Phase 1 scope
+//! # Current scope
 //!
-//! Read-only. The green tree is a flat sequence of leaves under a
-//! single `Document` parent — sufficient to satisfy the round-trip
-//! property and to expose source bytes for inspection. Hierarchical
-//! nesting (per-mapping / per-sequence parent nodes) and the typed
-//! mutation API (`get` / `set` / `replace_span`) are deferred to a
-//! follow-up phase per the design doc.
+//! - **Read access.** [`Document::as_value`] for a typed view,
+//!   [`Document::span_at`] / [`Document::get`] for byte-range lookups
+//!   by `path`, and [`Document::syntax`] for the green tree itself.
+//! - **Mutation.** [`Document::replace_span`] (primitive byte
+//!   replacement) and [`Document::set`] (path-targeted, the wrapper
+//!   most callers want). Both re-parse on edit and reject the change
+//!   if the spliced source is invalid YAML, leaving the document
+//!   untouched.
+//!
+//! The green tree itself is still a flat sequence of leaves under a
+//! single `Document` parent — sufficient for byte-faithful
+//! round-tripping and for the span-based edit primitive. Hierarchical
+//! nesting (per-mapping / per-sequence parent nodes) and an `Emit`
+//! trait that auto-formats replacement values are tracked as
+//! follow-ups in `docs/design/green-tree.md`.
 //!
 //! # Examples
 //!

@@ -125,9 +125,13 @@ mod anchors;
 /// Zero-copy YAML values that borrow from the input.
 pub mod borrowed;
 mod comments;
-/// Side-table CST for byte-faithful round-tripping (Phase 1: read-only).
+/// Side-table CST for byte-faithful round-tripping with typed
+/// path-targeted edits.
 ///
-/// See `docs/design/green-tree.md` for the architectural plan.
+/// See `docs/design/green-tree.md` for the architectural plan. The
+/// `Document` API depends on the parser's `SpanTree`, which lives
+/// under the `std` feature.
+#[cfg(feature = "std")]
 pub mod cst;
 mod de;
 /// Spanned-to-miette diagnostic bridge (requires `miette` feature).

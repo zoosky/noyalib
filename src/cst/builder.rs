@@ -1,30 +1,61 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! Build a [`GreenNode`] from a fully-parsed input.
+//! Build the parts of a [`crate::cst::Document`] from input bytes.
 //!
-//! Phase 1 of the green-tree migration: produces a flat
-//! `SyntaxKind::Document` node whose children are every source-bearing
-//! token, every piece of inter-token trivia, and every comment, in
-//! document order. The concatenation of those children's text equals
-//! the input byte-for-byte (the round-trip property).
+//! Currently produces three independently-useful artifacts in two
+//! parse passes:
+//!   * a flat `SyntaxKind::Document` green tree whose leaves
+//!     reproduce the input byte-for-byte (Phase 1's round-trip
+//!     property);
+//!   * a fully-resolved [`Value`] (the existing AST) for typed
+//!     read access;
+//!   * a [`SpanTree`] aligned with the `Value` for `path`-based span
+//!     resolution.
 //!
-//! Hierarchical nesting (per-mapping / per-sequence parent nodes) is
-//! intentionally deferred to a follow-up phase; the typed mutation
-//! API will sit on top of it.
+//! The two passes are deliberately kept separate so that strictness
+//! fixes in either path are inherited automatically. Optimising into
+//! a single pass is a follow-up.
 
 use crate::cst::green::{GreenChild, GreenNode};
 use crate::cst::syntax::SyntaxKind;
 use crate::error::{Error, Result};
+#[cfg(feature = "std")]
+use crate::parser::ParseConfig;
 use crate::parser::{
     RecordedToken, RecordedTokenKind, ScannedComment, Scanner, TokenKind, Trivia, TriviaKind,
 };
 use crate::prelude::*;
+#[cfg(feature = "std")]
+use crate::span_context::SpanTree;
+use crate::value::Value;
+
+/// Outcome of a green-tree-aware parse.
+#[cfg(feature = "std")]
+pub(crate) struct ParsedDocument {
+    pub green: GreenNode,
+    pub value: Value,
+    pub span_tree: SpanTree,
+}
+
+/// Parse `input` once for `Value` + `SpanTree` and once for the green
+/// tree. Returns both — the caller wraps them in a `Document`.
+#[cfg(feature = "std")]
+pub(crate) fn parse_full(input: &str) -> Result<ParsedDocument> {
+    let cfg = ParseConfig::default();
+    let (value, span_tree) = crate::parser::parse_one(input, &cfg)?;
+    let green = build_green_tree(input)?;
+    Ok(ParsedDocument {
+        green,
+        value,
+        span_tree,
+    })
+}
 
 /// Run a recording scanner over `input` and assemble its outputs into
 /// a flat green tree. The function exhausts the token stream so any
 /// scanner-level error surfaces here rather than later.
-pub(crate) fn build_document(input: &str) -> Result<GreenNode> {
+pub(crate) fn build_green_tree(input: &str) -> Result<GreenNode> {
     let mut scanner = Scanner::new(input);
     scanner.enable_recording();
 
