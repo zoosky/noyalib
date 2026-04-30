@@ -220,3 +220,24 @@ fn block_scalar_indent_indicator_validation() {
     let r2: Result<Value, _> = from_str("--- |10\n");
     assert!(r2.is_err(), "two-digit indent indicator is invalid");
 }
+
+// yaml-test-suite 4H7K — a stray `]` outside any flow sequence is an
+// error.
+#[test]
+fn stray_flow_close_outside_flow_rejected() {
+    let r1: Result<Value, _> = from_str("[ a, b, c ] ]\n");
+    assert!(r1.is_err());
+    let r2: Result<Value, _> = from_str("{ a: 1 } }\n");
+    assert!(r2.is_err());
+}
+
+// yaml-test-suite H7TQ — non-numeric trailing content after the version
+// of a `%YAML` directive is rejected. (Numeric continuations are
+// accepted as a lenient extension; see ZYU8.)
+#[test]
+fn yaml_directive_rejects_non_numeric_extras() {
+    let r: Result<Value, _> = from_str("%YAML 1.2 foo\n---\n");
+    assert!(r.is_err());
+    // Numeric-looking trailing token still parses.
+    let _: Value = from_str("%YAML 1.1 1.2\n---\n").unwrap();
+}

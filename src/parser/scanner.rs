@@ -688,11 +688,10 @@ impl<'a> Scanner<'a> {
         let name = self.slice_str(name_start, self.pos).to_owned();
 
         // Per YAML 1.2.2 §6.8.1: only one `%YAML` directive per document.
-        // (The "extra arguments" form `%YAML 1.1 1.2` is technically out
-        // of grammar but the test suite classifies it as "valid YAML
-        // according to the 1.2 productions, just not usefully valid",
-        // so we accept it like libyaml does. The clearly-malformed
-        // `%YAML 1.2 foo` case is left for a future stricter mode.)
+        // We accept the questionable `%YAML 1.1 1.2` form (ZYU8: extra
+        // numeric token is "valid YAML according to the 1.2 productions,
+        // just not usefully valid") but reject clearly-malformed
+        // alphabetic trailing content like `%YAML 1.2 foo` (H7TQ).
         if name == "YAML" {
             if self.yaml_directive_seen {
                 return Err(
@@ -700,6 +699,17 @@ impl<'a> Scanner<'a> {
                 );
             }
             self.yaml_directive_seen = true;
+            self.skip_blank();
+            while !self.is_eof() && !Self::is_blank_or_break(self.peek()) {
+                self.advance();
+            }
+            self.skip_blank();
+            if !self.is_eof() && !Self::is_break(self.peek()) && self.peek() != b'#' {
+                let extra = self.peek();
+                if !extra.is_ascii_digit() && extra != b'.' {
+                    return Err(self.error("unexpected non-numeric argument on %YAML directive"));
+                }
+            }
         }
 
         // Skip to end of line — directive contents past validation are
@@ -769,13 +779,21 @@ impl<'a> Scanner<'a> {
     }
 
     fn fetch_flow_collection_end(&mut self, is_seq: bool) -> ScanResult<()> {
+        // Per YAML 1.2.2 §7.4: `]` / `}` may only close an open flow
+        // collection of the matching kind. A stray closing indicator
+        // outside any flow context (e.g. `[a, b] ]`) is invalid.
+        if self.flow_level == 0 {
+            return Err(self.error(if is_seq {
+                "unexpected ']' outside of any flow sequence"
+            } else {
+                "unexpected '}' outside of any flow mapping"
+            }));
+        }
         self.remove_simple_key()?;
         // Pop the simple-key context that was pushed when this flow
         // collection was opened.
         let _ = self.simple_keys.pop();
-        if self.flow_level > 0 {
-            self.flow_level -= 1;
-        }
+        self.flow_level -= 1;
         self.simple_key_allowed = false;
         self.mark = self.pos;
         self.advance();
