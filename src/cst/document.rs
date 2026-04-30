@@ -48,7 +48,6 @@ impl Document {
     pub fn syntax(&self) -> &GreenNode {
         &self.green
     }
-
 }
 
 impl fmt::Display for Document {

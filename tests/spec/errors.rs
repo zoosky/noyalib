@@ -241,3 +241,25 @@ fn yaml_directive_rejects_non_numeric_extras() {
     // Numeric-looking trailing token still parses.
     let _: Value = from_str("%YAML 1.1 1.2\n---\n").unwrap();
 }
+
+// yaml-test-suite 9KBC / CXX2 — `from_str` previously stopped lazily
+// at the first complete value, silently swallowing the spec
+// violations that follow. The streaming deserializer now drains
+// trailing events, surfacing those errors instead of returning a
+// partial value.
+#[test]
+fn from_str_drains_trailing_events_to_surface_errors() {
+    // 9KBC — a mapping inlined onto the `---` line is invalid; the
+    // continuation key on the next line triggers
+    // "mapping values are not allowed in this context" once events
+    // past the first scalar are fetched.
+    let r: Result<Value, _> = from_str("--- key1: value1\n    key2: value2\n");
+    assert!(
+        r.is_err(),
+        "expected from_str to surface the lazy-only-accept error"
+    );
+
+    // CXX2 — anchor + key on the document-start line.
+    let r: Result<Value, _> = from_str("--- &anchor a: b\n");
+    assert!(r.is_err());
+}

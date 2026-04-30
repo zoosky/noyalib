@@ -1416,11 +1416,22 @@ where
     let res = T::deserialize(&mut de);
     match res {
         Ok(val) => {
+            // Drain remaining events to surface any errors lurking past
+            // the point at which `T::deserialize` was satisfied. Without
+            // this, lenient inputs like `--- key1: value1\n    key2: value2`
+            // would lazily yield `Value::String("key1")` because the
+            // serde visitor stops at the first complete node — the
+            // subsequent tokens that violate the spec (e.g. "mapping
+            // values are not allowed in this context") would never be
+            // fetched. Stop *at* `StreamEnd` (querying past it would
+            // return a benign "parser has already finished" error);
+            // propagate any error encountered before that.
             loop {
                 match de.next_event() {
-                    Ok(Event::DocumentEnd | Event::StreamEnd) => {}
-                    Ok(Event::StreamStart) => {}
-                    _ => break,
+                    Ok(Event::StreamEnd) => break,
+                    Ok(Event::DocumentEnd | Event::StreamStart) => continue,
+                    Ok(_) => break,
+                    Err(e) => return Some(Err(e)),
                 }
             }
             Some(Ok(val))
