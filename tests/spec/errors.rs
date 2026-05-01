@@ -308,6 +308,128 @@ fn empty_implicit_key_after_anchored_value_parses() {
     let _: Value = from_str("? &a a\n: &b b\n: *a\n").unwrap();
 }
 
+// yaml-test-suite CXX2 / 9KBC — block-structural indicators (`:`,
+// `?`, `-`) cannot open a collection on the same line as `---`. The
+// `---` indicator may share a line only with a scalar or flow node.
+#[test]
+fn block_collection_inline_with_doc_start_rejected() {
+    // CXX2 — anchor + key + `:` inline with `---`.
+    let r: Result<Value, _> = from_str("--- &anchor a: b\n");
+    assert!(r.is_err());
+    // 9KBC — bare key + `:` inline with `---`.
+    let r: Result<Value, _> = from_str("--- key1: value1\n    key2: value2\n");
+    assert!(r.is_err());
+    // Counter-examples: scalar / flow node inline with `---` is fine.
+    let _: Value = from_str("--- text\n").unwrap();
+    let _: Value = from_str("--- {a: 1}\n").unwrap();
+}
+
+// yaml-test-suite 9MMA / B63P — directives must be followed by an
+// explicit `---` document indicator. A directive with no document is
+// invalid.
+#[test]
+fn directive_without_document_rejected() {
+    let r: Result<Value, _> = from_str("%YAML 1.2\n");
+    assert!(r.is_err());
+}
+
+// yaml-test-suite RHX7 / 9HCY / MUS6:1 — directives must not appear
+// between document content and the next `---` without an intervening
+// `...` to close the previous document.
+//
+// EB22 (`---\nscalar1\n%YAML 1.2\n---\nscalar2`) is an adjacent
+// case: per the spec, the parser would need lookahead to tell
+// whether `%YAML` is plain-scalar continuation (XLQ9-style) or a
+// directive announcing a new doc. We accept the lenient reading
+// here for now.
+#[test]
+fn directive_without_doc_end_marker_rejected() {
+    // RHX7 — second `%YAML` after a mapping with no `...`.
+    let r: Result<Value, _> = from_str("---\nkey: value\n%YAML 1.2\n---\n");
+    assert!(r.is_err());
+    // 9HCY — implicit doc + `%TAG` without `...`.
+    let r: Result<Value, _> = from_str(
+        "!foo \"bar\"\n%TAG ! tag:example.com,2000:app/\n---\n!foo \"bar\"\n",
+    );
+    assert!(r.is_err());
+    // Counter-example: directive after `...` is fine.
+    let _: Vec<Value> = noyalib::load_all_as(
+        "---\nfoo: bar\n...\n%YAML 1.2\n---\nbaz: qux\n",
+    )
+    .unwrap();
+}
+
+// yaml-test-suite MUS6:0 — `%YAML 1.1#...` packs a comment indicator
+// directly against the version digits with no whitespace separator.
+#[test]
+fn directive_comment_without_whitespace_rejected() {
+    let r: Result<Value, _> = from_str("%YAML 1.1#...\n---\n");
+    assert!(r.is_err());
+    // Comment with whitespace is fine.
+    let _: Value = from_str("%YAML 1.1 # ok\n---\nfoo: 1\n").unwrap();
+}
+
+// yaml-test-suite SR86 / SU74 — aliases are complete references, so
+// they cannot be decorated with anchors (or tags). The check fires
+// only on direct same-line adjacency; line-broken cases like
+// `&node3\n  *alias1: scalar3` (26DV) where the anchor decorates
+// an inner mapping are still valid.
+#[test]
+fn alias_decorated_by_anchor_rejected() {
+    // SR86 — `&b *a` adjacency.
+    let r: Result<Value, _> = from_str("key1: &a value\nkey2: &b *a\n");
+    assert!(r.is_err());
+    // Line-broken counter-pattern: an unknown alias might fail
+    // resolution, but it must NOT fail the adjacency check — it
+    // should reach the loader.
+    let r: Result<Value, _> = from_str("top: &n3\n  *alias : scalar3\n");
+    if let Err(e) = r {
+        assert!(
+            !e.to_string().contains("alias cannot be decorated"),
+            "line-broken anchor → alias-key must not trigger the adjacency guard"
+        );
+    }
+}
+
+// yaml-test-suite LHL4 — `!invalid{}tag` packs flow indicators into a
+// tag URI without separation. Tag URIs are followed by separation
+// (whitespace / line break) before the next node.
+#[test]
+fn tag_followed_by_flow_indicator_rejected() {
+    let r: Result<Value, _> = from_str("---\n!invalid{}tag scalar\n");
+    assert!(r.is_err());
+    // Counter-example: tag separated by whitespace from a flow node.
+    let _: Value = from_str("---\n!foo {a: 1}\n").unwrap();
+}
+
+// yaml-test-suite BS4K / KS4U — content after the first document's
+// root node, without `---` or `...` to mark a new document, is stray
+// and rejected. Bare implicit doc 2 after `...` is fine (7Z25).
+#[test]
+fn stray_content_after_first_implicit_document_rejected() {
+    // BS4K — comment terminates plain scalar; second scalar is stray.
+    let r: Result<Value, _> = from_str("word1  # comment\nword2\n");
+    assert!(r.is_err());
+    // KS4U — content after closing `]` of the root flow seq.
+    let r: Result<Value, _> = from_str("---\n[\nseq\n]\nstray\n");
+    assert!(r.is_err());
+    // 7Z25 — implicit doc 2 after explicit `...` is fine.
+    let _: Vec<Value> = noyalib::load_all_as("---\nscalar1\n...\nkey: value\n").unwrap();
+}
+
+// yaml-test-suite 9C9N — flow content continuation across a line
+// break must be indented more than the surrounding block; otherwise
+// it would be ambiguous with sibling block content.
+#[test]
+fn flow_continuation_must_be_indented_more_than_parent() {
+    // 9C9N — flow seq continues at col 0 inside an indented block.
+    let r: Result<Value, _> = from_str("---\nflow: [a,\nb,\nc]\n");
+    assert!(r.is_err());
+    // Counter-examples: properly-indented continuation parses.
+    let _: Value = from_str("---\nflow: [a,\n  b,\n  c]\n").unwrap();
+    let _: Value = from_str("[\n  a,\n  b\n]\n").unwrap();
+}
+
 // yaml-test-suite 9KBC / CXX2 — `from_str` previously stopped lazily
 // at the first complete value, silently swallowing the spec
 // violations that follow. The streaming deserializer now drains

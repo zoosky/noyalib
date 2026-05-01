@@ -93,6 +93,12 @@ pub(crate) struct Parser<'a> {
     /// Anchor name registry.
     marks: IndexMap<String, usize>,
     next_anchor_id: usize,
+    /// `true` once the first document in the stream has ended. Per
+    /// YAML 1.2.2 §9.1.2, implicit documents are only allowed as the
+    /// first document; any subsequent document must start with an
+    /// explicit `---` (or follow `...`). Used to reject stray content
+    /// at the end of a document (BS4K, KS4U-class).
+    first_document_ended: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -106,6 +112,7 @@ impl<'a> Parser<'a> {
             has_current: false,
             marks: IndexMap::new(),
             next_anchor_id: 0,
+            first_document_ended: false,
         }
     }
 
@@ -253,6 +260,21 @@ impl<'a> Parser<'a> {
             return Ok(Event::DocumentStart);
         }
 
+        // YAML 1.2.2 §9.1.2: subsequent documents must begin with an
+        // explicit `---`. Reaching this point with `first_document_ended`
+        // means there is content after the first document but neither
+        // a `---` indicator nor end-of-stream — that is stray and
+        // invalid (BS4K, KS4U).
+        if self.first_document_ended {
+            let span = self.current_span;
+            return Err(ScanError {
+                message: Cow::Borrowed(
+                    "stray content after document — subsequent documents must start with '---'",
+                ),
+                index: span.start,
+            });
+        }
+
         if implicit {
             self.state = State::BlockNode;
             self.states.push(State::DocumentEnd);
@@ -280,12 +302,21 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_document_end(&mut self) -> Result<Event<'a>, ScanError> {
-        if self.peek_is(|k| matches!(k, TokenKind::DocumentEnd))? {
+        let saw_explicit_end = self.peek_is(|k| matches!(k, TokenKind::DocumentEnd))?;
+        if saw_explicit_end {
             self.skip()?;
         }
         self.marks.clear();
         self.next_anchor_id = 0;
         self.state = State::DocumentStart;
+        // Only mark the "subsequent docs must be explicit" flag when
+        // the current document ended *implicitly* (no `...`). A
+        // bare implicit document after `...` is allowed (7Z25); only
+        // stray content with no boundary at all is invalid (BS4K,
+        // KS4U).
+        if !saw_explicit_end {
+            self.first_document_ended = true;
+        }
         Ok(Event::DocumentEnd)
     }
 

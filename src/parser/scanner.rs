@@ -169,6 +169,42 @@ pub(crate) struct Scanner<'a> {
     /// next token is dispatched. Used by the indent-rigor check
     /// added for §6.5 / §8.1 strict mode (4HVU, EW3V, …).
     last_token_opens_block: bool,
+    /// `true` between a `---` directives-end indicator and the next
+    /// line break — the only YAML node that may share that line is a
+    /// scalar or flow collection (per §9.1.1). A block-structural
+    /// token (`:` / `?` / `-`) here would open a block collection
+    /// inline with `---`, which the spec rejects (CXX2, 9KBC).
+    doc_start_inline: bool,
+    /// `true` once a directive (`%YAML` / `%TAG` / reserved) has been
+    /// consumed without an intervening `---`. Per §6.8, directives
+    /// must be followed by an explicit `---`; otherwise the document
+    /// they decorate never starts (9MMA, B63P).
+    pending_directive_needs_doc_start: bool,
+    /// `true` between the start of a document's content and the next
+    /// `...` document-end marker (or stream end). Used to reject
+    /// directives that appear without an intervening `...` to close
+    /// the previous document (RHX7, EB22, 9HCY, MUS6:1).
+    in_document_body: bool,
+    /// Categorical record of the most recently *emitted* token. The
+    /// `tokens` vec cannot be inspected reliably for this — slots
+    /// past `tokens_consumed` are placeholder `StreamStart` after
+    /// `core::mem::take` — so this field is updated in `emit` and
+    /// preserved across the consume cycle. Used by the alias-decoration
+    /// check (SR86, SU74).
+    last_emitted_kind: LastEmitted,
+}
+
+/// Compact record of the most recent emit, used by guard checks
+/// after the underlying `Token` may have been moved out via
+/// `core::mem::take`. We only need to know "was it an anchor-or-tag"
+/// for the current set of guards; if we ever need richer state, this
+/// can grow to a full enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum LastEmitted {
+    #[default]
+    Other,
+    Anchor,
+    Tag,
 }
 
 /// Internal comment record captured by the scanner.
@@ -309,6 +345,10 @@ impl<'a> Scanner<'a> {
             // Initial value: at stream start, *any* column is valid
             // for the first token (root may be indented arbitrarily).
             last_token_opens_block: true,
+            doc_start_inline: false,
+            pending_directive_needs_doc_start: false,
+            in_document_body: false,
+            last_emitted_kind: LastEmitted::Other,
         }
     }
 
@@ -460,6 +500,26 @@ impl<'a> Scanner<'a> {
     }
 
     fn emit(&mut self, kind: TokenKind<'a>) {
+        // Document-content tokens establish that we are inside a
+        // document body. Subsequent directives without an
+        // intervening `...` will be rejected (RHX7, EB22, 9HCY,
+        // MUS6:1). Stream and document boundary tokens themselves
+        // do not count as content.
+        if !matches!(
+            kind,
+            TokenKind::StreamStart
+                | TokenKind::StreamEnd
+                | TokenKind::DocumentStart
+                | TokenKind::DocumentEnd
+                | TokenKind::BlockEnd
+        ) {
+            self.in_document_body = true;
+        }
+        self.last_emitted_kind = match &kind {
+            TokenKind::Anchor(_) => LastEmitted::Anchor,
+            TokenKind::Tag(_, _) => LastEmitted::Tag,
+            _ => LastEmitted::Other,
+        };
         let span = Span {
             start: self.mark,
             end: self.pos,
@@ -468,6 +528,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn insert_token(&mut self, index: usize, kind: TokenKind<'a>, span: Span) {
+        // `insert_token` is used to back-patch synthetic
+        // BlockMappingStart / BlockSequenceStart / Key tokens for
+        // simple-key promotion. These also count as document
+        // content for the directive-after-content guard.
+        if !matches!(kind, TokenKind::BlockEnd) {
+            self.in_document_body = true;
+        }
         self.tokens
             .insert(self.tokens_consumed + index, Token { kind, span });
     }
@@ -578,6 +645,45 @@ impl<'a> Scanner<'a> {
                         end: self.pos,
                         kind: TriviaKind::Newline,
                     });
+                }
+                // The `---` line is over — block content may now
+                // appear on subsequent lines under normal indent rules.
+                self.doc_start_inline = false;
+                // Anchors / tags only decorate a node on the *same*
+                // line; once a line break is crossed, the node they
+                // decorate is whatever appears after, which may be a
+                // collection that *contains* an alias key. Clearing
+                // `Anchor` / `Tag` here makes the alias-decoration
+                // guard fire only on direct adjacency (SR86: `&b *a`)
+                // and not on legitimate line-broken structures
+                // (26DV: `&node3\n  *alias1: scalar3`).
+                if matches!(
+                    self.last_emitted_kind,
+                    LastEmitted::Anchor | LastEmitted::Tag
+                ) {
+                    self.last_emitted_kind = LastEmitted::Other;
+                }
+                // Per YAML 1.2.2 §7.4 (Flow Collections): flow content
+                // continuation across a line break must be indented
+                // strictly more than the surrounding block — otherwise
+                // it would be ambiguous with sibling block content
+                // (9C9N). Skip when the new line is empty (only
+                // blanks before the next break); compare against the
+                // content column (after leading blanks), not the
+                // line-start column.
+                if self.flow_level > 0 && self.indent >= 0 {
+                    let mut look = self.pos;
+                    while look < self.input.len() && Self::is_blank(self.input[look]) {
+                        look += 1;
+                    }
+                    let line_has_content =
+                        look < self.input.len() && !Self::is_break(self.input[look]);
+                    let content_col = (look - self.pos) as i32;
+                    if line_has_content && content_col <= self.indent {
+                        return Err(self.error(
+                            "flow content must be indented more than the surrounding block",
+                        ));
+                    }
                 }
                 // In block context, allow simple key at line start.
                 if self.flow_level == 0 {
@@ -854,6 +960,15 @@ impl<'a> Scanner<'a> {
     }
 
     fn fetch_stream_end(&mut self) -> ScanResult<()> {
+        // Per YAML 1.2.2 §6.8: a directive must be followed by an
+        // explicit `---` document-start indicator. Reaching stream
+        // end with a pending directive means no document was ever
+        // opened for it — invalid (9MMA, B63P).
+        if self.pending_directive_needs_doc_start {
+            return Err(
+                self.error("directive must be followed by an explicit '---' document indicator")
+            );
+        }
         // Force-close any open blocks.
         self.unroll_indent(-1);
         self.remove_simple_key()?;
@@ -864,15 +979,30 @@ impl<'a> Scanner<'a> {
     }
 
     fn fetch_directive(&mut self) -> ScanResult<()> {
+        // Per YAML 1.2.2 §6.8 / §9.1.2: a directive must not appear
+        // after document content without an intervening `...`. The
+        // previous document needs an explicit footer first (RHX7,
+        // EB22, 9HCY, MUS6:1).
+        if self.in_document_body {
+            return Err(
+                self.error("directive must be preceded by '...' to close the previous document")
+            );
+        }
         self.unroll_indent(-1);
         self.remove_simple_key()?;
         self.simple_key_allowed = false;
+        // Directives must be followed by an explicit `---`. Record
+        // that we owe one; cleared on `DocumentStart`, asserted at
+        // stream end (9MMA, B63P).
+        self.pending_directive_needs_doc_start = true;
 
         let directive_start = self.pos;
-        // Skip the leading `%` and parse the directive name.
+        // Skip the leading `%` and parse the directive name. Stop at
+        // `#` as well so the post-validation comment-whitespace check
+        // can flag `%foo#bad`-style packing.
         self.advance();
         let name_start = self.pos;
-        while !self.is_eof() && !Self::is_blank_or_break(self.peek()) {
+        while !self.is_eof() && !Self::is_blank_or_break(self.peek()) && self.peek() != b'#' {
             self.advance();
         }
         let name = self.slice_str(name_start, self.pos).to_owned();
@@ -890,7 +1020,10 @@ impl<'a> Scanner<'a> {
             }
             self.yaml_directive_seen = true;
             self.skip_blank();
-            while !self.is_eof() && !Self::is_blank_or_break(self.peek()) {
+            // Same `#` stopping rule as the directive-name loop —
+            // `1.1#...` (MUS6:0) packs a comment indicator straight
+            // against the version digits and must fail validation.
+            while !self.is_eof() && !Self::is_blank_or_break(self.peek()) && self.peek() != b'#' {
                 self.advance();
             }
             self.skip_blank();
@@ -900,6 +1033,17 @@ impl<'a> Scanner<'a> {
                     return Err(self.error("unexpected non-numeric argument on %YAML directive"));
                 }
             }
+        }
+
+        // Per YAML 1.2.2 §6.6: a `#` on the directive line introduces
+        // a trailing comment only when preceded by whitespace.
+        // `%YAML 1.1#...` (MUS6:0) packs `#` directly against the
+        // version digits and is invalid.
+        if self.peek() == b'#' && self.pos > 0 && !Self::is_blank_or_break(self.input[self.pos - 1])
+        {
+            return Err(self.error(
+                "comment indicator '#' on a directive line must be preceded by a space or tab",
+            ));
         }
 
         // Skip to end of line — directive contents past validation are
@@ -927,10 +1071,23 @@ impl<'a> Scanner<'a> {
         self.advance_by(3);
         if is_start {
             self.emit(TokenKind::DocumentStart);
+            // The pending directive (if any) is now satisfied; the
+            // `---` line is the new active document start.
+            self.pending_directive_needs_doc_start = false;
+            // Track that we are still on the `---` line: only scalar
+            // / flow content may appear before the next line break
+            // (CXX2, 9KBC).
+            self.doc_start_inline = true;
+            // The previous document (if any) was closed by `...` —
+            // or, by allowing `---` without `...` for the common
+            // multi-document stream form, we treat `---` itself as a
+            // boundary here too.
+            self.in_document_body = false;
         } else {
             self.emit(TokenKind::DocumentEnd);
             // Directives are scoped to a single document.
             self.yaml_directive_seen = false;
+            self.in_document_body = false;
             // Per YAML 1.2.2 §6.8: a `...` document-end marker must be
             // followed only by whitespace, an optional comment, and a
             // line break. Walk past any inline blanks; if non-comment,
@@ -1017,6 +1174,24 @@ impl<'a> Scanner<'a> {
         self.mark = self.pos;
         self.advance();
         self.emit(TokenKind::FlowEntry);
+        Ok(())
+    }
+
+    /// Per YAML 1.2.2 §9.1.1, the only YAML node that may share a
+    /// line with the `---` directives-end indicator is a scalar or
+    /// flow collection. Opening a block collection on the same line
+    /// (via `:` / `?` / `-` outside any `{}`/`[]`) is invalid —
+    /// `---` followed by `key: value` is *not* a one-line block
+    /// mapping (CXX2, 9KBC).
+    fn reject_block_inline_with_doc_start(&self, indicator: &'static str) -> ScanResult<()> {
+        if self.doc_start_inline {
+            return Err(ScanError {
+                message: Cow::Owned(format!(
+                    "{indicator} cannot open a block collection on the same line as '---'"
+                )),
+                index: self.pos,
+            });
+        }
         Ok(())
     }
 
@@ -1121,6 +1296,7 @@ impl<'a> Scanner<'a> {
             if !self.simple_key_allowed && !self.explicit_key_pending {
                 return Err(self.error("block sequence entries are not allowed in this context"));
             }
+            self.reject_block_inline_with_doc_start("'-'")?;
             let col = self.column() as i32;
             self.roll_indent(col, None, TokenKind::BlockSequenceStart, self.pos);
         }
@@ -1143,6 +1319,7 @@ impl<'a> Scanner<'a> {
             if !self.simple_key_allowed {
                 return Err(self.error("mapping keys are not allowed in this context"));
             }
+            self.reject_block_inline_with_doc_start("'?'")?;
             let col = self.column() as i32;
             self.roll_indent(col, None, TokenKind::BlockMappingStart, self.pos);
         }
@@ -1230,6 +1407,7 @@ impl<'a> Scanner<'a> {
 
                 // Roll indent for block mapping.
                 if self.flow_level == 0 {
+                    self.reject_block_inline_with_doc_start("':'")?;
                     let col = {
                         // Find column of the simple key start.
                         let slice = &self.input[..sk.index];
@@ -1293,6 +1471,17 @@ impl<'a> Scanner<'a> {
     }
 
     fn fetch_alias(&mut self) -> ScanResult<()> {
+        // Per YAML 1.2.2 §7.1: aliases are complete references, so
+        // node properties (anchors and tags) cannot decorate them
+        // (SR86, SU74).
+        if matches!(
+            self.last_emitted_kind,
+            LastEmitted::Anchor | LastEmitted::Tag
+        ) {
+            return Err(self.error(
+                "alias cannot be decorated with an anchor or tag — aliases are complete references",
+            ));
+        }
         self.save_simple_key();
         self.simple_key_allowed = false;
         self.mark = self.pos;
@@ -1400,6 +1589,17 @@ impl<'a> Scanner<'a> {
                 self.advance();
             }
             suffix = Cow::Borrowed(self.slice_str(start, self.pos));
+        }
+
+        // Per YAML 1.2.2 §6.9.1, a tag URI is followed by separation
+        // (whitespace or a line break) before the next node. A flow
+        // indicator (`{`, `}`, `[`, `]`, `,`) packed directly against
+        // the tag without a separator means the URI itself is
+        // malformed (`!invalid{}tag` — LHL4).
+        if matches!(self.peek(), b'{' | b'}' | b'[' | b']' | b',') {
+            return Err(self.error(
+                "tag must be followed by whitespace or a line break, not a flow indicator",
+            ));
         }
 
         self.emit(TokenKind::Tag(handle, suffix));
@@ -2118,13 +2318,12 @@ impl<'a> Scanner<'a> {
         self.pos = save_pos;
         self.col = save_col;
 
-        let block_indent;
-        if increment > 0 {
-            block_indent = if self.indent >= 0 {
+        let block_indent = if increment > 0 {
+            if self.indent >= 0 {
                 self.indent as usize + increment
             } else {
                 increment
-            };
+            }
         } else {
             let min_indent = if self.indent >= 0 {
                 self.indent as usize + 1
@@ -2138,8 +2337,8 @@ impl<'a> Scanner<'a> {
             } else {
                 max_leading_empty_spaces
             };
-            block_indent = actual_detected.max(min_indent);
-        }
+            actual_detected.max(min_indent)
+        };
 
         // YAML 1.2.2 §8.1.1.2: If any leading empty line contains more spaces than
         // the indentation level, it is an error.
