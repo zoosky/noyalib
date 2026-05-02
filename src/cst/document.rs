@@ -352,17 +352,11 @@ impl Document {
                     if new_sub.kind() == cand.kind
                         && new_sub.text_len() == fragment.len() =>
                 {
-                    let new_arc: Arc<str> = Arc::from(new_source);
                     let new_root = rebuild_with_splice(
                         &self.green,
-                        start,
-                        end,
-                        delta,
-                        &new_sub,
                         n_old_start,
                         n_old_end,
-                        n_new_start,
-                        Arc::clone(&new_arc),
+                        new_sub,
                     );
                     return Some((new_root, scope_for_kind(cand.kind)));
                 }
@@ -641,9 +635,7 @@ impl fmt::Display for Document {
     /// drives `Document::to_string()` via the standard `ToString`
     /// blanket impl.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = String::with_capacity(self.green.text_len());
-        self.green.write_text(&mut out);
-        f.write_str(&out)
+        f.write_str(&self.green.text(&self.source))
     }
 }
 
@@ -977,34 +969,35 @@ fn walk_sequence(
 /// `''`-doubling escape. Returns `None` for keys whose textual
 /// representation differs from the segment string the user would
 /// pass — the caller falls back to the typed cache.
-fn entry_key_text<'s>(entry: &GreenNode, source: &'s str, _base: usize) -> Option<Cow<'s, str>> {
+fn entry_key_text<'s>(entry: &GreenNode, source: &'s str, base: usize) -> Option<Cow<'s, str>> {
+    let mut pos = base;
     for child in entry.children() {
+        let child_len = child.text_len();
         match child {
-            GreenChild::Token { kind, range } => match kind {
-                SyntaxKind::QuestionIndicator
-                | SyntaxKind::Whitespace
-                | SyntaxKind::Newline
-                | SyntaxKind::Comment
-                | SyntaxKind::AnchorMark
-                | SyntaxKind::TagMark => {}
-                SyntaxKind::PlainScalar => {
-                    return Some(Cow::Borrowed(&source[range.clone()]));
+            GreenChild::Token { kind, len } => {
+                let start = pos;
+                let end = pos + len;
+                match kind {
+                    SyntaxKind::QuestionIndicator
+                    | SyntaxKind::Whitespace
+                    | SyntaxKind::Newline
+                    | SyntaxKind::Comment
+                    | SyntaxKind::AnchorMark
+                    | SyntaxKind::TagMark => {}
+                    SyntaxKind::PlainScalar => {
+                        return Some(Cow::Borrowed(&source[start..end]));
+                    }
+                    SyntaxKind::SingleQuotedScalar => {
+                        return decode_single_quoted(&source[start..end]);
+                    }
+                    _ => return None,
                 }
-                SyntaxKind::SingleQuotedScalar => {
-                    let raw = &source[range.clone()];
-                    return decode_single_quoted(raw);
-                }
-                // Other scalar styles or indicators reach the key
-                // position only in atypical layouts the walker
-                // doesn't try to handle in Phase A.3.
-                _ => return None,
-            },
+            }
             GreenChild::Node(_) => {
-                // Nested composite as a key (`? <complex>`) — not
-                // handled here; fall back to the typed cache.
                 return None;
             }
         }
+        pos += child_len;
     }
     None
 }
