@@ -248,6 +248,10 @@ harness = false
 name = "validation_overhead"
 harness = false
 
+[[bench]]
+name = "incremental_repair"
+harness = false
+
 [features]
 default = ["std"]
 std = []
