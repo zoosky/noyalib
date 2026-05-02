@@ -5,7 +5,9 @@
 
 use core::fmt::Write as _;
 
-use crate::cst::builder::{document_boundaries, parse_full};
+use crate::cst::builder::{
+    document_boundaries, parse_full, parse_subtree, rebuild_with_splice, SubtreeContext,
+};
 use crate::cst::green::{GreenChild, GreenNode};
 use crate::cst::syntax::SyntaxKind;
 use crate::error::{Error, Result};
@@ -53,6 +55,29 @@ pub struct Document {
     green: GreenNode,
     value: Value,
     span_tree: SpanTree,
+    /// Outcome of the most recent edit's localised-repair attempt.
+    /// `None` for a freshly-parsed document or after a full
+    /// re-parse fallback.
+    last_repair_scope: core::cell::Cell<Option<RepairScope>>,
+}
+
+/// The scope at which the most recent edit was repaired.
+///
+/// Smaller scopes are faster — `Scalar` only re-parses the leaf;
+/// `Document` is equivalent to a full re-parse. Surfaced via
+/// [`Document::last_repair_scope`] for tests and tooling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairScope {
+    /// Reserved — Phase A does not yet repair at scalar granularity.
+    Scalar,
+    /// The smallest ancestor that contained the edit was a
+    /// `MappingEntry` or `SequenceItem`.
+    Entry,
+    /// The smallest ancestor that contained the edit was a
+    /// `BlockMapping` / `BlockSequence` / flow collection.
+    Collection,
+    /// Edit fell back to (or escalated to) a full document re-parse.
+    Document,
 }
 
 impl Document {
@@ -185,12 +210,121 @@ impl Document {
         new_source.push_str(&self.source[..start]);
         new_source.push_str(replacement);
         new_source.push_str(&self.source[end..]);
-        let parsed = parse_full(&new_source)?;
-        self.source = parsed.source;
-        self.green = parsed.green;
-        self.value = parsed.value;
-        self.span_tree = parsed.span_tree;
+
+        // Validate first: the full Value/SpanTree re-parse doubles
+        // as syntax-validation for the new source. If the spliced
+        // bytes don't form a valid YAML stream, error out *before*
+        // mutating any state — the document is left untouched.
+        let cfg = crate::parser::ParseConfig::default();
+        let (value, span_tree) = crate::parser::parse_one(&new_source, &cfg)?;
+
+        // Phase A: prefer a localised green-tree repair. The full
+        // green-tree re-parse below is the safety net — it runs
+        // whenever the local repair can't satisfy a shape guard,
+        // fails at every ladder rung, or produces a shape-changed
+        // sub-tree.
+        let (new_green, scope) = match self.try_local_repair_green(start, end, replacement, &new_source) {
+            Some((tree, scope)) => (tree, Some(scope)),
+            None => {
+                let parsed = parse_full(&new_source)?;
+                (parsed.green, Some(RepairScope::Document))
+            }
+        };
+        self.last_repair_scope.set(scope);
+        self.source = Arc::from(new_source.as_str());
+        self.green = new_green;
+        self.value = value;
+        self.span_tree = span_tree;
         Ok(())
+    }
+
+    /// Attempt to repair the green tree locally for the edit
+    /// `[start, end) → replacement`. Returns the new tree and the
+    /// scope that was successfully repaired, or `None` if escalation
+    /// to a full re-parse is required. Pure — does not mutate
+    /// `self`.
+    fn try_local_repair_green(
+        &self,
+        start: usize,
+        end: usize,
+        replacement: &str,
+        new_source: &str,
+    ) -> Option<(GreenNode, RepairScope)> {
+        // Shape guard: any anchor / alias / tag in the affected
+        // region forces a Document-scope re-parse so we don't have
+        // to reason about cross-document name resolution.
+        if region_has_anchor_alias_or_tag(&self.green, start, end)
+            || replacement_introduces_anchor_alias_or_tag(replacement)
+        {
+            return None;
+        }
+
+        let delta = replacement.len() as isize - (end as isize - start as isize);
+        let candidates = ancestor_candidates(&self.green, start, end);
+
+        for cand in &candidates {
+            // Phase A only owns block-collection and block-entry
+            // re-parses. Other kinds (scalars, flow collections)
+            // are handled by climbing to an ancestor that this
+            // ladder rung does support.
+            if !is_phase_a_repairable(cand.kind) {
+                continue;
+            }
+
+            let n_old_start = cand.start;
+            let n_old_end = cand.end;
+            let n_new_start = n_old_start; // pre-edit start, by construction
+            let n_new_end_signed = n_old_end as isize + delta;
+            if n_new_end_signed < n_new_start as isize {
+                continue;
+            }
+            let n_new_end = n_new_end_signed as usize;
+            // Defensive: make sure the slice is in bounds.
+            if n_new_end > new_source.len() {
+                continue;
+            }
+            let fragment = &new_source[n_new_start..n_new_end];
+            let indent = entry_indent_column(&self.source, n_old_start);
+            let ctx = SubtreeContext::block_at(indent);
+
+            match parse_subtree(fragment, ctx, cand.kind) {
+                Ok(new_sub)
+                    if new_sub.kind() == cand.kind
+                        && new_sub.text_len() == fragment.len() =>
+                {
+                    let new_arc: Arc<str> = Arc::from(new_source);
+                    let new_root = rebuild_with_splice(
+                        &self.green,
+                        start,
+                        end,
+                        delta,
+                        &new_sub,
+                        n_old_start,
+                        n_old_end,
+                        n_new_start,
+                        Arc::clone(&new_arc),
+                    );
+                    return Some((new_root, scope_for_kind(cand.kind)));
+                }
+                Ok(_) | Err(_) => {
+                    // Shape inversion (kind mismatch), partial
+                    // coverage (text_len mismatch — the fragment
+                    // spans into sibling territory), or a sub-parse
+                    // error. Either way: climb the ladder.
+                    continue;
+                }
+            }
+        }
+        None
+    }
+
+    /// Last successful repair scope, if any. Useful for tests and
+    /// instrumentation; returns `None` for a freshly-parsed
+    /// document or when the most recent edit fell back to a full
+    /// re-parse.
+    #[must_use]
+    pub fn last_repair_scope(&self) -> Option<RepairScope> {
+        self.last_repair_scope.get()
     }
 
     /// Replace the value at `path` with `fragment`.
@@ -466,6 +600,7 @@ pub fn parse_document(input: &str) -> Result<Document> {
         green: parsed.green,
         value: parsed.value,
         span_tree: parsed.span_tree,
+        last_repair_scope: core::cell::Cell::new(None),
     })
 }
 
@@ -523,6 +658,127 @@ pub fn parse_stream(input: &str) -> Result<Vec<Document>> {
         out.push(parse_document(&input[s..e])?);
     }
     Ok(out)
+}
+
+// ── Localised repair (Phase A) ──────────────────────────────────────
+
+fn scope_for_kind(kind: SyntaxKind) -> RepairScope {
+    match kind {
+        SyntaxKind::MappingEntry | SyntaxKind::SequenceItem => RepairScope::Entry,
+        SyntaxKind::BlockMapping
+        | SyntaxKind::BlockSequence
+        | SyntaxKind::FlowMapping
+        | SyntaxKind::FlowSequence => RepairScope::Collection,
+        _ => RepairScope::Document,
+    }
+}
+
+fn is_phase_a_repairable(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::BlockMapping
+            | SyntaxKind::BlockSequence
+            | SyntaxKind::MappingEntry
+            | SyntaxKind::SequenceItem
+    )
+}
+
+/// One candidate ancestor for the smallest-scope repair walk.
+struct Candidate {
+    kind: SyntaxKind,
+    start: usize,
+    end: usize,
+}
+
+/// Walk the green tree once and collect every node ancestor of the
+/// edit span `[start, end)`, smallest-first. The Document root is
+/// implicitly the last entry — left out here because it always
+/// triggers escalation.
+fn ancestor_candidates(root: &GreenNode, start: usize, end: usize) -> Vec<Candidate> {
+    let mut out = Vec::new();
+    collect_ancestors(root, start, end, 0, &mut out);
+    // `collect_ancestors` pushes outermost-first; reverse so the
+    // smallest scope is tried first.
+    out.reverse();
+    out
+}
+
+fn collect_ancestors(
+    node: &GreenNode,
+    start: usize,
+    end: usize,
+    base: usize,
+    out: &mut Vec<Candidate>,
+) {
+    let node_end = base + node.text_len();
+    if start >= base && end <= node_end {
+        // This node fully contains the edit; record it.
+        out.push(Candidate {
+            kind: node.kind(),
+            start: base,
+            end: node_end,
+        });
+        // Recurse into the containing child.
+        let mut pos = base;
+        for child in node.children() {
+            let len = child.text_len();
+            let child_end = pos + len;
+            if start >= pos && end <= child_end {
+                if let GreenChild::Node(inner) = child {
+                    collect_ancestors(inner, start, end, pos, out);
+                }
+                break;
+            }
+            pos += len;
+        }
+    }
+}
+
+/// `true` when source bytes in `[start, end)` contain an anchor
+/// (`&`), alias (`*`), or tag (`!`) lexeme. Phase A escalates any
+/// edit overlapping these — we don't try to reason about
+/// cross-document name resolution after a localised splice.
+fn region_has_anchor_alias_or_tag(root: &GreenNode, start: usize, end: usize) -> bool {
+    let mut found = false;
+    walk_tokens(root, 0, &mut |kind, range| {
+        if range.start >= end || range.end <= start {
+            return; // disjoint
+        }
+        if matches!(
+            kind,
+            SyntaxKind::AnchorMark | SyntaxKind::AliasMark | SyntaxKind::TagMark
+        ) {
+            found = true;
+        }
+    });
+    found
+}
+
+fn walk_tokens(
+    node: &GreenNode,
+    base: usize,
+    visit: &mut dyn FnMut(SyntaxKind, core::ops::Range<usize>),
+) {
+    let mut pos = base;
+    for child in node.children() {
+        let len = child.text_len();
+        match child {
+            GreenChild::Token { kind, .. } => {
+                visit(*kind, pos..pos + len);
+            }
+            GreenChild::Node(inner) => walk_tokens(inner, pos, visit),
+        }
+        pos += len;
+    }
+}
+
+/// Cheap textual screen for anchor / alias / tag introduction in
+/// the replacement bytes. Phase A is conservative — any whiff of
+/// these in `replacement` forces escalation.
+fn replacement_introduces_anchor_alias_or_tag(replacement: &str) -> bool {
+    replacement
+        .bytes()
+        .any(|b| matches!(b, b'&' | b'*' | b'!'))
 }
 
 // ── Path resolution ─────────────────────────────────────────────────
