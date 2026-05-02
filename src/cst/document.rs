@@ -5,7 +5,7 @@
 
 use core::fmt::Write as _;
 
-use crate::cst::builder::parse_full;
+use crate::cst::builder::{document_boundaries, parse_full};
 use crate::cst::green::{GreenChild, GreenNode};
 use crate::cst::syntax::SyntaxKind;
 use crate::error::{Error, Result};
@@ -351,16 +351,21 @@ pub fn parse_document(input: &str) -> Result<Document> {
 /// Parse a YAML stream and return one [`Document`] per logical
 /// document.
 ///
-/// Phase 1: returns a `Vec` containing exactly one `Document` that
-/// covers the whole input — multi-document splitting is deferred.
-/// The signature is forward-compatible: callers iterating the result
-/// today will continue to work when splitting is implemented.
+/// Boundaries follow YAML 1.2.2 §9.1: an explicit `...` end marker
+/// closes the current document, and a fresh `---` opens the next.
+/// Trivia (comments, blank lines) between an explicit `...` and the
+/// next document is treated as the next document's prologue;
+/// trailing trivia at end-of-stream is attached to the last
+/// document so concatenating each document's source reproduces the
+/// original input byte-for-byte.
 ///
 /// # Errors
 ///
 /// Same as [`parse_document`].
 ///
 /// # Examples
+///
+/// Single document:
 ///
 /// ```
 /// use noyalib::cst::parse_stream;
@@ -370,8 +375,33 @@ pub fn parse_document(input: &str) -> Result<Document> {
 /// assert_eq!(docs.len(), 1);
 /// assert_eq!(docs[0].to_string(), src);
 /// ```
+///
+/// Two documents — split on `---`:
+///
+/// ```
+/// use noyalib::cst::parse_stream;
+///
+/// let src = "---\nfoo: 1\n---\nbar: 2\n";
+/// let docs = parse_stream(src).unwrap();
+/// assert_eq!(docs.len(), 2);
+/// assert_eq!(docs[0].as_value()["foo"].as_i64(), Some(1));
+/// assert_eq!(docs[1].as_value()["bar"].as_i64(), Some(2));
+/// let joined: String = docs.iter().map(Document::source).collect();
+/// assert_eq!(joined, src);
+/// ```
 pub fn parse_stream(input: &str) -> Result<Vec<Document>> {
-    Ok(vec![parse_document(input)?])
+    let bounds = document_boundaries(input)?;
+    if bounds.len() <= 1 {
+        return Ok(vec![parse_document(input)?]);
+    }
+    let mut out = Vec::with_capacity(bounds.len());
+    for (s, e) in bounds {
+        if s == e {
+            continue;
+        }
+        out.push(parse_document(&input[s..e])?);
+    }
+    Ok(out)
 }
 
 // ── Path resolution ─────────────────────────────────────────────────

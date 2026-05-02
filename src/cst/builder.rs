@@ -59,6 +59,88 @@ pub(crate) fn parse_full(input: &str) -> Result<ParsedDocument> {
     })
 }
 
+/// Walk the token stream once and report `(start, end)` byte ranges
+/// for each logical YAML document in `input`.
+///
+/// A boundary closes when a `...` (DocEnd) ends or just before a
+/// fresh `---` (DocStart) lands while a document is already in
+/// progress. Trivia between `...` and the next document begins the
+/// next document's prologue. If the input has no recognisable
+/// document boundaries, returns a single range covering the whole
+/// input — including for inputs that are pure trivia.
+#[cfg(feature = "std")]
+pub(crate) fn document_boundaries(input: &str) -> Result<Vec<(usize, usize)>> {
+    let mut scanner = Scanner::new(input);
+    scanner.enable_recording();
+    loop {
+        let tok = scanner
+            .next_token()
+            .map_err(|e| Error::Parse(e.message.into_owned()))?;
+        if matches!(tok.kind, TokenKind::StreamEnd) {
+            break;
+        }
+    }
+    let toks = scanner.take_recorded_tokens();
+    drop(scanner);
+
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut cur_start = 0usize;
+    let mut has_content = false;
+    let mut saw_explicit_end = false;
+
+    for t in &toks {
+        match t.kind {
+            RecordedTokenKind::DocStart => {
+                if has_content && !saw_explicit_end {
+                    // Implicit close before a fresh `---`.
+                    out.push((cur_start, t.start));
+                    cur_start = t.start;
+                }
+                has_content = true;
+                saw_explicit_end = false;
+            }
+            RecordedTokenKind::DocEnd => {
+                // The `...` token covers three bytes only — extend
+                // through the immediately-following line terminator
+                // so the doc's source ends on a line break (round-trip
+                // expectation: each emitted doc is a complete line).
+                let bytes = input.as_bytes();
+                let mut close = t.end;
+                if bytes.get(close) == Some(&b'\r') {
+                    close += 1;
+                }
+                if bytes.get(close) == Some(&b'\n') {
+                    close += 1;
+                }
+                out.push((cur_start, close));
+                cur_start = close;
+                has_content = false;
+                saw_explicit_end = true;
+            }
+            _ => {
+                has_content = true;
+                saw_explicit_end = false;
+            }
+        }
+    }
+
+    if cur_start < input.len() {
+        if has_content || out.is_empty() {
+            // Trailing bytes form (or extend) a document.
+            out.push((cur_start, input.len()));
+        } else if let Some(last) = out.last_mut() {
+            // Trailing trivia after a `...` with no further content —
+            // attach to the prior document so round-trip holds.
+            last.1 = input.len();
+        }
+    }
+
+    if out.is_empty() {
+        out.push((0, input.len()));
+    }
+    Ok(out)
+}
+
 /// Run a recording scanner over the source and assemble its outputs
 /// into a flat green tree. The function exhausts the token stream so
 /// any scanner-level error surfaces here rather than later.
