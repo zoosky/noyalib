@@ -204,6 +204,10 @@ path = "examples/anchor_shared.rs"
 name = "all"
 path = "examples/all.rs"
 
+[[example]]
+name = "lossless_edit"
+path = "examples/lossless_edit.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 indexmap = { version = "2.14", features = ["serde"] }

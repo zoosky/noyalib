@@ -2,6 +2,28 @@
 //!
 //! A YAML 1.2 library for Rust. Pure safe code. Full serde integration.
 //!
+//! ## Two APIs, one parser
+//!
+//! noyalib exposes two complementary surfaces over the same scanner
+//! and strictness rules. Pick the one that matches your job:
+//!
+//! - **Data binding** — [`from_str`], [`to_string`], [`Value`],
+//!   [`StreamingDeserializer`], [`borrowed::BorrowedValue`]. Read
+//!   YAML into typed Rust data, write Rust data back to YAML. The
+//!   round-trip travels through a `Value`/struct, so comments,
+//!   blank lines, and the original whitespace are not preserved.
+//!   Use this for config loaders, RPC payloads, and the 95% of YAML
+//!   workloads that just want data.
+//!
+//! - **Tooling / automation** — [`cst::parse_document`],
+//!   [`cst::parse_stream`], [`cst::Document`]. Read YAML into a
+//!   side-table CST that reproduces the source byte-for-byte,
+//!   targeted edits via `doc.set("path", "fragment")` rewrite only
+//!   the touched span — comments, formatting, and sibling entries
+//!   are left untouched. Use this when *what the user wrote* matters
+//!   (Renovate-style version bumps, Kubernetes manifest patchers,
+//!   formatters, schema-driven linters). See `examples/lossless_edit.rs`.
+//!
 //! ## Quick Start
 //!
 //! ```rust

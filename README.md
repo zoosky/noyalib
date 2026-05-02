@@ -96,6 +96,15 @@ features:
 
 ---
 
+## Two APIs, one parser
+
+noyalib exposes two complementary surfaces over the same scanner and strictness rules:
+
+- **Data binding** — `from_str`, `to_string`, `Value`, `StreamingDeserializer`, `BorrowedValue`. Read YAML into typed Rust data, write Rust data back out. The round-trip travels through a `Value`/struct, so comments and exact whitespace are not preserved. Use this for config loaders, RPC payloads, and the 95% of YAML workloads that just want data.
+- **Tooling / automation** — `noyalib::cst::parse_document`, `parse_stream`, and the `Document` handle. Read YAML into a side-table CST that reproduces the source byte-for-byte, then run targeted edits like `doc.set("version", "0.0.2")` — only the touched span is rewritten, every comment and the original indentation is left alone. Use this for Renovate-style version bumps, manifest patchers, formatters, and schema-driven linters. See `examples/lossless_edit.rs`.
+
+---
+
 ## Overview
 
 noyalib is designed to be the **no-compromise** YAML library for Rust: fast, safe, and hardened — simultaneously. Most libraries trade one for the other (fast but unsafe, or safe but slow). noyalib achieves all three.
@@ -532,6 +541,7 @@ cargo run --example all
 | **Platform** | `diagnostic` | miette::Diagnostic integration |
 | | `nostd` | #![no\_std] compatibility guide |
 | | `preserve` | CST preservation foundations |
+| | `lossless_edit` | Renovate-style version bump (CST `Document::set`) |
 | **Runtime** | `async_io` | Async integration (spawn\_blocking pattern) |
 | | `recursive` | Self-referential types (trees, org charts) |
 | **Bench** | `bench` | Performance overview |

@@ -44,15 +44,21 @@
 //!
 //! # Multi-document streams
 //!
-//! Use [`parse_stream`] for inputs containing `---` / `...` separators:
+//! Use [`parse_stream`] for inputs containing `---` / `...` separators —
+//! one [`Document`] per logical YAML document, with each slice
+//! covering the exact bytes of that document so concatenation
+//! reproduces the input verbatim:
 //!
 //! ```
-//! use noyalib::cst::parse_stream;
+//! use noyalib::cst::{parse_stream, Document};
 //!
 //! let src = "---\nfoo: 1\n...\n---\nbar: 2\n";
 //! let docs = parse_stream(src).unwrap();
-//! assert_eq!(docs.len(), 1);  // one stream, byte-faithfully captured
-//! assert_eq!(docs[0].to_string(), src);
+//! assert_eq!(docs.len(), 2);
+//! assert_eq!(docs[0].as_value()["foo"].as_i64(), Some(1));
+//! assert_eq!(docs[1].as_value()["bar"].as_i64(), Some(2));
+//! let joined: String = docs.iter().map(Document::source).collect();
+//! assert_eq!(joined, src);
 //! ```
 
 mod builder;

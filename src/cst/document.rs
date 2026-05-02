@@ -379,7 +379,7 @@ pub fn parse_document(input: &str) -> Result<Document> {
 /// Two documents — split on `---`:
 ///
 /// ```
-/// use noyalib::cst::parse_stream;
+/// use noyalib::cst::{parse_stream, Document};
 ///
 /// let src = "---\nfoo: 1\n---\nbar: 2\n";
 /// let docs = parse_stream(src).unwrap();
