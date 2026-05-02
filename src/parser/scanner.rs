@@ -388,8 +388,11 @@ impl<'a> Scanner<'a> {
             // Record source-bearing tokens for the green-tree builder
             // when recording is enabled. Synthetic tokens
             // (StreamStart/End, BlockMappingStart, etc.) carry no
-            // source bytes and are filtered by `RecordedTokenKind`.
-            if self.recording {
+            // source bytes and are filtered by `RecordedTokenKind`. A
+            // few token kinds (notably the `Key` token inserted before
+            // an implicit mapping key) reach this point with a
+            // zero-length span — also synthetic; skip them.
+            if self.recording && t.span.end > t.span.start {
                 if let Some(kind) = RecordedTokenKind::from_token(&t.kind) {
                     self.recorded_tokens.push(RecordedToken {
                         start: t.span.start,

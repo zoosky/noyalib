@@ -16,6 +16,10 @@
 //! The two passes are deliberately kept separate so that strictness
 //! fixes in either path are inherited automatically. Optimising into
 //! a single pass is a follow-up.
+//!
+//! Token leaves are stored as `Range<usize>` into a shared
+//! `Arc<str>` source — no per-leaf allocation, no copy of the
+//! source bytes.
 
 use crate::cst::green::{GreenChild, GreenNode};
 use crate::cst::syntax::SyntaxKind;
@@ -36,6 +40,7 @@ pub(crate) struct ParsedDocument {
     pub green: GreenNode,
     pub value: Value,
     pub span_tree: SpanTree,
+    pub source: Arc<str>,
 }
 
 /// Parse `input` once for `Value` + `SpanTree` and once for the green
@@ -44,19 +49,21 @@ pub(crate) struct ParsedDocument {
 pub(crate) fn parse_full(input: &str) -> Result<ParsedDocument> {
     let cfg = ParseConfig::default();
     let (value, span_tree) = crate::parser::parse_one(input, &cfg)?;
-    let green = build_green_tree(input)?;
+    let source: Arc<str> = Arc::from(input);
+    let green = build_green_tree(Arc::clone(&source))?;
     Ok(ParsedDocument {
         green,
         value,
         span_tree,
+        source,
     })
 }
 
-/// Run a recording scanner over `input` and assemble its outputs into
-/// a flat green tree. The function exhausts the token stream so any
-/// scanner-level error surfaces here rather than later.
-pub(crate) fn build_green_tree(input: &str) -> Result<GreenNode> {
-    let mut scanner = Scanner::new(input);
+/// Run a recording scanner over the source and assemble its outputs
+/// into a flat green tree. The function exhausts the token stream so
+/// any scanner-level error surfaces here rather than later.
+pub(crate) fn build_green_tree(source: Arc<str>) -> Result<GreenNode> {
+    let mut scanner = Scanner::new(&source);
     scanner.enable_recording();
 
     // Drain the token stream — this exercises every parser-relevant
@@ -75,15 +82,16 @@ pub(crate) fn build_green_tree(input: &str) -> Result<GreenNode> {
     let trivia = scanner.take_trivia();
     let tokens = scanner.take_recorded_tokens();
     let comments = scanner.take_comments();
+    drop(scanner);
 
-    Ok(assemble(input, trivia, tokens, comments))
+    Ok(assemble(source, trivia, tokens, comments))
 }
 
 /// Merge the three source-bearing streams (trivia, tokens, comments)
 /// into a single ordered child list. The streams are individually in
 /// source order, so the merge is a three-way ordered iteration.
 fn assemble(
-    input: &str,
+    source: Arc<str>,
     trivia: Vec<Trivia>,
     tokens: Vec<RecordedToken>,
     comments: Vec<ScannedComment>,
@@ -107,21 +115,21 @@ fn assemble(
             (None, None, None) => break,
             (Some(t), tok, c) if min_or_max(tok) >= t && min_or_max(c) >= t => {
                 let triv = trivia_iter.next().expect("peeked Some");
-                children.push(token_from_trivia(input, triv));
+                children.push(token_from_trivia(triv));
             }
             (_, Some(tk), c) if min_or_max(c) >= tk => {
                 let tok = token_iter.next().expect("peeked Some");
-                children.push(token_from_recorded(input, tok));
+                children.push(token_from_recorded(tok));
             }
             (_, _, Some(_)) => {
                 let cmt = comment_iter.next().expect("peeked Some");
-                children.push(token_from_comment(input, cmt));
+                children.push(token_from_comment(cmt));
             }
             _ => unreachable!(),
         }
     }
 
-    GreenNode::new(SyntaxKind::Document, children)
+    GreenNode::new(SyntaxKind::Document, source, children)
 }
 
 #[inline]
@@ -129,7 +137,7 @@ fn min_or_max(opt: Option<usize>) -> usize {
     opt.unwrap_or(usize::MAX)
 }
 
-fn token_from_trivia(input: &str, t: Trivia) -> GreenChild {
+fn token_from_trivia(t: Trivia) -> GreenChild {
     let kind = match t.kind {
         TriviaKind::Whitespace => SyntaxKind::Whitespace,
         TriviaKind::Newline => SyntaxKind::Newline,
@@ -138,11 +146,11 @@ fn token_from_trivia(input: &str, t: Trivia) -> GreenChild {
     };
     GreenChild::Token {
         kind,
-        text: input[t.start..t.end].to_string().into_boxed_str(),
+        range: t.start..t.end,
     }
 }
 
-fn token_from_recorded(input: &str, t: RecordedToken) -> GreenChild {
+fn token_from_recorded(t: RecordedToken) -> GreenChild {
     let kind = match t.kind {
         RecordedTokenKind::DocStart => SyntaxKind::DocStart,
         RecordedTokenKind::DocEnd => SyntaxKind::DocEnd,
@@ -165,13 +173,13 @@ fn token_from_recorded(input: &str, t: RecordedToken) -> GreenChild {
     };
     GreenChild::Token {
         kind,
-        text: input[t.start..t.end].to_string().into_boxed_str(),
+        range: t.start..t.end,
     }
 }
 
-fn token_from_comment(input: &str, c: ScannedComment) -> GreenChild {
+fn token_from_comment(c: ScannedComment) -> GreenChild {
     GreenChild::Token {
         kind: SyntaxKind::Comment,
-        text: input[c.start..c.end].to_string().into_boxed_str(),
+        range: c.start..c.end,
     }
 }

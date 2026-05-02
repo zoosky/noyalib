@@ -49,7 +49,7 @@ use crate::value::{Number, Value};
 /// ```
 #[derive(Debug, Clone)]
 pub struct Document {
-    source: String,
+    source: Arc<str>,
     green: GreenNode,
     value: Value,
     span_tree: SpanTree,
@@ -186,7 +186,7 @@ impl Document {
         new_source.push_str(replacement);
         new_source.push_str(&self.source[end..]);
         let parsed = parse_full(&new_source)?;
-        self.source = new_source;
+        self.source = parsed.source;
         self.green = parsed.green;
         self.value = parsed.value;
         self.span_tree = parsed.span_tree;
@@ -341,7 +341,7 @@ impl fmt::Display for Document {
 pub fn parse_document(input: &str) -> Result<Document> {
     let parsed = parse_full(input)?;
     Ok(Document {
-        source: input.to_owned(),
+        source: parsed.source,
         green: parsed.green,
         value: parsed.value,
         span_tree: parsed.span_tree,
