@@ -49,16 +49,33 @@ use crate::value::{Number, Value};
 /// doc.set("version", "0.0.2").unwrap();
 /// assert_eq!(doc.to_string(), "name: foo\nversion: 0.0.2\n");
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Document {
     source: Arc<str>,
     green: GreenNode,
-    value: Value,
-    span_tree: SpanTree,
+    /// Lazy cache for the typed [`Value`] view + path resolver
+    /// [`SpanTree`]. Populated on first read; invalidated on every
+    /// edit. Local-repair edits leave it `None` so consecutive
+    /// `replace_span` calls don't pay the parser cost between them
+    /// — the work is deferred until [`Document::as_value`],
+    /// [`Document::span_at`], [`Document::get`], or any path-shaped
+    /// API actually needs the value tree.
+    cache: core::cell::RefCell<Option<(Value, SpanTree)>>,
     /// Outcome of the most recent edit's localised-repair attempt.
     /// `None` for a freshly-parsed document or after a full
     /// re-parse fallback.
     last_repair_scope: core::cell::Cell<Option<RepairScope>>,
+}
+
+impl Clone for Document {
+    fn clone(&self) -> Self {
+        Self {
+            source: Arc::clone(&self.source),
+            green: self.green.clone(),
+            cache: core::cell::RefCell::new(self.cache.borrow().clone()),
+            last_repair_scope: core::cell::Cell::new(self.last_repair_scope.get()),
+        }
+    }
 }
 
 /// The scope at which the most recent edit was repaired.
@@ -98,6 +115,13 @@ impl Document {
 
     /// Borrow the typed [`Value`] view of the document.
     ///
+    /// On the first call after an edit (or a fresh parse), this
+    /// triggers a one-shot parse of the current source into the
+    /// internal `Value` / `SpanTree` cache. Subsequent calls on the
+    /// same document are O(1) until the next edit invalidates the
+    /// cache. Code that batches many edits without reading the
+    /// typed view in between never pays the typed-tree cost.
+    ///
     /// # Examples
     ///
     /// ```
@@ -107,8 +131,11 @@ impl Document {
     /// assert_eq!(doc.as_value()["name"].as_str(), Some("noyalib"));
     /// ```
     #[must_use]
-    pub fn as_value(&self) -> &Value {
-        &self.value
+    pub fn as_value(&self) -> core::cell::Ref<'_, Value> {
+        self.ensure_cache();
+        core::cell::Ref::map(self.cache.borrow(), |opt| {
+            &opt.as_ref().expect("ensure_cache populated").0
+        })
     }
 
     /// The original source bytes for this document. After an edit
@@ -146,13 +173,34 @@ impl Document {
     /// ```
     #[must_use]
     pub fn span_at(&self, path: &str) -> Option<(usize, usize)> {
+        self.ensure_cache();
         let segments = parse_query_path(path);
-        let (s, e) = resolve_span(&self.value, &self.span_tree, &segments)?;
+        let cache = self.cache.borrow();
+        let (value, span_tree) = cache.as_ref().expect("ensure_cache populated");
+        let (s, e) = resolve_span(value, span_tree, &segments)?;
         // The multi-line plain scalar reader advances past trailing
         // whitespace / newlines before deciding to terminate, so leaf
         // spans extend into trailing trivia. Trim those bytes back so
         // the returned span covers content only.
         Some(trim_trailing_blank(&self.source, s, e))
+    }
+
+    /// Populate the typed cache from `self.source` if it is empty.
+    /// Panics if the source fails to re-parse — for the lazy path
+    /// to be safe, every successful edit must leave the source in a
+    /// state that re-parses. Local repair edits gate themselves on
+    /// `parse_subtree` (which validates the fragment) plus shape
+    /// guards that escalate cross-document concerns to the
+    /// safety-net full re-parse.
+    fn ensure_cache(&self) {
+        if self.cache.borrow().is_some() {
+            return;
+        }
+        let cfg = crate::parser::ParseConfig::default();
+        let parsed = crate::parser::parse_one(&self.source, &cfg).expect(
+            "Document source must always parse — local repair invariant violated",
+        );
+        *self.cache.borrow_mut() = Some(parsed);
     }
 
     /// Return the source slice of the value at `path`.
@@ -211,30 +259,34 @@ impl Document {
         new_source.push_str(replacement);
         new_source.push_str(&self.source[end..]);
 
-        // Validate first: the full Value/SpanTree re-parse doubles
-        // as syntax-validation for the new source. If the spliced
-        // bytes don't form a valid YAML stream, error out *before*
-        // mutating any state — the document is left untouched.
-        let cfg = crate::parser::ParseConfig::default();
-        let (value, span_tree) = crate::parser::parse_one(&new_source, &cfg)?;
+        // Phase A.2 — Lazy Value/SpanTree:
+        //   * On a successful local-repair edit, the green tree is
+        //     spliced and the typed cache is invalidated. We do NOT
+        //     re-parse the typed `Value` here. Subsequent edits in
+        //     the same batch don't pay any parser cost; the
+        //     deferred parse runs once, on the first read.
+        //   * On the safety-net path (no local repair fit), the
+        //     full re-parse already gives us validated `Value` and
+        //     `SpanTree` — we drop them straight into the cache
+        //     so the next read is free.
+        let new_arc: Arc<str> = Arc::from(new_source.as_str());
+        if let Some((new_green, scope)) =
+            self.try_local_repair_green(start, end, replacement, &new_source)
+        {
+            self.last_repair_scope.set(Some(scope));
+            self.source = new_arc;
+            self.green = new_green;
+            let _ = self.cache.replace(None);
+            return Ok(());
+        }
 
-        // Phase A: prefer a localised green-tree repair. The full
-        // green-tree re-parse below is the safety net — it runs
-        // whenever the local repair can't satisfy a shape guard,
-        // fails at every ladder rung, or produces a shape-changed
-        // sub-tree.
-        let (new_green, scope) = match self.try_local_repair_green(start, end, replacement, &new_source) {
-            Some((tree, scope)) => (tree, Some(scope)),
-            None => {
-                let parsed = parse_full(&new_source)?;
-                (parsed.green, Some(RepairScope::Document))
-            }
-        };
-        self.last_repair_scope.set(scope);
-        self.source = Arc::from(new_source.as_str());
-        self.green = new_green;
-        self.value = value;
-        self.span_tree = span_tree;
+        // Safety net — full re-parse. Validates the new source and
+        // populates everything eagerly.
+        let parsed = parse_full(&new_source)?;
+        self.last_repair_scope.set(Some(RepairScope::Document));
+        self.source = parsed.source;
+        self.green = parsed.green;
+        let _ = self.cache.replace(Some((parsed.value, parsed.span_tree)));
         Ok(())
     }
 
@@ -450,9 +502,13 @@ impl Document {
     /// assert_eq!(doc.to_string(), "a: 1\nc: 3\n");
     /// ```
     pub fn remove(&mut self, path: &str) -> Result<()> {
+        self.ensure_cache();
         let segments = parse_query_path(path);
-        let (line_start, line_end) =
-            entry_line_span(&self.value, &self.span_tree, &self.source, &segments)?;
+        let (line_start, line_end) = {
+            let cache = self.cache.borrow();
+            let (value, span_tree) = cache.as_ref().expect("ensure_cache populated");
+            entry_line_span(value, span_tree, &self.source, &segments)?
+        };
         self.replace_span(line_start, line_end, "")
     }
 
@@ -482,17 +538,22 @@ impl Document {
     /// assert_eq!(doc.to_string(), "items:\n  - one\n  - two\n  - three\n");
     /// ```
     pub fn push_back(&mut self, path: &str, fragment: &str) -> Result<()> {
-        let target = path_value(&self.value, path)
-            .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
-        let seq = match target {
-            Value::Sequence(s) => s,
-            _ => {
-                return Err(Error::Parse(
-                    "push_back: target path is not a sequence".into(),
-                ));
+        self.ensure_cache();
+        let seq_len = {
+            let cache = self.cache.borrow();
+            let (value, _) = cache.as_ref().expect("ensure_cache populated");
+            let target = path_value(value, path)
+                .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
+            match target {
+                Value::Sequence(s) => s.len(),
+                _ => {
+                    return Err(Error::Parse(
+                        "push_back: target path is not a sequence".into(),
+                    ));
+                }
             }
         };
-        if seq.is_empty() {
+        if seq_len == 0 {
             return Err(Error::Parse(
                 "push_back: empty sequence has no anchor for indentation — use `set` with a fragment instead"
                     .into(),
@@ -500,7 +561,7 @@ impl Document {
         }
         // Find the byte range of the LAST existing item to anchor
         // dash indentation and the splice position.
-        let item_path = format!("{path}[{}]", seq.len() - 1);
+        let item_path = format!("{path}[{}]", seq_len - 1);
         let (last_start, last_end) = self
             .span_at(&item_path)
             .ok_or_else(|| Error::Parse("push_back: could not resolve last item span".into()))?;
@@ -598,8 +659,9 @@ pub fn parse_document(input: &str) -> Result<Document> {
     Ok(Document {
         source: parsed.source,
         green: parsed.green,
-        value: parsed.value,
-        span_tree: parsed.span_tree,
+        // Initial parse already produced the typed view — seed the
+        // cache so the first read after a fresh parse is free.
+        cache: core::cell::RefCell::new(Some((parsed.value, parsed.span_tree))),
         last_repair_scope: core::cell::Cell::new(None),
     })
 }

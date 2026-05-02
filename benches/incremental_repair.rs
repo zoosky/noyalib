@@ -97,11 +97,63 @@ fn bench_value_bump_at(c: &mut Criterion, target: &str, n_entries_list: &[usize]
     group.finish();
 }
 
+fn bench_batch_edits(c: &mut Criterion, n_entries: usize, n_edits: usize) {
+    let mut group = c.benchmark_group(format!(
+        "batch_{n_edits}_edits_in_{n_entries}_entry_doc"
+    ));
+    let src = synth_doc(n_entries);
+    group.throughput(Throughput::Elements(n_edits as u64));
+
+    // Phase A.2 lazy: replace_span never triggers parse_one until
+    // the next read. A batch of N edits without an intervening
+    // read pays parse_one zero times.
+    group.bench_function("phase_a_lazy_batch", |b| {
+        b.iter_with_setup(
+            || parse_document(&src).unwrap(),
+            |mut doc| {
+                for i in 0..n_edits {
+                    let key = format!("key_{:05}", i % n_entries);
+                    let val = format!("v{i}");
+                    doc.set(black_box(&key), black_box(&val)).unwrap();
+                }
+                black_box(doc)
+            },
+        );
+    });
+
+    // Baseline: full re-parse per edit. Each iteration mutates a
+    // String and re-parses the whole document, mirroring what
+    // pre-Phase-A would have done.
+    group.bench_function("baseline_full_reparse_each", |b| {
+        b.iter_with_setup(
+            || src.clone(),
+            |mut s| {
+                for i in 0..n_edits {
+                    let doc = parse_document(&s).unwrap();
+                    let key = format!("key_{:05}", i % n_entries);
+                    let (a, e) = doc.span_at(&key).unwrap();
+                    let new_val = format!("v{i}");
+                    let mut next = String::with_capacity(s.len() + 16);
+                    next.push_str(&s[..a]);
+                    next.push_str(&new_val);
+                    next.push_str(&s[e..]);
+                    s = next;
+                }
+                black_box(s)
+            },
+        );
+    });
+    group.finish();
+}
+
 fn bench_phase_a(c: &mut Criterion) {
     let sizes = [50usize, 500, 5_000];
     bench_value_bump_at(c, "first", &sizes);
     bench_value_bump_at(c, "middle", &sizes);
     bench_value_bump_at(c, "last", &sizes);
+    // Batch scenario — the workflow lazy is designed for.
+    bench_batch_edits(c, 500, 10);
+    bench_batch_edits(c, 500, 50);
 }
 
 criterion_group!(name = benches; config = Criterion::default(); targets = bench_phase_a);

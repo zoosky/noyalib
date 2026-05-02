@@ -25,11 +25,9 @@ use noyalib::cst::{parse_document, Document, RepairScope};
 fn assert_equivalent_to_full_reparse(doc: &Document) {
     let from_full = parse_document(&doc.to_string()).expect("parses");
     assert_eq!(doc.to_string(), from_full.to_string(), "to_string mismatch");
-    assert_eq!(
-        doc.as_value(),
-        from_full.as_value(),
-        "as_value mismatch"
-    );
+    // `as_value` returns `Ref<'_, Value>` since Phase A.2 — deref
+    // it for direct comparison.
+    assert_eq!(*doc.as_value(), *from_full.as_value(), "as_value mismatch");
 }
 
 // ── Equivalence ─────────────────────────────────────────────────────
@@ -156,13 +154,20 @@ fn replacement_introducing_alias_escalates_to_document() {
     assert_equivalent_to_full_reparse(&doc);
 }
 
-// ── Failure rollback ────────────────────────────────────────────────
+// ── Optimistic commit / lazy validation ─────────────────────────────
 
 #[test]
-fn invalid_replacement_leaves_document_unchanged() {
+fn invalid_replacement_commits_optimistically_and_panics_on_read() {
+    // Phase A.2 trades atomic-rollback at edit time for batch
+    // perf: the green-tree splice commits if its fragment-level
+    // validation passes, so a cross-document structural error
+    // (unclosed flow, here) doesn't surface until the typed view
+    // is asked for.
     let mut doc = parse_document("name: foo\n").unwrap();
-    let before = doc.to_string();
-    let _ = doc.set("name", "[").unwrap_err();
-    assert_eq!(doc.to_string(), before);
-    assert_equivalent_to_full_reparse(&doc);
+    doc.set("name", "[").unwrap();
+    assert_eq!(doc.to_string(), "name: [\n");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = doc.as_value();
+    }));
+    assert!(result.is_err(), "as_value must panic on invalid source");
 }

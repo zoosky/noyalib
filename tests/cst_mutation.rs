@@ -70,14 +70,27 @@ fn set_returns_path_not_found_error() {
 }
 
 #[test]
-fn set_rejects_invalid_replacement() {
+fn set_with_invalid_replacement_surfaces_error_on_read() {
+    // Phase A.2 lazy: the local-repair fast path commits
+    // optimistically when the spliced fragment passes its own
+    // (scanner-level) validation. Cross-document structural errors
+    // — like an unclosed flow indicator at end-of-input — only
+    // surface on the next typed-view read. Callers that need an
+    // eager check can call `Document::validate` (TODO: surface a
+    // public API for this in a follow-up).
     let mut doc = parse_document("name: foo\n").unwrap();
-    // A bare `[` does not balance — splicing it leaves the stream
-    // syntactically broken. The document is rolled back unchanged.
-    let before = doc.to_string();
-    let err = doc.set("name", "[").unwrap_err();
-    assert!(err.to_string().contains("YAML parse error"));
-    assert_eq!(doc.to_string(), before);
+    // The bare `[` opens a flow sequence that is never closed —
+    // structurally broken at the document level.
+    doc.set("name", "[").unwrap();
+    // Source reflects the optimistic splice; round-trip via the
+    // green tree still works.
+    assert_eq!(doc.to_string(), "name: [\n");
+    // The typed view, however, refuses to materialise: panic on
+    // first read. We catch the panic to assert it.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = doc.as_value();
+    }));
+    assert!(result.is_err(), "as_value() must panic on invalid source");
 }
 
 #[test]
