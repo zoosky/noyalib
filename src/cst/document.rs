@@ -173,15 +173,23 @@ impl Document {
     /// ```
     #[must_use]
     pub fn span_at(&self, path: &str) -> Option<(usize, usize)> {
-        self.ensure_cache();
         let segments = parse_query_path(path);
+        // Phase A.3 — green-tree path resolution. The common case
+        // (plain block mappings, block sequences) resolves without
+        // touching the typed cache: a single walk over the
+        // structural CST is enough. Tooling that drives many edits
+        // through `set` / `set_value` no longer warms the typed
+        // cache between iterations.
+        if let Some((s, e)) = resolve_path_in_green(&self.green, &segments, &self.source) {
+            return Some(trim_trailing_blank(&self.source, s, e));
+        }
+        // Fallback for paths the green-tree walker doesn't
+        // currently handle — e.g. quoted keys with escapes,
+        // aliases, merge-keys. The cache is populated lazily.
+        self.ensure_cache();
         let cache = self.cache.borrow();
         let (value, span_tree) = cache.as_ref().expect("ensure_cache populated");
         let (s, e) = resolve_span(value, span_tree, &segments)?;
-        // The multi-line plain scalar reader advances past trailing
-        // whitespace / newlines before deciding to terminate, so leaf
-        // spans extend into trailing trivia. Trim those bytes back so
-        // the returned span covers content only.
         Some(trim_trailing_blank(&self.source, s, e))
     }
 
@@ -841,6 +849,292 @@ fn replacement_introduces_anchor_alias_or_tag(replacement: &str) -> bool {
     replacement
         .bytes()
         .any(|b| matches!(b, b'&' | b'*' | b'!'))
+}
+
+// ── Green-tree path resolution (Phase A.3) ──────────────────────────
+
+/// Resolve `segments` against the green tree of `root`, returning
+/// the byte range of the value at that path. Walks the structural
+/// CST directly — does not consult the typed `Value` / `SpanTree`,
+/// so callers that drive many edits via `set` / `set_value` can
+/// resolve paths without warming the typed cache between
+/// iterations.
+///
+/// Returns `None` for paths the walker does not yet handle
+/// (quoted-key escapes that aren't a simple single-quote-doubling,
+/// aliases, merge keys, anchors); the caller is expected to fall
+/// back to the typed cache for those cases.
+fn resolve_path_in_green(
+    root: &GreenNode,
+    segments: &[QuerySegment],
+    source: &str,
+) -> Option<(usize, usize)> {
+    // The Document root holds collection composites among its
+    // children. Find the first one and treat it as the entry
+    // point.
+    let (collection, base) = first_collection_child(root, 0)?;
+    walk_path(collection, segments, base, source)
+}
+
+fn first_collection_child<'a>(
+    node: &'a GreenNode,
+    base: usize,
+) -> Option<(&'a GreenNode, usize)> {
+    let mut pos = base;
+    for child in node.children() {
+        let len = child.text_len();
+        if let GreenChild::Node(inner) = child {
+            if matches!(
+                inner.kind(),
+                SyntaxKind::BlockMapping
+                    | SyntaxKind::BlockSequence
+                    | SyntaxKind::FlowMapping
+                    | SyntaxKind::FlowSequence
+            ) {
+                return Some((inner, pos));
+            }
+        }
+        pos += len;
+    }
+    None
+}
+
+fn walk_path(
+    node: &GreenNode,
+    segments: &[QuerySegment],
+    base: usize,
+    source: &str,
+) -> Option<(usize, usize)> {
+    if segments.is_empty() {
+        return Some((base, base + node.text_len()));
+    }
+    let (head, tail) = segments.split_first()?;
+    match (head, node.kind()) {
+        (QuerySegment::Key(k), SyntaxKind::BlockMapping)
+        | (QuerySegment::Key(k), SyntaxKind::FlowMapping) => {
+            walk_mapping(node, k, tail, base, source)
+        }
+        (QuerySegment::Index(i), SyntaxKind::BlockSequence)
+        | (QuerySegment::Index(i), SyntaxKind::FlowSequence) => {
+            walk_sequence(node, *i, tail, base, source)
+        }
+        // Wildcard / recursive descent / kind mismatch — bail out;
+        // the caller falls back to the typed cache.
+        _ => None,
+    }
+}
+
+fn walk_mapping(
+    node: &GreenNode,
+    key: &str,
+    tail: &[QuerySegment],
+    base: usize,
+    source: &str,
+) -> Option<(usize, usize)> {
+    let mut pos = base;
+    for child in node.children() {
+        let len = child.text_len();
+        if let GreenChild::Node(entry) = child {
+            if entry.kind() == SyntaxKind::MappingEntry {
+                if let Some(entry_key) = entry_key_text(entry, source, pos) {
+                    if entry_key == key {
+                        return resolve_value_in_entry(entry, pos, tail, source);
+                    }
+                }
+            }
+        }
+        pos += len;
+    }
+    None
+}
+
+fn walk_sequence(
+    node: &GreenNode,
+    target_index: usize,
+    tail: &[QuerySegment],
+    base: usize,
+    source: &str,
+) -> Option<(usize, usize)> {
+    let mut pos = base;
+    let mut idx = 0usize;
+    for child in node.children() {
+        let len = child.text_len();
+        if let GreenChild::Node(item) = child {
+            if item.kind() == SyntaxKind::SequenceItem {
+                if idx == target_index {
+                    return resolve_value_in_item(item, pos, tail, source);
+                }
+                idx += 1;
+            }
+        }
+        pos += len;
+    }
+    None
+}
+
+/// Extract the key text of a `MappingEntry`. Supports plain scalar
+/// keys verbatim and single-quoted keys with the YAML
+/// `''`-doubling escape. Returns `None` for keys whose textual
+/// representation differs from the segment string the user would
+/// pass — the caller falls back to the typed cache.
+fn entry_key_text<'s>(entry: &GreenNode, source: &'s str, _base: usize) -> Option<Cow<'s, str>> {
+    for child in entry.children() {
+        match child {
+            GreenChild::Token { kind, range } => match kind {
+                SyntaxKind::QuestionIndicator
+                | SyntaxKind::Whitespace
+                | SyntaxKind::Newline
+                | SyntaxKind::Comment
+                | SyntaxKind::AnchorMark
+                | SyntaxKind::TagMark => {}
+                SyntaxKind::PlainScalar => {
+                    return Some(Cow::Borrowed(&source[range.clone()]));
+                }
+                SyntaxKind::SingleQuotedScalar => {
+                    let raw = &source[range.clone()];
+                    return decode_single_quoted(raw);
+                }
+                // Other scalar styles or indicators reach the key
+                // position only in atypical layouts the walker
+                // doesn't try to handle in Phase A.3.
+                _ => return None,
+            },
+            GreenChild::Node(_) => {
+                // Nested composite as a key (`? <complex>`) — not
+                // handled here; fall back to the typed cache.
+                return None;
+            }
+        }
+    }
+    None
+}
+
+fn decode_single_quoted(raw: &str) -> Option<Cow<'_, str>> {
+    // Strip surrounding quotes.
+    let inner = raw.strip_prefix('\'')?.strip_suffix('\'')?;
+    if !inner.contains('\'') {
+        return Some(Cow::Borrowed(inner));
+    }
+    // Replace `''` with `'`. Anything else inside single quotes is
+    // taken verbatim.
+    Some(Cow::Owned(inner.replace("''", "'")))
+}
+
+/// Find the value position inside a `MappingEntry` and either
+/// return its byte range (if `tail` is empty) or recurse into it
+/// with `tail`.
+fn resolve_value_in_entry(
+    entry: &GreenNode,
+    base: usize,
+    tail: &[QuerySegment],
+    source: &str,
+) -> Option<(usize, usize)> {
+    let (value_kind, value_range, value_node) = entry_value(entry, base)?;
+    if tail.is_empty() {
+        return Some(value_range);
+    }
+    // Recursing further requires the value to be a composite.
+    let node = value_node?;
+    walk_path(node, tail, value_range.0, source).map(|(s, e)| {
+        // Defensive: ensure recursion stays inside the value's
+        // span — composite parents may contain trailing trivia
+        // that's outside the conceptual "value" range.
+        let _ = value_kind;
+        (s, e)
+    })
+}
+
+fn resolve_value_in_item(
+    item: &GreenNode,
+    base: usize,
+    tail: &[QuerySegment],
+    source: &str,
+) -> Option<(usize, usize)> {
+    let (_, value_range, value_node) = item_value(item, base)?;
+    if tail.is_empty() {
+        return Some(value_range);
+    }
+    let node = value_node?;
+    walk_path(node, tail, value_range.0, source)
+}
+
+/// Inside a `MappingEntry`, walk past the key + ColonIndicator and
+/// return the first non-trivia "value" child. `value_node` is
+/// `Some` if the value is a composite (a nested collection), `None`
+/// if it is a leaf scalar.
+fn entry_value<'a>(
+    entry: &'a GreenNode,
+    base: usize,
+) -> Option<(SyntaxKind, (usize, usize), Option<&'a GreenNode>)> {
+    let mut pos = base;
+    let mut after_colon = false;
+    for child in entry.children() {
+        let len = child.text_len();
+        let child_start = pos;
+        let child_end = pos + len;
+        match child {
+            GreenChild::Token { kind, .. } => {
+                if !after_colon {
+                    if *kind == SyntaxKind::ColonIndicator {
+                        after_colon = true;
+                    }
+                } else if !is_trivia_kind(*kind) {
+                    return Some((*kind, (child_start, child_end), None));
+                }
+            }
+            GreenChild::Node(inner) => {
+                if after_colon {
+                    return Some((inner.kind(), (child_start, child_end), Some(inner)));
+                }
+            }
+        }
+        pos += len;
+    }
+    None
+}
+
+/// Inside a `SequenceItem`, walk past the DashIndicator and return
+/// the first non-trivia "value" child.
+fn item_value<'a>(
+    item: &'a GreenNode,
+    base: usize,
+) -> Option<(SyntaxKind, (usize, usize), Option<&'a GreenNode>)> {
+    let mut pos = base;
+    let mut after_dash = false;
+    for child in item.children() {
+        let len = child.text_len();
+        let child_start = pos;
+        let child_end = pos + len;
+        match child {
+            GreenChild::Token { kind, .. } => {
+                if !after_dash {
+                    if *kind == SyntaxKind::DashIndicator {
+                        after_dash = true;
+                    }
+                } else if !is_trivia_kind(*kind) {
+                    return Some((*kind, (child_start, child_end), None));
+                }
+            }
+            GreenChild::Node(inner) => {
+                if after_dash {
+                    return Some((inner.kind(), (child_start, child_end), Some(inner)));
+                }
+            }
+        }
+        pos += len;
+    }
+    None
+}
+
+fn is_trivia_kind(k: SyntaxKind) -> bool {
+    matches!(
+        k,
+        SyntaxKind::Whitespace
+            | SyntaxKind::Newline
+            | SyntaxKind::Comment
+            | SyntaxKind::Bom
+            | SyntaxKind::Directive
+    )
 }
 
 // ── Path resolution ─────────────────────────────────────────────────
