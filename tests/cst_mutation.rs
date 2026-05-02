@@ -197,12 +197,28 @@ fn set_value_rejects_collection_replacement() {
 }
 
 #[test]
-fn set_value_rejects_block_scalar_target_for_now() {
+fn set_value_at_block_scalar_target_collapses_to_plain_for_single_line() {
+    // Phase 2: replacing a block scalar with a single-line string
+    // emits a plain/quoted scalar rather than `|-\n  hello`.
     let mut doc = parse_document("text: |\n  line1\n  line2\n").unwrap();
-    let err = doc
-        .set_value("text", &Value::String("hello".into()))
-        .unwrap_err();
-    assert!(err.to_string().contains("block scalar"));
+    doc.set_value("text", &Value::String("hello".into()))
+        .unwrap();
+    assert!(
+        doc.to_string().contains("text: hello"),
+        "expected plain replacement, got: {}",
+        doc
+    );
+}
+
+#[test]
+fn set_value_at_block_scalar_target_keeps_block_form_for_multiline() {
+    // Multi-line replacement keeps the block-scalar form so the
+    // result still looks like a block scalar.
+    let mut doc = parse_document("text: |\n  line1\n  line2\n").unwrap();
+    doc.set_value("text", &Value::String("alpha\nbeta\n".into()))
+        .unwrap();
+    let out = doc.to_string();
+    assert!(out.contains("text: |\n  alpha\n  beta\n"), "got: {out}");
 }
 
 // ── remove: drop a mapping key or sequence index ─────────────────

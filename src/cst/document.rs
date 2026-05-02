@@ -265,7 +265,19 @@ impl Document {
         let kind = leaf_kind_at(&self.green, s).ok_or_else(|| {
             Error::Parse("could not locate green-tree leaf at target span".into())
         })?;
-        let fragment = format_value_for_site(value, kind)?;
+        // Neighbour-aware styling: when the site is currently emitted
+        // plain (so there is no quoting *intent* to preserve) and a
+        // sibling style dominates the surrounding `BlockMapping`,
+        // match the neighbours.
+        let neighbour = sibling_dominant_scalar_kind(&self.green, s)
+            .filter(|_| kind == SyntaxKind::PlainScalar);
+        let entry_col = entry_indent_column(&self.source, s);
+        let ctx = SiteContext {
+            kind,
+            neighbour,
+            entry_col,
+        };
+        let fragment = format_value_for_site(value, &ctx)?;
         self.replace_span(s, e, &fragment)
     }
 
@@ -308,6 +320,115 @@ impl Document {
         let (line_start, line_end) =
             entry_line_span(&self.value, &self.span_tree, &self.source, &segments)?;
         self.replace_span(line_start, line_end, "")
+    }
+
+    /// Append a new item to the block sequence at `path`.
+    ///
+    /// `fragment` is the YAML representation of the *value* — the
+    /// `- ` indicator and the surrounding indentation are synthesized
+    /// from the existing items so the new line matches the file's
+    /// shape. Block sequences only in this phase; flow sequences
+    /// (`[…]`) and empty sequences are rejected.
+    ///
+    /// # Errors
+    ///
+    /// - `path` does not resolve to a sequence.
+    /// - The sequence is a flow collection (`[…]`).
+    /// - The sequence has no existing items to anchor indentation on.
+    /// - The same parse-after-edit errors as
+    ///   [`Document::replace_span`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("items:\n  - one\n  - two\n").unwrap();
+    /// doc.push_back("items", "three").unwrap();
+    /// assert_eq!(doc.to_string(), "items:\n  - one\n  - two\n  - three\n");
+    /// ```
+    pub fn push_back(&mut self, path: &str, fragment: &str) -> Result<()> {
+        let target = path_value(&self.value, path)
+            .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
+        let seq = match target {
+            Value::Sequence(s) => s,
+            _ => {
+                return Err(Error::Parse(
+                    "push_back: target path is not a sequence".into(),
+                ));
+            }
+        };
+        if seq.is_empty() {
+            return Err(Error::Parse(
+                "push_back: empty sequence has no anchor for indentation — use `set` with a fragment instead"
+                    .into(),
+            ));
+        }
+        // Find the byte range of the LAST existing item to anchor
+        // dash indentation and the splice position.
+        let item_path = format!("{path}[{}]", seq.len() - 1);
+        let (last_start, last_end) = self
+            .span_at(&item_path)
+            .ok_or_else(|| Error::Parse("push_back: could not resolve last item span".into()))?;
+        let dash_col = column_of_preceding_dash(&self.source, last_start).ok_or_else(|| {
+            Error::Parse(
+                "push_back: only block sequences are supported (no `-` anchor before last item)"
+                    .into(),
+            )
+        })?;
+        let line_end = end_of_line(&self.source, last_end);
+        let indent: String = " ".repeat(dash_col);
+        let new_line = format!("{indent}- {fragment}\n");
+        self.replace_span(line_end, line_end, &new_line)
+    }
+
+    /// Insert a new sequence item immediately after the item at
+    /// `item_path` (e.g. `"items[1]"`).
+    ///
+    /// `fragment` is the YAML representation of the value; the
+    /// `- ` indicator and indentation are derived from the item at
+    /// `item_path`.
+    ///
+    /// # Errors
+    ///
+    /// - `item_path` does not end in an index.
+    /// - The path does not resolve to a sequence item in a block
+    ///   sequence.
+    /// - The same parse-after-edit errors as
+    ///   [`Document::replace_span`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("items:\n  - one\n  - three\n").unwrap();
+    /// doc.insert_after("items[0]", "two").unwrap();
+    /// assert_eq!(
+    ///     doc.to_string(),
+    ///     "items:\n  - one\n  - two\n  - three\n",
+    /// );
+    /// ```
+    pub fn insert_after(&mut self, item_path: &str, fragment: &str) -> Result<()> {
+        let segments = parse_query_path(item_path);
+        if !matches!(segments.last(), Some(QuerySegment::Index(_))) {
+            return Err(Error::Parse(
+                "insert_after: path must end with a sequence index, e.g. `items[2]`".into(),
+            ));
+        }
+        let (item_start, item_end) = self
+            .span_at(item_path)
+            .ok_or_else(|| Error::Parse(format!("path not found: {item_path}")))?;
+        let dash_col = column_of_preceding_dash(&self.source, item_start).ok_or_else(|| {
+            Error::Parse(
+                "insert_after: only block sequences are supported (no `-` anchor before item)"
+                    .into(),
+            )
+        })?;
+        let line_end = end_of_line(&self.source, item_end);
+        let indent: String = " ".repeat(dash_col);
+        let new_line = format!("{indent}- {fragment}\n");
+        self.replace_span(line_end, line_end, &new_line)
     }
 }
 
@@ -557,6 +678,56 @@ fn entry_line_span(
 /// Walk backward from `value_start` past inline whitespace and find
 /// the `-` indicator that opened this sequence entry. Returns its
 /// byte offset, or `None` if no dash is found on the same line.
+/// Resolve `path` against `value` and return the addressed value.
+/// Mirrors the resolution logic of `span_at` but works directly on
+/// the typed [`Value`] tree.
+fn path_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let segments = parse_query_path(path);
+    let mut cur = value;
+    for seg in &segments {
+        match (seg, cur) {
+            (QuerySegment::Key(k), Value::Mapping(m)) => {
+                let (_k, v) = m.iter().find(|(mk, _)| *mk == k)?;
+                cur = v;
+            }
+            (QuerySegment::Index(i), Value::Sequence(seq)) => {
+                cur = seq.get(*i)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(cur)
+}
+
+/// Column of the `-` indicator on the same line as `value_start`,
+/// found by walking backward over inline whitespace. `None` if no
+/// dash precedes the value on its line.
+fn column_of_preceding_dash(source: &str, value_start: usize) -> Option<usize> {
+    let dash_pos = locate_preceding_dash(source, value_start)?;
+    let bytes = source.as_bytes();
+    let mut line_start = dash_pos;
+    while line_start > 0 && bytes[line_start - 1] != b'\n' {
+        line_start -= 1;
+    }
+    Some(dash_pos - line_start)
+}
+
+/// Position of the byte immediately past the next `\n` at or after
+/// `pos`. If `pos` already points past a newline, returns `pos`.
+/// At end-of-input, returns `source.len()`.
+fn end_of_line(source: &str, pos: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut i = pos;
+    while i < bytes.len() && bytes[i] != b'\n' {
+        i += 1;
+    }
+    if i < bytes.len() {
+        i + 1
+    } else {
+        i
+    }
+}
+
 fn locate_preceding_dash(source: &str, value_start: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut i = value_start;
@@ -607,9 +778,8 @@ fn line_extent(source: &str, start: usize, end: usize) -> (usize, usize) {
 // ── Green-tree leaf lookup ──────────────────────────────────────────
 
 /// Return the [`SyntaxKind`] of the leaf containing byte position
-/// `target` in `node`. Walks the green tree once with a running
-/// offset; for the current flat layout the inner recursion never
-/// fires, but it is correct for the structural variant that follows.
+/// `target` in `node`. Walks the green tree recursively with a
+/// running offset.
 fn leaf_kind_at(node: &GreenNode, target: usize) -> Option<SyntaxKind> {
     let mut pos = 0;
     for child in node.children() {
@@ -631,20 +801,175 @@ fn leaf_kind_at(node: &GreenNode, target: usize) -> Option<SyntaxKind> {
     None
 }
 
+/// If the leaf at byte `target` lives inside a `BlockMapping`'s
+/// `MappingEntry`, scan the *other* entries' value scalars and
+/// return their dominant scalar style — but only when that style is
+/// `SingleQuotedScalar` or `DoubleQuotedScalar`. A plain-dominant
+/// neighbourhood returns `None` (plain is the default fallback for
+/// a plain site, so the caller does not need a hint).
+fn sibling_dominant_scalar_kind(node: &GreenNode, target: usize) -> Option<SyntaxKind> {
+    let (mapping, entry) = enclosing_mapping_and_entry(node, target, 0)?;
+    dominant_sibling_value_kind(mapping, entry)
+}
+
+/// Walk the tree and return `(BlockMapping, MappingEntry)` ancestors
+/// of the leaf at byte `target`, when both exist. Recursion is
+/// linear in the tree height plus the children scanned per level.
+fn enclosing_mapping_and_entry<'a>(
+    node: &'a GreenNode,
+    target: usize,
+    base: usize,
+) -> Option<(&'a GreenNode, &'a GreenNode)> {
+    fn walk<'a>(
+        node: &'a GreenNode,
+        target: usize,
+        base: usize,
+        cur_mapping: Option<&'a GreenNode>,
+        cur_entry: Option<&'a GreenNode>,
+    ) -> Option<(&'a GreenNode, &'a GreenNode)> {
+        let mut pos = base;
+        for child in node.children() {
+            let len = child.text_len();
+            if pos <= target && target < pos + len {
+                match child {
+                    GreenChild::Token { .. } => {
+                        if let (Some(m), Some(e)) = (cur_mapping, cur_entry) {
+                            return Some((m, e));
+                        }
+                        return None;
+                    }
+                    GreenChild::Node(inner) => {
+                        let new_mapping = if inner.kind() == SyntaxKind::BlockMapping {
+                            Some(inner)
+                        } else {
+                            cur_mapping
+                        };
+                        let new_entry = if inner.kind() == SyntaxKind::MappingEntry {
+                            Some(inner)
+                        } else {
+                            cur_entry
+                        };
+                        if let Some(found) = walk(inner, target, pos, new_mapping, new_entry) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            pos += len;
+        }
+        None
+    }
+    walk(node, target, base, None, None)
+}
+
+/// Tally value-scalar kinds of every `MappingEntry` child of
+/// `mapping` *except* the entry being modified. Return the
+/// dominant quoted style if and only if it is uniquely the most
+/// frequent and there are at least two siblings vouching for it.
+fn dominant_sibling_value_kind(
+    mapping: &GreenNode,
+    exclude: &GreenNode,
+) -> Option<SyntaxKind> {
+    let exclude_ptr: *const GreenNode = exclude;
+    let mut plain = 0usize;
+    let mut single = 0usize;
+    let mut double = 0usize;
+    for child in mapping.children() {
+        if let GreenChild::Node(entry) = child {
+            if entry.kind() != SyntaxKind::MappingEntry {
+                continue;
+            }
+            // Cheap pointer-equality check — both come from the same
+            // `Arc<[GreenChild]>` storage in this tree, so identity
+            // comparison is reliable.
+            let entry_ptr: *const GreenNode = entry;
+            if core::ptr::eq(entry_ptr, exclude_ptr) {
+                continue;
+            }
+            match entry_value_scalar_kind(entry) {
+                Some(SyntaxKind::PlainScalar) => plain += 1,
+                Some(SyntaxKind::SingleQuotedScalar) => single += 1,
+                Some(SyntaxKind::DoubleQuotedScalar) => double += 1,
+                _ => {}
+            }
+        }
+    }
+    // Need at least two siblings agreeing on a quoted style and a
+    // strict plurality over the other quoted style and over plain.
+    if single >= 2 && single > double && single > plain {
+        return Some(SyntaxKind::SingleQuotedScalar);
+    }
+    if double >= 2 && double > single && double > plain {
+        return Some(SyntaxKind::DoubleQuotedScalar);
+    }
+    None
+}
+
+/// Within a `MappingEntry`, return the syntax kind of the value
+/// scalar (the leaf that follows `:`). `None` if the value is a
+/// nested collection or otherwise not a single scalar leaf.
+fn entry_value_scalar_kind(entry: &GreenNode) -> Option<SyntaxKind> {
+    let mut after_colon = false;
+    for child in entry.children() {
+        match child {
+            GreenChild::Token { kind, .. } => {
+                if *kind == SyntaxKind::ColonIndicator {
+                    after_colon = true;
+                    continue;
+                }
+                if after_colon {
+                    if matches!(
+                        kind,
+                        SyntaxKind::PlainScalar
+                            | SyntaxKind::SingleQuotedScalar
+                            | SyntaxKind::DoubleQuotedScalar
+                            | SyntaxKind::LiteralScalar
+                            | SyntaxKind::FoldedScalar
+                    ) {
+                        return Some(*kind);
+                    }
+                    // Skip whitespace / newline / comment leaves.
+                }
+            }
+            GreenChild::Node(_) => {
+                if after_colon {
+                    // Nested collection — value is not a single scalar.
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 // ── Value → YAML scalar fragment ────────────────────────────────────
 
-fn format_value_for_site(value: &Value, kind: SyntaxKind) -> Result<String> {
+/// Context the formatter consults when picking a YAML representation
+/// for a replacement value at a particular site.
+struct SiteContext {
+    /// The existing leaf's syntax kind at the splice site.
+    kind: SyntaxKind,
+    /// A dominant sibling scalar style, when one is unambiguous.
+    /// Only consulted when [`Self::kind`] is `PlainScalar`.
+    neighbour: Option<SyntaxKind>,
+    /// Column of the first non-whitespace byte on the line that
+    /// owns the splice site. Used to decide block-scalar
+    /// continuation indent.
+    entry_col: usize,
+}
+
+fn format_value_for_site(value: &Value, ctx: &SiteContext) -> Result<String> {
     match value {
         Value::Null => Ok("null".to_string()),
         Value::Bool(true) => Ok("true".to_string()),
         Value::Bool(false) => Ok("false".to_string()),
         Value::Number(n) => Ok(format_number(n)),
-        Value::String(s) => format_string_for_site(s, kind),
+        Value::String(s) => format_string_for_site(s, ctx),
         Value::Sequence(_) | Value::Mapping(_) => Err(Error::Parse(
             "set_value cannot replace a scalar with a collection (use `set` with a fragment)"
                 .into(),
         )),
-        Value::Tagged(t) => format_value_for_site(t.value(), kind),
+        Value::Tagged(t) => format_value_for_site(t.value(), ctx),
     }
 }
 
@@ -654,24 +979,156 @@ fn format_number(n: &Number) -> String {
     n.to_string()
 }
 
-fn format_string_for_site(s: &str, kind: SyntaxKind) -> Result<String> {
-    match kind {
+fn format_string_for_site(s: &str, ctx: &SiteContext) -> Result<String> {
+    // Multi-line string in a block context: prefer a literal block
+    // scalar (`|` / `|-`) over `\n`-escaped double quotes — a
+    // Renovate-style edit that lifts a one-line value into many
+    // lines should look like the rest of the file would have, not
+    // an escaped one-liner.
+    if s.contains('\n') && can_use_block_literal(s) && is_block_site(ctx.kind) {
+        return Ok(format_block_literal(s, ctx.entry_col));
+    }
+
+    match ctx.kind {
         SyntaxKind::PlainScalar => {
-            if is_plain_safe(s) {
-                Ok(s.to_string())
-            } else {
-                Ok(format_double_quoted(s))
+            // Neighbour preference only kicks in when the current
+            // site is plain — i.e. there is no existing quoting
+            // intent to preserve. A surrounding mapping that
+            // unambiguously prefers one quoted style nudges the new
+            // value into the same style.
+            match ctx.neighbour {
+                Some(SyntaxKind::SingleQuotedScalar) if !s.contains('\n') => {
+                    Ok(format_single_quoted(s))
+                }
+                Some(SyntaxKind::DoubleQuotedScalar) => Ok(format_double_quoted(s)),
+                _ => {
+                    if is_plain_safe(s) {
+                        Ok(s.to_string())
+                    } else {
+                        Ok(format_double_quoted(s))
+                    }
+                }
             }
         }
         SyntaxKind::SingleQuotedScalar => Ok(format_single_quoted(s)),
         SyntaxKind::DoubleQuotedScalar => Ok(format_double_quoted(s)),
-        SyntaxKind::LiteralScalar | SyntaxKind::FoldedScalar => Err(Error::Parse(
-            "set_value: replacing a block scalar (|, >) is not yet supported".into(),
-        )),
+        SyntaxKind::LiteralScalar | SyntaxKind::FoldedScalar => {
+            // Replacing a block scalar with a *single-line* string
+            // is a legitimate edit (e.g. truncating a longer note
+            // back to one line). Emit the natural plain/quoted
+            // shape rather than a one-line block literal.
+            if !s.contains('\n') {
+                if is_plain_safe(s) {
+                    Ok(s.to_string())
+                } else {
+                    Ok(format_double_quoted(s))
+                }
+            } else if can_use_block_literal(s) {
+                Ok(format_block_literal(s, ctx.entry_col))
+            } else {
+                Err(Error::Parse(
+                    "set_value: existing block scalar can only be replaced with a string \
+                     whose content lines do not begin with whitespace or control characters yet"
+                        .into(),
+                ))
+            }
+        }
         _ => Err(Error::Parse(
             "set_value: target site is not a scalar leaf".into(),
         )),
     }
+}
+
+/// `true` when the existing leaf's syntax kind belongs to a
+/// block-context scalar — block mappings/sequences are the only
+/// place a literal `|` block scalar makes sense.
+fn is_block_site(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::PlainScalar
+            | SyntaxKind::SingleQuotedScalar
+            | SyntaxKind::DoubleQuotedScalar
+            | SyntaxKind::LiteralScalar
+            | SyntaxKind::FoldedScalar
+    )
+}
+
+/// Conservative check: a string is safely representable as a literal
+/// block scalar only when none of its lines begin with a horizontal
+/// whitespace character (which would require an explicit indent
+/// indicator we do not yet emit), it contains no control characters
+/// other than `\n`, and its trailing-newline count is zero or one
+/// (matched by the `|-` and `|` chomping indicators respectively).
+fn can_use_block_literal(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    // Reject control characters except `\n` and `\t` between content.
+    for &b in s.as_bytes() {
+        if (b < 0x20 && b != b'\n' && b != b'\t') || b == 0x7F {
+            return false;
+        }
+    }
+    // Strip up to one trailing newline; reject more than one.
+    let trimmed = s.strip_suffix('\n').unwrap_or(s);
+    if trimmed.ends_with('\n') {
+        return false;
+    }
+    // No line may start with a space or tab — that requires an
+    // explicit indentation indicator we do not emit yet.
+    for line in trimmed.split('\n') {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            return false;
+        }
+    }
+    true
+}
+
+/// Format `s` as a literal block scalar (`|` or `|-`) at
+/// `entry_col + 2` indent.
+fn format_block_literal(s: &str, entry_col: usize) -> String {
+    let trailing_nl = s.ends_with('\n');
+    let body = if trailing_nl { &s[..s.len() - 1] } else { s };
+    let indent_str = " ".repeat(entry_col + 2);
+
+    let mut out = String::with_capacity(s.len() + 8 + indent_str.len() * (body.matches('\n').count() + 1));
+    out.push('|');
+    if !trailing_nl {
+        // Strip chomping indicator removes any trailing newlines, so
+        // we can faithfully encode the no-trailing-newline case.
+        out.push('-');
+    }
+    out.push('\n');
+    let mut first = true;
+    for line in body.split('\n') {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        out.push_str(&indent_str);
+        out.push_str(line);
+    }
+    // `replace_span` pastes the fragment in place of the value
+    // bytes only — the trailing line break that separates this
+    // entry from the next is already in the surrounding source.
+    out
+}
+
+/// Compute the column (zero-based) of the first non-whitespace byte
+/// on the line that contains `pos` in `source`. For
+/// `  version: 0.0.1\n` with `pos` at the value scalar's start,
+/// returns 2.
+fn entry_indent_column(source: &str, pos: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut line_start = pos.min(bytes.len());
+    while line_start > 0 && bytes[line_start - 1] != b'\n' {
+        line_start -= 1;
+    }
+    let mut col = line_start;
+    while col < bytes.len() && (bytes[col] == b' ' || bytes[col] == b'\t') {
+        col += 1;
+    }
+    col - line_start
 }
 
 /// `true` if `s` can be safely emitted as a YAML plain scalar without
