@@ -170,24 +170,48 @@ pub(crate) fn build_green_tree(source: Arc<str>) -> Result<GreenNode> {
 }
 
 /// Merge the three source-bearing streams (trivia, tokens, comments)
-/// into a single ordered child list. The streams are individually in
-/// source order, so the merge is a three-way ordered iteration.
+/// into a nested green tree.
+///
+/// The builder is a stack-based bracketer. Source-order events from
+/// the scanner — the recorded token stream (which now includes
+/// zero-length structural markers `BlockMapStart`, `BlockSeqStart`,
+/// `BlockEnd`, `SyntheticKey`), the trivia stream, and the comment
+/// stream — are merged by start offset and dispatched to a small
+/// frame stack:
+///
+///   * `BlockMapStart` / `BlockSeqStart` push a new
+///     [`SyntaxKind::BlockMapping`] / [`SyntaxKind::BlockSequence`]
+///     frame.
+///   * `BlockEnd` closes the most recent block container, flushing
+///     any in-progress [`SyntaxKind::MappingEntry`] /
+///     [`SyntaxKind::SequenceItem`] frame first.
+///   * `SyntheticKey` and the explicit `?` indicator open a
+///     [`SyntaxKind::MappingEntry`] *inside* a block mapping.
+///   * `DashIndicator` opens a [`SyntaxKind::SequenceItem`] inside a
+///     block sequence.
+///   * `OpenBrace` / `OpenBracket` push
+///     [`SyntaxKind::FlowMapping`] / [`SyntaxKind::FlowSequence`]
+///     frames; their content is kept flat in this phase (no flow
+///     `MappingEntry` subdivision yet).
+///
+/// Round-trip invariant: the depth-first concatenation of every
+/// descendant leaf's text equals the original input. Composite
+/// frames carry no source bytes of their own.
 fn assemble(
     source: Arc<str>,
     trivia: Vec<Trivia>,
     tokens: Vec<RecordedToken>,
     comments: Vec<ScannedComment>,
 ) -> GreenNode {
-    let total_len = trivia.len() + tokens.len() + comments.len();
-    let mut children: Vec<GreenChild> = Vec::with_capacity(total_len);
+    let mut builder = TreeBuilder::new(source);
 
     let mut trivia_iter = trivia.into_iter().peekable();
     let mut token_iter = tokens.into_iter().peekable();
     let mut comment_iter = comments.into_iter().peekable();
 
-    // Three-way merge by `start` byte offset. Synthetic and recorded
-    // items never overlap because the scanner emits each only once
-    // for the bytes it covers — no two streams claim the same byte.
+    // Three-stream merge by `start` offset. At equal offsets the
+    // recorded-token stream wins so structural events (zero-length)
+    // process before any leaf trivia/comment that share the byte.
     loop {
         let nt = trivia_iter.peek().map(|t| t.start);
         let ntok = token_iter.peek().map(|t| t.start);
@@ -195,23 +219,23 @@ fn assemble(
 
         match (nt, ntok, nc) {
             (None, None, None) => break,
-            (Some(t), tok, c) if min_or_max(tok) >= t && min_or_max(c) >= t => {
-                let triv = trivia_iter.next().expect("peeked Some");
-                children.push(token_from_trivia(triv));
-            }
-            (_, Some(tk), c) if min_or_max(c) >= tk => {
+            (_, Some(tk), c) if min_or_max(c) >= tk && min_or_max(nt) >= tk => {
                 let tok = token_iter.next().expect("peeked Some");
-                children.push(token_from_recorded(tok));
+                builder.handle_token(tok);
+            }
+            (Some(t), _, c) if min_or_max(c) >= t => {
+                let triv = trivia_iter.next().expect("peeked Some");
+                builder.push_leaf(child_from_trivia(triv));
             }
             (_, _, Some(_)) => {
                 let cmt = comment_iter.next().expect("peeked Some");
-                children.push(token_from_comment(cmt));
+                builder.push_leaf(child_from_comment(cmt));
             }
             _ => unreachable!(),
         }
     }
 
-    GreenNode::new(SyntaxKind::Document, source, children)
+    builder.finish()
 }
 
 #[inline]
@@ -219,7 +243,191 @@ fn min_or_max(opt: Option<usize>) -> usize {
     opt.unwrap_or(usize::MAX)
 }
 
-fn token_from_trivia(t: Trivia) -> GreenChild {
+/// Single in-progress composite node in the assembler's frame stack.
+struct Frame {
+    kind: SyntaxKind,
+    children: Vec<GreenChild>,
+}
+
+/// Stack-based composite-node builder.
+struct TreeBuilder {
+    source: Arc<str>,
+    stack: Vec<Frame>,
+}
+
+impl TreeBuilder {
+    fn new(source: Arc<str>) -> Self {
+        let mut stack = Vec::with_capacity(8);
+        stack.push(Frame {
+            kind: SyntaxKind::Document,
+            children: Vec::new(),
+        });
+        Self { source, stack }
+    }
+
+    fn top_kind(&self) -> SyntaxKind {
+        self.stack.last().expect("non-empty").kind
+    }
+
+    /// Push `child` into the current top frame.
+    fn push_leaf(&mut self, child: GreenChild) {
+        self.stack
+            .last_mut()
+            .expect("non-empty")
+            .children
+            .push(child);
+    }
+
+    /// Push a new composite frame.
+    fn push_frame(&mut self, kind: SyntaxKind) {
+        self.stack.push(Frame {
+            kind,
+            children: Vec::new(),
+        });
+    }
+
+    /// Pop the top frame into its parent as a `GreenChild::Node`.
+    /// Never pops the root (`Document`) frame.
+    fn pop_frame(&mut self) {
+        if self.stack.len() <= 1 {
+            return;
+        }
+        let frame = self.stack.pop().expect("len > 1");
+        let node = GreenNode::new(frame.kind, Arc::clone(&self.source), frame.children);
+        self.push_leaf(GreenChild::Node(node));
+    }
+
+    /// If the current top frame is a `MappingEntry` or
+    /// `SequenceItem`, close it. Used at every entry boundary.
+    fn close_open_entry(&mut self) {
+        if matches!(
+            self.top_kind(),
+            SyntaxKind::MappingEntry | SyntaxKind::SequenceItem
+        ) {
+            self.pop_frame();
+        }
+    }
+
+    /// Walk the stack from the top to find the nearest container
+    /// (`BlockMapping`, `BlockSequence`, `FlowMapping`,
+    /// `FlowSequence`, or `Document`). Used to decide whether an
+    /// entry-opener should subdivide (only inside block contexts in
+    /// Phase 1).
+    fn nearest_container_kind(&self) -> SyntaxKind {
+        for f in self.stack.iter().rev() {
+            match f.kind {
+                SyntaxKind::BlockMapping
+                | SyntaxKind::BlockSequence
+                | SyntaxKind::FlowMapping
+                | SyntaxKind::FlowSequence
+                | SyntaxKind::Document => return f.kind,
+                _ => {}
+            }
+        }
+        SyntaxKind::Document
+    }
+
+    fn handle_token(&mut self, tok: RecordedToken) {
+        use RecordedTokenKind as R;
+        use SyntaxKind as S;
+
+        match tok.kind {
+            R::BlockMapStart => {
+                self.push_frame(S::BlockMapping);
+            }
+            R::BlockSeqStart => {
+                self.push_frame(S::BlockSequence);
+            }
+            R::BlockEnd => {
+                self.close_open_entry();
+                // Pop the BlockMapping / BlockSequence container
+                // itself. Defensive: only pop if it is one.
+                if matches!(
+                    self.top_kind(),
+                    S::BlockMapping | S::BlockSequence
+                ) {
+                    self.pop_frame();
+                }
+            }
+            R::SyntheticKey => {
+                if matches!(self.nearest_container_kind(), S::BlockMapping) {
+                    self.close_open_entry();
+                    self.push_frame(S::MappingEntry);
+                }
+                // Inside a flow mapping (or anywhere else), the
+                // implicit-key marker is structurally redundant.
+            }
+            R::QuestionIndicator => {
+                if matches!(self.nearest_container_kind(), S::BlockMapping) {
+                    self.close_open_entry();
+                    self.push_frame(S::MappingEntry);
+                }
+                self.push_leaf(leaf_token(S::QuestionIndicator, tok.start..tok.end));
+            }
+            R::DashIndicator => {
+                if matches!(self.nearest_container_kind(), S::BlockSequence) {
+                    self.close_open_entry();
+                    self.push_frame(S::SequenceItem);
+                }
+                self.push_leaf(leaf_token(S::DashIndicator, tok.start..tok.end));
+            }
+            R::OpenBrace => {
+                self.push_frame(S::FlowMapping);
+                self.push_leaf(leaf_token(S::OpenBrace, tok.start..tok.end));
+            }
+            R::CloseBrace => {
+                self.push_leaf(leaf_token(S::CloseBrace, tok.start..tok.end));
+                if matches!(self.top_kind(), S::FlowMapping) {
+                    self.pop_frame();
+                }
+            }
+            R::OpenBracket => {
+                self.push_frame(S::FlowSequence);
+                self.push_leaf(leaf_token(S::OpenBracket, tok.start..tok.end));
+            }
+            R::CloseBracket => {
+                self.push_leaf(leaf_token(S::CloseBracket, tok.start..tok.end));
+                if matches!(self.top_kind(), S::FlowSequence) {
+                    self.pop_frame();
+                }
+            }
+            // Pure-leaf kinds — push directly.
+            R::DocStart => self.push_leaf(leaf_token(S::DocStart, tok.start..tok.end)),
+            R::DocEnd => self.push_leaf(leaf_token(S::DocEnd, tok.start..tok.end)),
+            R::ColonIndicator => {
+                self.push_leaf(leaf_token(S::ColonIndicator, tok.start..tok.end));
+            }
+            R::Comma => self.push_leaf(leaf_token(S::Comma, tok.start..tok.end)),
+            R::AnchorMark => self.push_leaf(leaf_token(S::AnchorMark, tok.start..tok.end)),
+            R::AliasMark => self.push_leaf(leaf_token(S::AliasMark, tok.start..tok.end)),
+            R::TagMark => self.push_leaf(leaf_token(S::TagMark, tok.start..tok.end)),
+            R::PlainScalar => self.push_leaf(leaf_token(S::PlainScalar, tok.start..tok.end)),
+            R::SingleQuotedScalar => {
+                self.push_leaf(leaf_token(S::SingleQuotedScalar, tok.start..tok.end));
+            }
+            R::DoubleQuotedScalar => {
+                self.push_leaf(leaf_token(S::DoubleQuotedScalar, tok.start..tok.end));
+            }
+            R::LiteralScalar => self.push_leaf(leaf_token(S::LiteralScalar, tok.start..tok.end)),
+            R::FoldedScalar => self.push_leaf(leaf_token(S::FoldedScalar, tok.start..tok.end)),
+        }
+    }
+
+    fn finish(mut self) -> GreenNode {
+        // Close any frames the scanner failed to balance — defensive.
+        while self.stack.len() > 1 {
+            self.pop_frame();
+        }
+        let root = self.stack.pop().expect("Document frame");
+        GreenNode::new(SyntaxKind::Document, self.source, root.children)
+    }
+}
+
+fn leaf_token(kind: SyntaxKind, range: core::ops::Range<usize>) -> GreenChild {
+    GreenChild::Token { kind, range }
+}
+
+fn child_from_trivia(t: Trivia) -> GreenChild {
     let kind = match t.kind {
         TriviaKind::Whitespace => SyntaxKind::Whitespace,
         TriviaKind::Newline => SyntaxKind::Newline,
@@ -232,34 +440,7 @@ fn token_from_trivia(t: Trivia) -> GreenChild {
     }
 }
 
-fn token_from_recorded(t: RecordedToken) -> GreenChild {
-    let kind = match t.kind {
-        RecordedTokenKind::DocStart => SyntaxKind::DocStart,
-        RecordedTokenKind::DocEnd => SyntaxKind::DocEnd,
-        RecordedTokenKind::DashIndicator => SyntaxKind::DashIndicator,
-        RecordedTokenKind::QuestionIndicator => SyntaxKind::QuestionIndicator,
-        RecordedTokenKind::ColonIndicator => SyntaxKind::ColonIndicator,
-        RecordedTokenKind::Comma => SyntaxKind::Comma,
-        RecordedTokenKind::OpenBracket => SyntaxKind::OpenBracket,
-        RecordedTokenKind::CloseBracket => SyntaxKind::CloseBracket,
-        RecordedTokenKind::OpenBrace => SyntaxKind::OpenBrace,
-        RecordedTokenKind::CloseBrace => SyntaxKind::CloseBrace,
-        RecordedTokenKind::AnchorMark => SyntaxKind::AnchorMark,
-        RecordedTokenKind::AliasMark => SyntaxKind::AliasMark,
-        RecordedTokenKind::TagMark => SyntaxKind::TagMark,
-        RecordedTokenKind::PlainScalar => SyntaxKind::PlainScalar,
-        RecordedTokenKind::SingleQuotedScalar => SyntaxKind::SingleQuotedScalar,
-        RecordedTokenKind::DoubleQuotedScalar => SyntaxKind::DoubleQuotedScalar,
-        RecordedTokenKind::LiteralScalar => SyntaxKind::LiteralScalar,
-        RecordedTokenKind::FoldedScalar => SyntaxKind::FoldedScalar,
-    };
-    GreenChild::Token {
-        kind,
-        range: t.start..t.end,
-    }
-}
-
-fn token_from_comment(c: ScannedComment) -> GreenChild {
+fn child_from_comment(c: ScannedComment) -> GreenChild {
     GreenChild::Token {
         kind: SyntaxKind::Comment,
         range: c.start..c.end,

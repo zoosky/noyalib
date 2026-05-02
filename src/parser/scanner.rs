@@ -247,10 +247,12 @@ pub(crate) struct Trivia {
 
 /// Categorical tag for tokens recorded for the green-tree builder.
 /// A simplified mirror of [`TokenKind`] that excludes synthetic tokens
-/// (StreamStart/End, BlockMappingStart, BlockSequenceStart, BlockEnd)
-/// — the builder only needs source-bearing tokens.
+/// — the builder only needs source-bearing tokens plus the
+/// zero-length structural events that bracket block collections
+/// and implicit-key entry boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecordedTokenKind {
+    // ── leaf kinds (carry source bytes) ────────────────────────
     DocStart,
     DocEnd,
     DashIndicator,
@@ -269,16 +271,40 @@ pub(crate) enum RecordedTokenKind {
     DoubleQuotedScalar,
     LiteralScalar,
     FoldedScalar,
+
+    // ── structural events (zero-length, no source bytes) ───────
+    /// Opening of an implicit/explicit block mapping. Drives the
+    /// builder to push a `BlockMapping` frame.
+    BlockMapStart,
+    /// Opening of a block sequence. Drives the builder to push a
+    /// `BlockSequence` frame.
+    BlockSeqStart,
+    /// Closing of the current block collection — the assembler pops
+    /// either a `BlockMapping` or a `BlockSequence` based on what is
+    /// currently on top of its frame stack.
+    BlockEnd,
+    /// Zero-length marker the scanner emits before an implicit
+    /// mapping key. Drives the builder to open a new `MappingEntry`.
+    SyntheticKey,
 }
 
 impl RecordedTokenKind {
-    fn from_token(kind: &TokenKind<'_>) -> Option<Self> {
+    fn from_token(kind: &TokenKind<'_>, span_len: usize) -> Option<Self> {
         Some(match kind {
             TokenKind::DocumentStart => Self::DocStart,
             TokenKind::DocumentEnd => Self::DocEnd,
             TokenKind::BlockEntry => Self::DashIndicator,
             TokenKind::FlowEntry => Self::Comma,
-            TokenKind::Key => Self::QuestionIndicator,
+            // The scanner emits `Key` for both the explicit `?`
+            // indicator and (zero-length) before an implicit key.
+            // The span length is the only durable discriminant.
+            TokenKind::Key => {
+                if span_len == 0 {
+                    Self::SyntheticKey
+                } else {
+                    Self::QuestionIndicator
+                }
+            }
             TokenKind::Value => Self::ColonIndicator,
             TokenKind::FlowSequenceStart => Self::OpenBracket,
             TokenKind::FlowSequenceEnd => Self::CloseBracket,
@@ -294,12 +320,21 @@ impl RecordedTokenKind {
                 ScalarStyle::Literal => Self::LiteralScalar,
                 ScalarStyle::Folded => Self::FoldedScalar,
             },
-            TokenKind::StreamStart
-            | TokenKind::StreamEnd
-            | TokenKind::BlockSequenceStart
-            | TokenKind::BlockMappingStart
-            | TokenKind::BlockEnd => return None,
+            TokenKind::BlockSequenceStart => Self::BlockSeqStart,
+            TokenKind::BlockMappingStart => Self::BlockMapStart,
+            TokenKind::BlockEnd => Self::BlockEnd,
+            TokenKind::StreamStart | TokenKind::StreamEnd => return None,
         })
+    }
+
+    /// `true` for variants that produce a green-tree leaf. `false`
+    /// for zero-length structural events that only manipulate the
+    /// builder's frame stack.
+    pub(crate) fn is_leaf(self) -> bool {
+        !matches!(
+            self,
+            Self::BlockMapStart | Self::BlockSeqStart | Self::BlockEnd | Self::SyntheticKey
+        )
     }
 }
 
@@ -385,20 +420,29 @@ impl<'a> Scanner<'a> {
             // Move the token out instead of cloning — avoids heap-allocating
             // copies of owned Strings inside Scalar/Anchor/Alias/Tag variants.
             let t = core::mem::take(&mut self.tokens[self.tokens_consumed]);
-            // Record source-bearing tokens for the green-tree builder
-            // when recording is enabled. Synthetic tokens
-            // (StreamStart/End, BlockMappingStart, etc.) carry no
-            // source bytes and are filtered by `RecordedTokenKind`. A
-            // few token kinds (notably the `Key` token inserted before
-            // an implicit mapping key) reach this point with a
-            // zero-length span — also synthetic; skip them.
-            if self.recording && t.span.end > t.span.start {
-                if let Some(kind) = RecordedTokenKind::from_token(&t.kind) {
-                    self.recorded_tokens.push(RecordedToken {
-                        start: t.span.start,
-                        end: t.span.end,
-                        kind,
-                    });
+            // Record tokens for the green-tree builder when
+            // recording is enabled. Two flavours land in this
+            // stream: source-bearing leaves (scalars, indicators,
+            // braces, …) and zero-length structural events
+            // (BlockMapStart / BlockSeqStart / BlockEnd /
+            // SyntheticKey) used to bracket composites. Stream
+            // start / end remain filtered.
+            if self.recording {
+                let span_len = t.span.end.saturating_sub(t.span.start);
+                if let Some(kind) = RecordedTokenKind::from_token(&t.kind, span_len) {
+                    // Reject zero-length leaves — the scanner can
+                    // legitimately emit a leaf-kind token with a
+                    // collapsed span when it represents a synthetic
+                    // boundary (e.g., the implicit-Key `Key` is mapped
+                    // to `SyntheticKey` above; anything else with a
+                    // zero span is a defensive no-op).
+                    if !(kind.is_leaf() && span_len == 0) {
+                        self.recorded_tokens.push(RecordedToken {
+                            start: t.span.start,
+                            end: t.span.end,
+                            kind,
+                        });
+                    }
                 }
             }
             self.tokens_consumed += 1;

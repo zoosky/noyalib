@@ -67,16 +67,25 @@ impl GreenChild {
     /// # Examples
     ///
     /// ```
-    /// use noyalib::cst::{parse_document, GreenChild};
+    /// use noyalib::cst::{parse_document, GreenChild, GreenNode};
+    ///
+    /// fn first_leaf_text<'a>(node: &GreenNode, src: &'a str) -> Option<&'a str> {
+    ///     for c in node.children() {
+    ///         match c {
+    ///             GreenChild::Token { .. } => return c.token_text(src),
+    ///             GreenChild::Node(n) => {
+    ///                 if let Some(t) = first_leaf_text(n, src) {
+    ///                     return Some(t);
+    ///                 }
+    ///             }
+    ///         }
+    ///     }
+    ///     None
+    /// }
     ///
     /// let doc = parse_document("a: 1\n").unwrap();
     /// let src = doc.syntax().source();
-    /// let first_text = doc
-    ///     .syntax()
-    ///     .children()
-    ///     .next()
-    ///     .and_then(|c| c.token_text(src));
-    /// assert!(first_text.is_some());
+    /// assert_eq!(first_leaf_text(doc.syntax(), src), Some("a"));
     /// ```
     #[must_use]
     pub fn token_text<'s>(&self, source: &'s str) -> Option<&'s str> {

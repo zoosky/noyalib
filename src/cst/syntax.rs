@@ -82,6 +82,28 @@ pub enum SyntaxKind {
     Stream,
     /// A single YAML document inside the stream.
     Document,
+    /// A block-style mapping. Children are [`Self::MappingEntry`]
+    /// nodes (or trivia) in source order.
+    BlockMapping,
+    /// A block-style sequence. Children are [`Self::SequenceItem`]
+    /// nodes (or trivia) in source order.
+    BlockSequence,
+    /// A `{ … }` flow mapping. Children are the brace tokens, the
+    /// entries' tokens, and inter-token trivia. Phase 1 keeps flow
+    /// content flat — flow entries are not subdivided into
+    /// [`Self::MappingEntry`] composites.
+    FlowMapping,
+    /// A `[ … ]` flow sequence. Phase 1 keeps flow content flat — see
+    /// [`Self::FlowMapping`].
+    FlowSequence,
+    /// A single key/value entry of a [`Self::BlockMapping`]. Holds
+    /// the (optional) `?` indicator, the key tokens, the `:`
+    /// indicator, the value tokens (which may themselves be a nested
+    /// block / flow collection), and any inline trailing trivia.
+    MappingEntry,
+    /// A single item of a [`Self::BlockSequence`], including the `-`
+    /// indicator and the value tokens (or a nested collection).
+    SequenceItem,
 }
 
 impl SyntaxKind {
@@ -94,9 +116,20 @@ impl SyntaxKind {
     /// use noyalib::cst::SyntaxKind;
     /// assert!(SyntaxKind::Whitespace.is_token());
     /// assert!(!SyntaxKind::Stream.is_token());
+    /// assert!(!SyntaxKind::BlockMapping.is_token());
     /// ```
     #[must_use]
     pub const fn is_token(self) -> bool {
-        !matches!(self, Self::Stream | Self::Document)
+        !matches!(
+            self,
+            Self::Stream
+                | Self::Document
+                | Self::BlockMapping
+                | Self::BlockSequence
+                | Self::FlowMapping
+                | Self::FlowSequence
+                | Self::MappingEntry
+                | Self::SequenceItem
+        )
     }
 }
