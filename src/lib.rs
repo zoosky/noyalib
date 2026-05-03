@@ -173,7 +173,6 @@ mod path;
 pub mod robotics;
 mod schema;
 mod ser;
-#[cfg(feature = "std")]
 pub(crate) mod span_context;
 pub(crate) mod spanned;
 mod streaming;
@@ -201,8 +200,8 @@ pub use error::{Error, Location, Result};
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};
 pub use path::Path;
 pub use schema::{
-    is_failsafe_compatible, is_json_compatible, validate_core_schema, validate_failsafe_schema,
-    validate_json_schema,
+    is_yaml_failsafe_compatible, is_yaml_json_compatible, validate_yaml_core_schema,
+    validate_yaml_failsafe_schema, validate_yaml_json_schema,
 };
 pub use ser::{
     to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,

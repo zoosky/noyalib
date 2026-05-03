@@ -320,10 +320,12 @@ fn test_document_iterator_is_empty() {
 
 #[test]
 fn test_load_all_with_parse_error() {
-    // Invalid YAML that should cause parser error
-    let invalid_yaml = ":\n:\n:";
+    // Genuinely invalid YAML — an unterminated double-quoted scalar.
+    // (`:\n:\n:` was previously used here, but per YAML 1.2 that is a
+    // valid three-entry block mapping with duplicate empty keys; the
+    // earlier "error" was a parser bug masking a real YAML construct.)
+    let invalid_yaml = "key: \"unterminated";
     let result = load_all(invalid_yaml);
-    // Should return an error or an empty iterator for parse errors
     if let Ok(iter) = result {
         assert!(iter.is_empty() || iter.count() == 0);
     }

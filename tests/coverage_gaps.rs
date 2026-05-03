@@ -1151,29 +1151,29 @@ fn arc_weak_anchor_deserialize_produces_dangling() {
 #[test]
 fn schema_validate_empty_mapping() {
     let empty = Value::Mapping(Mapping::new());
-    noyalib::validate_core_schema(&empty).unwrap();
-    noyalib::validate_json_schema(&empty).unwrap();
-    noyalib::validate_failsafe_schema(&empty).unwrap();
+    noyalib::validate_yaml_core_schema(&empty).unwrap();
+    noyalib::validate_yaml_json_schema(&empty).unwrap();
+    noyalib::validate_yaml_failsafe_schema(&empty).unwrap();
 }
 
 #[test]
 fn schema_validate_empty_sequence() {
     let empty = Value::Sequence(vec![]);
-    noyalib::validate_core_schema(&empty).unwrap();
-    noyalib::validate_json_schema(&empty).unwrap();
-    noyalib::validate_failsafe_schema(&empty).unwrap();
+    noyalib::validate_yaml_core_schema(&empty).unwrap();
+    noyalib::validate_yaml_json_schema(&empty).unwrap();
+    noyalib::validate_yaml_failsafe_schema(&empty).unwrap();
 }
 
 #[test]
 fn schema_is_json_compatible_basic() {
     let value: Value = from_str("a: 1\nb: true\nc: hello\n").unwrap();
-    assert!(noyalib::is_json_compatible(&value));
+    assert!(noyalib::is_yaml_json_compatible(&value));
 }
 
 #[test]
 fn schema_is_failsafe_compatible_strings_only() {
     // Failsafe treats everything as strings
-    assert!(noyalib::is_failsafe_compatible(&Value::from("hello")));
+    assert!(noyalib::is_yaml_failsafe_compatible(&Value::from("hello")));
 }
 
 // ============================================================================

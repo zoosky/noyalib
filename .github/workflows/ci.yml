@@ -89,6 +89,39 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
 
+  msrv-clippy:
+    name: MSRV (1.75.0) clippy
+    # The test-matrix already runs `cargo test --all-features` on 1.75.0
+    # across Linux/macOS/Windows, which catches build- and syntax-level
+    # MSRV drift. This job complements it by running clippy on the same
+    # toolchain so a lint pattern that compiles only on a newer rustc
+    # cannot land unnoticed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.75.0"
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo clippy on MSRV
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  no-std:
+    name: no_std (alloc-only) build
+    # The README and CHANGELOG promise that `default-features = false`
+    # builds without `std`. This job enforces that promise on every
+    # push so the claim never silently regresses.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo check --no-default-features
+        run: cargo check --no-default-features --lib
+
   verify-signatures:
     name: Verify commit signatures
     runs-on: ubuntu-latest

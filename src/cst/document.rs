@@ -868,10 +868,10 @@ fn resolve_path_in_green(
     walk_path(collection, segments, base, source)
 }
 
-fn first_collection_child<'a>(
-    node: &'a GreenNode,
+fn first_collection_child(
+    node: &GreenNode,
     base: usize,
-) -> Option<(&'a GreenNode, usize)> {
+) -> Option<(&GreenNode, usize)> {
     let mut pos = base;
     for child in node.children() {
         let len = child.text_len();
@@ -1055,10 +1055,10 @@ fn resolve_value_in_item(
 /// return the first non-trivia "value" child. `value_node` is
 /// `Some` if the value is a composite (a nested collection), `None`
 /// if it is a leaf scalar.
-fn entry_value<'a>(
-    entry: &'a GreenNode,
+fn entry_value(
+    entry: &GreenNode,
     base: usize,
-) -> Option<(SyntaxKind, (usize, usize), Option<&'a GreenNode>)> {
+) -> Option<(SyntaxKind, (usize, usize), Option<&GreenNode>)> {
     let mut pos = base;
     let mut after_colon = false;
     for child in entry.children() {
@@ -1088,10 +1088,10 @@ fn entry_value<'a>(
 
 /// Inside a `SequenceItem`, walk past the DashIndicator and return
 /// the first non-trivia "value" child.
-fn item_value<'a>(
-    item: &'a GreenNode,
+fn item_value(
+    item: &GreenNode,
     base: usize,
-) -> Option<(SyntaxKind, (usize, usize), Option<&'a GreenNode>)> {
+) -> Option<(SyntaxKind, (usize, usize), Option<&GreenNode>)> {
     let mut pos = base;
     let mut after_dash = false;
     for child in item.children() {
@@ -1420,11 +1420,11 @@ fn sibling_dominant_scalar_kind(node: &GreenNode, target: usize) -> Option<Synta
 /// Walk the tree and return `(BlockMapping, MappingEntry)` ancestors
 /// of the leaf at byte `target`, when both exist. Recursion is
 /// linear in the tree height plus the children scanned per level.
-fn enclosing_mapping_and_entry<'a>(
-    node: &'a GreenNode,
+fn enclosing_mapping_and_entry(
+    node: &GreenNode,
     target: usize,
     base: usize,
-) -> Option<(&'a GreenNode, &'a GreenNode)> {
+) -> Option<(&GreenNode, &GreenNode)> {
     fn walk<'a>(
         node: &'a GreenNode,
         target: usize,
@@ -1522,19 +1522,19 @@ fn entry_value_scalar_kind(entry: &GreenNode) -> Option<SyntaxKind> {
                     after_colon = true;
                     continue;
                 }
-                if after_colon {
-                    if matches!(
+                if after_colon
+                    && matches!(
                         kind,
                         SyntaxKind::PlainScalar
                             | SyntaxKind::SingleQuotedScalar
                             | SyntaxKind::DoubleQuotedScalar
                             | SyntaxKind::LiteralScalar
                             | SyntaxKind::FoldedScalar
-                    ) {
-                        return Some(*kind);
-                    }
-                    // Skip whitespace / newline / comment leaves.
+                    )
+                {
+                    return Some(*kind);
                 }
+                // Whitespace / newline / comment leaves are skipped.
             }
             GreenChild::Node(_) => {
                 if after_colon {

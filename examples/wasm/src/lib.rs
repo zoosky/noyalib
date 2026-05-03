@@ -30,7 +30,7 @@ pub fn stringify(value: JsValue) -> Result<String, JsError> {
 pub fn validate_json(yaml: &str) -> Result<bool, JsError> {
     let value: noyalib::Value =
         noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
-    match noyalib::validate_json_schema(&value) {
+    match noyalib::validate_yaml_json_schema(&value) {
         Ok(()) => Ok(true),
         Err(e) => Err(JsError::new(&e.to_string())),
     }

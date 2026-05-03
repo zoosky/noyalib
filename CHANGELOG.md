@@ -12,7 +12,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - Native YAML 1.2 scanner and parser, written entirely in safe Rust.
-- **100% YAML Test Suite compliance**: 392/392 official test cases pass (14 skipped for tag directives and edge cases tracked for v0.0.2).
+- **100% YAML Test Suite compliance — literal**: 406/406 cases pass, zero skips. The skip list — used during development to bound the work — is now empty.
 - Full serde `Serialize` and `Deserialize` support.
 - **Streaming deserializer**: Bypasses Value AST for typed deserialization (50% faster than Value-based path).
 - **Zero-copy scanner**: `Cow<'a, str>` scalars borrow from input without heap allocation.
@@ -38,10 +38,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `fmt` module: `FlowSeq`, `FlowMap`, `LitStr`, `FoldStr`, `Commented`, `SpaceAfter`.
 - `with` module: `singleton_map`, `singleton_map_optional`, `singleton_map_recursive`, `singleton_map_with`.
 - Anchor and alias support with `RcAnchor`, `ArcAnchor`, and weak variants.
-- Schema validation: `validate_core_schema`, `validate_json_schema`, `validate_failsafe_schema`.
+- Schema validation: `validate_yaml_core_schema`, `validate_yaml_json_schema`, `validate_yaml_failsafe_schema`.
 - Error types with source location, annotated context formatting (`format_with_source`), and `#[track_caller]` on all Index panics.
 - **Optional `miette::Diagnostic` integration** (`--features miette`): Rich terminal diagnostics with error codes, help text, and source spans.
-- **Full `#![no_std]` support**: Works with `alloc` only (`default-features = false`). Core parsing/serialization available without `std`. I/O functions gated behind `std` feature.
+- **Full `#![no_std]` support**: works with `alloc` only (`default-features = false`). Core parsing/serialization (`from_str`, `to_string`, `Value`, schemas) and the streaming deserializer all run without `std`. I/O functions (`from_reader`, `to_writer`), `Spanned<T>` deserialization (which uses thread-local storage), and the CST module require the `std` feature. CI enforces `cargo check --no-default-features` on every push.
 - **WASM support**: Compiles to `wasm32-unknown-unknown` (201 KB). wasm-bindgen bindings with browser demo.
 - `#[non_exhaustive]` on `ParserConfig`, `SerializerConfig`, `FlowStyle`, `ScalarStyle`.
 - `#[must_use]` on 83 query methods.

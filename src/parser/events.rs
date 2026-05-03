@@ -622,10 +622,14 @@ impl<'a> Parser<'a> {
         }
 
         // A bare `Value` (`:`) without a preceding `Key` means an implicit
-        // empty-key mapping pair, e.g. `[ : value ]`.  Start a mapping and
-        // jump straight to the value phase — the key is empty.
+        // empty-key mapping pair, e.g. `[ : value ]` (CFD4). Start a
+        // mapping and route through the *Key* phase so the empty key is
+        // emitted as a scalar event before the value — otherwise the
+        // loader sees a MappingStart followed directly by the value
+        // and treats the value as the key (which then has no value),
+        // producing "unexpected mapping end".
         if self.peek_is(|k| matches!(k, TokenKind::Value))? {
-            self.state = State::FlowSequenceEntryMappingValue;
+            self.state = State::FlowSequenceEntryMappingKey;
             self.states.push(State::FlowSequenceEntry);
             return Ok(Event::MappingStart {
                 anchor: None,

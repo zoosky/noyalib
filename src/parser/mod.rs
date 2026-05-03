@@ -14,6 +14,8 @@ mod scanner;
 pub(crate) use events::{Event, Parser};
 pub(crate) use loader::{DuplicateKeyPolicy as InternalDuplicateKeyPolicy, ParseConfig};
 pub(crate) use scanner::ScalarStyle;
+// CST builder is the only consumer; gate the re-exports to match.
+#[cfg(feature = "std")]
 pub(crate) use scanner::{
     RecordedToken, RecordedTokenKind, ScannedComment, Scanner, TokenKind, Trivia, TriviaKind,
 };

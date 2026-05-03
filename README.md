@@ -49,7 +49,11 @@ noyalib = "0.0.1"
 noyalib = { version = "0.0.1", default-features = false }
 ```
 
-Requires `alloc`. Only `from_reader` and `to_writer` require the `std` feature.
+Requires `alloc`. Core data binding (`from_str`, `to_string`, `Value`,
+schemas) and the streaming deserializer all compile and run without
+the standard library. `from_reader`, `to_writer`, the `Spanned<T>`
+deserialization helper (which uses thread-local storage), and the CST
+module require the `std` feature, which is enabled by default.
 
 ### Build from source
 
@@ -59,7 +63,10 @@ cd noyalib
 make          # check + clippy + test
 ```
 
-Requires **Rust 1.75.0+** (pinned in `rust-toolchain.toml`). Tested on Linux, macOS, and Windows.
+Requires **Rust 1.75.0+** (declared as `rust-version` in `Cargo.toml` and
+gated by a dedicated MSRV job in CI on Linux, macOS, and Windows).
+`rust-toolchain.toml` itself selects `stable` for local development; the
+1.75.0 floor is enforced by the build, not by your toolchain pin.
 
 ---
 
@@ -105,6 +112,15 @@ noyalib exposes two complementary surfaces over the same scanner and strictness 
 
 ---
 
+## Ecosystem Tools
+
+noyalib ships with first-class tools built on top of its blazing-fast CST:
+
+- **`noyafmt` (Formatter / Linter)**: A built-in CLI tool (and API `noyalib::cst::format`) that auto-formats messy YAML files into a canonical style based on the CST while preserving comments and directives. Run `cargo run --bin noyafmt -- <file>`.
+- **`noyalib-wasm` (WASM First-Class Support)**: A dedicated wrapper exposing the `Document` API to JavaScript/TypeScript. It enables browser-based YAML IDEs to use the noyalib engine for lossless edits via `wasm-bindgen`.
+
+---
+
 ## Overview
 
 noyalib is designed to be the **no-compromise** YAML library for Rust: fast, safe, and hardened — simultaneously. Most libraries trade one for the other (fast but unsafe, or safe but slow). noyalib achieves all three.
@@ -114,9 +130,9 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 - **Zero-copy** -- `BorrowedValue<'a>` borrows strings from input (18% faster)
 - **Path queries** -- `value.query("items[*].name")` with wildcards and recursive descent
 - **DoS hardened** -- 7 configurable limits, billion-laughs safe
-- **`#![no_std]`** -- works with `alloc` only for embedded and WASM
+- **`#![no_std]`** -- core parsing/serialization runs `alloc`-only; I/O and `Spanned<T>` require `std`
 - **`miette` diagnostics** -- rich terminal errors with source spans
-- **100% YAML Test Suite** -- 392/392 official test cases pass
+- **100% YAML Test Suite** -- 406/406 official test cases pass, no skips
 - **201 KB WASM binary** -- runs in browsers via wasm-bindgen
 - **6 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
 - **2,566 tests** -- unit, integration, doc-tests, property-based, official suite
@@ -130,7 +146,7 @@ noyalib competes across four categories of Rust YAML libraries:
 
 | | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **YAML Test Suite** | 100% (392/392) | — | — | — | — | — |
+| **YAML Test Suite** | 100% (406/406) | — | — | — | — | — |
 | **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes | Yes |
 | **Zero `unsafe`** | Yes | No | No | Yes | Yes | Yes |
 | **Serde integration** | Yes | Yes | Yes | Yes | No | Yes |
@@ -205,7 +221,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | :--- | :--- |
 | **Source** | 25,606 lines across 23 modules |
 | **Test suite** | 2,566 tests + 73 doc-tests |
-| **YAML Test Suite** | 100% compliance (392/392 active cases) |
+| **YAML Test Suite** | 100% literal compliance: 406/406 cases pass with zero skips |
 | **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
 | **Dependencies** | 6 runtime + 1 optional (miette) |
@@ -223,13 +239,13 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Spans** | `Spanned<T>` tracks line, column, and byte offset for every deserialized field. Serializes transparently as `T`. Span tracking is opt-in — disabled by default in `from_str` for zero overhead. For large documents, consider the memory impact of the span HashMap. |
 | **Formatting** | Per-value output control: `FlowSeq<T>`, `FlowMap<T>`, `LitStr`, `FoldStr`, `Commented<T>`, `SpaceAfter<T>`. |
 | **Enums** | `singleton_map`, `singleton_map_optional`, `singleton_map_recursive`, `singleton_map_with` -- custom key transforms (snake\_case, kebab-case, lowercase). |
-| **Schemas** | Validate against YAML schema levels: `validate_failsafe_schema`, `validate_json_schema`, `validate_core_schema`. |
+| **Schemas** | Validate against YAML schema levels: `validate_yaml_failsafe_schema`, `validate_yaml_json_schema`, `validate_yaml_core_schema`. |
 | **Anchors** | Anchors (`&`), aliases (`*`), and merge keys (`<<`). Smart pointer wrappers: `RcAnchor`, `ArcAnchor`, `RcWeakAnchor`, `ArcWeakAnchor`. |
 | **Security** | 7 configurable limits in `ParserConfig`: depth, document size, alias expansions, mapping keys, sequence length, duplicate key policy, strict booleans. `ParserConfig::strict()` for untrusted input. Billion-laughs safe via `max_alias_expansions` with `saturating_add` overflow protection. |
 | **Compat** | YAML 1.1 legacy boolean mode (`legacy_booleans`): resolves `yes`/`no`/`on`/`off`/`y`/`n` as booleans for Docker Compose, GitHub Actions, and other YAML 1.1 tooling. Solves the "Norway problem". |
 | **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
 | **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. `miette::Diagnostic` integration included (`--features miette`) for rich terminal reports with error codes, actionable help text, and source spans. |
-| **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without std. I/O functions (`from_reader`, `to_writer`) require `std` feature. |
+| **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without `std`. I/O functions (`from_reader`, `to_writer`), `Spanned<T>` deserialization (TLS), and the CST module require the `std` feature. CI enforces `cargo check --no-default-features` on every push. |
 
 ---
 

@@ -156,6 +156,14 @@ pub(crate) struct Scanner<'a> {
     /// document (cleared on each `DocumentStart`). Per YAML 1.2.2 §6.8.1
     /// a document may contain at most one `%YAML` directive.
     yaml_directive_seen: bool,
+    /// `%TAG` handle → URI-prefix map for the current document. Cleared
+    /// at every document boundary (`---`, `...`, stream end). When a
+    /// later tag token uses the handle (e.g. `!!int` after
+    /// `%TAG !! tag:example.com,2000:app/`), the scanner substitutes
+    /// the full URI prefix in place of the handle so the loader sees
+    /// the resolved tag without needing directive context (P76L).
+    tag_handles: rustc_hash::FxHashMap<String, String>,
+    flow_stack: Vec<bool>,
     /// When set, the scanner records inter-token trivia and source-
     /// bearing token spans for the green-tree builder. Off by default
     /// to keep the streaming/AST fast path zero-cost.
@@ -192,6 +200,14 @@ pub(crate) struct Scanner<'a> {
     /// preserved across the consume cycle. Used by the alias-decoration
     /// check (SR86, SU74).
     last_emitted_kind: LastEmitted,
+    /// `(line_no, col)` of the most recently emitted node property
+    /// (Anchor or Tag) that has not yet been followed by content.
+    /// Cleared when a Scalar / Block-or-Flow Start is emitted. Used
+    /// to enforce the YAML 1.2.2 §6.9.1 rule that node properties
+    /// (and the node they decorate) must be indented strictly more
+    /// than the parent block — H7J7 (`key: &x\n!!map\n  a: b`) puts
+    /// the tag at column 0 ≤ parent indent, which is invalid.
+    pending_property_col: Option<i32>,
 }
 
 /// Compact record of the most recent emit, used by guard checks
@@ -237,7 +253,10 @@ pub(crate) enum TriviaKind {
 }
 
 /// Inter-token trivia recorded for the green-tree builder. Only
-/// populated when [`Scanner::enable_recording`] is set.
+/// populated when [`Scanner::enable_recording`] is set. The fields are
+/// only read by the std-only CST builder, so they appear write-only on
+/// the alloc-only path — `#[allow(dead_code)]` documents that.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Trivia {
     pub(crate) start: usize,
@@ -340,6 +359,8 @@ impl RecordedTokenKind {
 
 /// Source-bearing token recorded by the scanner for the green-tree
 /// builder. Only populated when [`Scanner::enable_recording`] is set.
+/// Only read by the std-only CST builder.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RecordedToken {
     pub(crate) start: usize,
@@ -374,6 +395,8 @@ impl<'a> Scanner<'a> {
             stream_ended: false,
             comments: Vec::new(),
             yaml_directive_seen: false,
+            tag_handles: rustc_hash::FxHashMap::default(),
+            flow_stack: Vec::new(),
             recording: false,
             trivia: Vec::new(),
             recorded_tokens: Vec::new(),
@@ -384,22 +407,26 @@ impl<'a> Scanner<'a> {
             pending_directive_needs_doc_start: false,
             in_document_body: false,
             last_emitted_kind: LastEmitted::Other,
+            pending_property_col: None,
         }
     }
 
     /// Enable recording of inter-token trivia and source-bearing
     /// token spans for the green-tree builder. Must be called before
     /// any tokens are fetched.
+    #[cfg(feature = "std")]
     pub(crate) fn enable_recording(&mut self) {
         self.recording = true;
     }
 
     /// Drain the recorded inter-token trivia.
+    #[cfg(feature = "std")]
     pub(crate) fn take_trivia(&mut self) -> Vec<Trivia> {
         core::mem::take(&mut self.trivia)
     }
 
     /// Drain the recorded source-bearing tokens.
+    #[cfg(feature = "std")]
     pub(crate) fn take_recorded_tokens(&mut self) -> Vec<RecordedToken> {
         core::mem::take(&mut self.recorded_tokens)
     }
@@ -567,6 +594,25 @@ impl<'a> Scanner<'a> {
             TokenKind::Tag(_, _) => LastEmitted::Tag,
             _ => LastEmitted::Other,
         };
+        // Track unsatisfied node-property column (Anchor/Tag awaiting
+        // content). Cleared on actual content emission so siblings on
+        // future entries don't see stale state.
+        match &kind {
+            TokenKind::Anchor(_) | TokenKind::Tag(_, _) => {
+                if self.pending_property_col.is_none() {
+                    self.pending_property_col = Some(self.column() as i32);
+                }
+            }
+            TokenKind::Scalar(_, _)
+            | TokenKind::FlowSequenceStart
+            | TokenKind::FlowMappingStart
+            | TokenKind::BlockSequenceStart
+            | TokenKind::BlockMappingStart
+            | TokenKind::Alias(_) => {
+                self.pending_property_col = None;
+            }
+            _ => {}
+        }
         let span = Span {
             start: self.mark,
             end: self.pos,
@@ -617,6 +663,63 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn reject_illegal_tab(&self, start: usize, indicator: &'static str) -> ScanResult<()> {
+        let span = &self.input[start..self.pos];
+        if !span.contains(&b'\t') {
+            return Ok(());
+        }
+
+        let next = self.peek();
+        let is_structural = matches!(next, b'-' | b'?' | b':')
+            && (self.pos + 1 >= self.input.len() || Self::is_blank_or_break(self.peek_at(1)));
+        if !is_structural {
+            return Ok(());
+        }
+        Err(ScanError {
+            message: Cow::Owned(format!(
+                "tabs are not allowed as separation or indentation after {indicator}"
+            )),
+            index: start,
+        })
+    }
+
+    /// Non-advancing variant of [`reject_illegal_tab`]. Inspects the
+    /// blanks starting at `self.pos` *without* moving the cursor — the
+    /// blanks must remain available to the trivia recorder and the
+    /// next plain-scalar reader. Mirrors the same rule: tabs that
+    /// precede another block-structural indicator (`-`, `?`, `:`) are
+    /// indentation tabs and rejected; tabs that precede content are
+    /// fine (A2M4 spec example 6.2).
+    fn check_illegal_tab_lookahead(&self, indicator: &'static str) -> ScanResult<()> {
+        let mut p = self.pos;
+        let mut saw_tab = false;
+        while p < self.input.len() && Self::is_blank(self.input[p]) {
+            if self.input[p] == b'\t' {
+                saw_tab = true;
+            }
+            p += 1;
+        }
+        if !saw_tab {
+            return Ok(());
+        }
+        let next = if p < self.input.len() { self.input[p] } else { 0 };
+        let next_after = if p + 1 < self.input.len() {
+            self.input[p + 1]
+        } else {
+            0
+        };
+        let is_structural = matches!(next, b'-' | b'?' | b':')
+            && (p + 1 >= self.input.len() || Self::is_blank_or_break(next_after));
+        if !is_structural {
+            return Ok(());
+        }
+        Err(ScanError {
+            message: Cow::Owned(format!(
+                "tabs are not allowed as separation or indentation after {indicator}"
+            )),
+            index: self.pos,
+        })
+    }
     fn skip_line(&mut self) {
         let c = self.peek();
         if c == b'\r' && self.peek_at(1) == b'\n' {
@@ -719,14 +822,25 @@ impl<'a> Scanner<'a> {
                 // content column (after leading blanks), not the
                 // line-start column.
                 if self.flow_level > 0 && self.indent >= 0 {
+                    // Count *spaces* first, then any blanks (tab or
+                    // space). Per YAML 1.2.2 §6.1 only spaces count
+                    // toward indentation; tabs that appear AFTER the
+                    // space-prefix are valid inline separation
+                    // (6HB6 line 16: `  <tab>Still by two`). Tabs
+                    // BEFORE any space (i.e. at column 0 of a flow
+                    // continuation line) ARE invalid indentation
+                    // (Y79Y sub-case 4).
                     let mut look = self.pos;
+                    while look < self.input.len() && self.input[look] == b' ' {
+                        look += 1;
+                    }
+                    let space_indent_col = (look - self.pos) as i32;
                     while look < self.input.len() && Self::is_blank(self.input[look]) {
                         look += 1;
                     }
                     let line_has_content =
                         look < self.input.len() && !Self::is_break(self.input[look]);
-                    let content_col = (look - self.pos) as i32;
-                    if line_has_content && content_col <= self.indent {
+                    if line_has_content && space_indent_col <= self.indent {
                         return Err(self.error(
                             "flow content must be indented more than the surrounding block",
                         ));
@@ -919,13 +1033,22 @@ impl<'a> Scanner<'a> {
             }
         }
 
+        // `-`, `?`, `:` at the very end of the input (no trailing
+        // newline) are still indicators per YAML 1.2 — a single `-`
+        // becomes a block sequence with one null entry, a single `:`
+        // becomes a mapping with empty key→null (SM9W). `peek_at(1)`
+        // returns 0 past EOF, which fails `is_blank_or_break`, so an
+        // explicit EOF check is required here.
+        let next_is_terminator = self.pos + 1 >= self.input.len();
+
         match c {
             b'[' => self.fetch_flow_collection_start(true),
             b'{' => self.fetch_flow_collection_start(false),
             b']' => self.fetch_flow_collection_end(true),
             b'}' => self.fetch_flow_collection_end(false),
             b',' => self.fetch_flow_entry(),
-            b'-' if Self::is_blank_or_break(self.peek_at(1))
+            b'-' if next_is_terminator
+                || Self::is_blank_or_break(self.peek_at(1))
                 || (self.flow_level > 0
                     && (self.peek_at(1) == b','
                         || self.peek_at(1) == b']'
@@ -933,7 +1056,8 @@ impl<'a> Scanner<'a> {
             {
                 self.fetch_block_entry()
             }
-            b'?' if Self::is_blank_or_break(self.peek_at(1))
+            b'?' if next_is_terminator
+                || Self::is_blank_or_break(self.peek_at(1))
                 || (self.flow_level > 0
                     && (self.peek_at(1) == b','
                         || self.peek_at(1) == b']'
@@ -941,7 +1065,8 @@ impl<'a> Scanner<'a> {
             {
                 self.fetch_key()
             }
-            b':' if Self::is_blank_or_break(self.peek_at(1))
+            b':' if next_is_terminator
+                || Self::is_blank_or_break(self.peek_at(1))
                 || (self.flow_level > 0
                     && (self.peek_at(1) == b','
                         || self.peek_at(1) == b']'
@@ -1059,7 +1184,23 @@ impl<'a> Scanner<'a> {
         // numeric token is "valid YAML according to the 1.2 productions,
         // just not usefully valid") but reject clearly-malformed
         // alphabetic trailing content like `%YAML 1.2 foo` (H7TQ).
-        if name == "YAML" {
+        if name == "TAG" {
+            self.skip_blank();
+            if self.peek() == b'!' {
+                let h_start = self.pos;
+                while !self.is_eof() && !Self::is_blank_or_break(self.peek()) {
+                    self.advance();
+                }
+                let handle = self.slice_str(h_start, self.pos).to_owned();
+                self.skip_blank();
+                let p_start = self.pos;
+                while !self.is_eof() && !Self::is_blank_or_break(self.peek()) {
+                    self.advance();
+                }
+                let prefix = self.slice_str(p_start, self.pos).to_owned();
+                let _ = self.tag_handles.insert(handle, prefix);
+            }
+        } else if name == "YAML" {
             if self.yaml_directive_seen {
                 return Err(
                     self.error("duplicate %YAML directive (at most one allowed per document)")
@@ -1118,30 +1259,56 @@ impl<'a> Scanner<'a> {
         self.advance_by(3);
         if is_start {
             self.emit(TokenKind::DocumentStart);
-            // The pending directive (if any) is now satisfied; the
-            // `---` line is the new active document start.
-            self.pending_directive_needs_doc_start = false;
-            // Track that we are still on the `---` line: only scalar
-            // / flow content may appear before the next line break
-            // (CXX2, 9KBC).
             self.doc_start_inline = true;
-            // The previous document (if any) was closed by `...` —
-            // or, by allowing `---` without `...` for the common
-            // multi-document stream form, we treat `---` itself as a
-            // boundary here too.
+
+            // YAML 1.2.2 §6.8.1: "The scope of a directive is the
+            // document that follows it." Directives declared *just
+            // before* this `---` apply to the document we are now
+            // opening, so we must NOT clear them on `is_start` — they
+            // were just registered (`pending_directive_needs_doc_start`
+            // is the signal). They are cleared at `...` (DocEnd) and
+            // also at a subsequent `---` if the previous document
+            // ended implicitly (RHX7, EB22, 9HCY, MUS6:1, P76L). The
+            // implicit-transition case is detected by `in_document_body`
+            // still being true when we reach a new `---`.
+            if self.in_document_body && !self.pending_directive_needs_doc_start {
+                self.yaml_directive_seen = false;
+                self.tag_handles.clear();
+            }
+            self.pending_directive_needs_doc_start = false;
             self.in_document_body = false;
+            // NOTE: do NOT `self.skip_blank()` here. After `---`, the
+            // following blanks are part of the next token's leading
+            // separation (a plain scalar, flow indicator, etc.) — the
+            // regular `skip_to_next_token()` invoked by the next
+            // `fetch_*` call records them as trivia for the CST and
+            // folds them into the scalar's leading whitespace for the
+            // streaming/AST path. Eagerly consuming them here advances
+            // `self.pos` without recording trivia, which causes the
+            // CST's plain-scalar token span to come out one byte short
+            // on its tail (cst_round_trip 27NA, 6FWR, 753E, …).
         } else {
             self.emit(TokenKind::DocumentEnd);
             // Directives are scoped to a single document.
             self.yaml_directive_seen = false;
             self.in_document_body = false;
-            // Per YAML 1.2.2 §6.8: a `...` document-end marker must be
-            // followed only by whitespace, an optional comment, and a
-            // line break. Walk past any inline blanks; if non-comment,
-            // non-break content follows on the same line, reject.
+            self.tag_handles.clear();
+            // Per YAML 1.2.2 §6.8: a `...` document-end marker may be
+            // followed by inline whitespace and an optional comment,
+            // then a line break. Validate that here via *lookahead* —
+            // we must not advance `self.pos`, because every byte
+            // between this token and the next must be visible to the
+            // CST trivia recorder (`skip_to_next_token` runs before
+            // the next `fetch_*`). Eagerly `skip_blank()`-ing here
+            // silently consumes those bytes and causes the next token's
+            // recorded span to come out one byte short on its tail
+            // (cst_round_trip RTP8).
             let mut look = self.pos;
             while look < self.input.len() && Self::is_blank(self.input[look]) {
                 look += 1;
+            }
+            if self.input[self.pos..look].contains(&b'\t') {
+                return Err(self.error("tabs are not allowed as separation after document marker"));
             }
             if look < self.input.len()
                 && !Self::is_break(self.input[look])
@@ -1173,8 +1340,10 @@ impl<'a> Scanner<'a> {
         self.advance();
         if is_seq {
             self.emit(TokenKind::FlowSequenceStart);
+            self.flow_stack.push(true);
         } else {
             self.emit(TokenKind::FlowMappingStart);
+            self.flow_stack.push(false);
         }
         // The collection itself is the node that the pending block-
         // open targeted; clear so subsequent tokens inside the flow
@@ -1199,6 +1368,7 @@ impl<'a> Scanner<'a> {
         // collection was opened.
         let _ = self.simple_keys.pop();
         self.flow_level -= 1;
+        let _ = self.flow_stack.pop();
         self.simple_key_allowed = false;
         self.mark = self.pos;
         self.advance();
@@ -1272,6 +1442,36 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    /// Variant of [`Self::require_quoted_continuation_indent`] that
+    /// uses an externally-computed *space-only* indent column instead
+    /// of `self.col` (which counts tabs). Per YAML 1.2.2 §6.1 only
+    /// spaces count as indentation; this catches the case where the
+    /// continuation line's leading whitespace is `\t…` — `self.col`
+    /// would be 1 (visually past the parent block's column 0 mapping)
+    /// but `space_indent` is 0, correctly flagging it as under-indented
+    /// (DK95 sub-case 2).
+    fn require_quoted_continuation_indent_spaces(
+        &self,
+        style: &'static str,
+        space_indent: i32,
+    ) -> ScanResult<()> {
+        if self.flow_level != 0 {
+            return Ok(());
+        }
+        if self.is_eof() || Self::is_break(self.peek()) {
+            return Ok(());
+        }
+        if space_indent <= self.indent {
+            return Err(ScanError {
+                message: Cow::Owned(format!(
+                    "{style} continuation must be indented more than the parent block"
+                )),
+                index: self.pos,
+            });
+        }
+        Ok(())
+    }
+
     /// Per YAML 1.2.2 §6.8 / §6.7, a `---` or `...` indicator at column 0
     /// terminates the surrounding document. A multi-line quoted scalar
     /// that crosses such a marker is invalid (the indicator is not
@@ -1307,7 +1507,7 @@ impl<'a> Scanner<'a> {
     /// inline whitespace (spec example 6.3: `:\t bar` is fine), but a
     /// tab cannot stand in for indentation when the next token would
     /// itself open a new block scope — that is the Y79Y-class issue.
-    fn reject_tab_indent_after_indicator(&self, indicator: &'static str) -> ScanResult<()> {
+    fn _reject_tab_indent_after_indicator(&self, indicator: &'static str) -> ScanResult<()> {
         if self.flow_level != 0 {
             return Ok(());
         }
@@ -1351,11 +1551,15 @@ impl<'a> Scanner<'a> {
         self.simple_key_allowed = true;
         self.mark = self.pos;
         self.advance();
-        // YAML 1.2.2 §6.1: tabs may appear as inline separation but
-        // not as indentation. After a block-structural indicator the
-        // *last* whitespace character before content must be a space
-        // (e.g. `- foo` and `-\t foo` are valid; `-\tfoo` is not).
-        self.reject_tab_indent_after_indicator("'-'")?;
+        // YAML 1.2.2 §6.1: tabs may appear as inline separation before
+        // content but not as indentation before another structural
+        // indicator. `- \tfoo` and `-\tfoo` are valid (A2M4); only
+        // `-\t-` and similar cascades are rejected. The lookahead
+        // variant must not advance `self.pos` — the CST trivia
+        // recorder needs those blanks (cst_round_trip).
+        if self.flow_level == 0 {
+            self.check_illegal_tab_lookahead("'-'")?;
+        }
         self.emit(TokenKind::BlockEntry);
         self.last_token_opens_block = true;
         Ok(())
@@ -1371,19 +1575,28 @@ impl<'a> Scanner<'a> {
             self.roll_indent(col, None, TokenKind::BlockMappingStart, self.pos);
         }
         self.remove_simple_key()?;
-        // After an explicit key indicator `?`, the key boundary is already
-        // established. Do NOT allow a simple key for the following content —
-        // otherwise the subsequent `:` value indicator would retroactively
-        // insert a *duplicate* Key token.
-        self.simple_key_allowed = false;
-        // However, the key content CAN be a block collection (e.g. `? - a`).
-        // Track this so `fetch_block_entry` allows it.
+        // In *block* context, allow a simple key on the same line as
+        // `?` so `? key: value` parses as an explicit-key mapping
+        // whose key is the single-pair mapping `{key: value}` (V9D5
+        // spec example 8.19). The cross-line case `? key\n: value`
+        // is still safe: the existing fetch_value rule-1 logic
+        // invalidates the simple key when a newline separates it from
+        // the `:`, preventing duplicate Key emission. In *flow*
+        // context (`{? foo\n bar : baz`), `?` continues to disable
+        // simple-key tracking — flow's own folded-key parser handles
+        // multi-line keys without the simple-key promotion path.
         if self.flow_level == 0 {
+            self.simple_key_allowed = true;
             self.explicit_key_pending = true;
+        } else {
+            self.simple_key_allowed = false;
         }
         self.mark = self.pos;
         self.advance();
-        self.reject_tab_indent_after_indicator("'?'")?;
+        // Same A2M4-style relaxation as `fetch_block_entry`.
+        if self.flow_level == 0 {
+            self.check_illegal_tab_lookahead("'?'")?;
+        }
         self.emit(TokenKind::Key);
         self.last_token_opens_block = true;
         Ok(())
@@ -1391,8 +1604,8 @@ impl<'a> Scanner<'a> {
 
     fn fetch_value(&mut self) -> ScanResult<()> {
         // Check if there's a pending simple key.
-        if let Some(mut sk) = self.simple_keys.last().cloned() {
-            if sk.possible && self.flow_level == 0 {
+        if let Some(sk) = self.simple_keys.last().cloned() {
+            if sk.possible {
                 // Two distinct YAML 1.2.2 §7.4.2 rules conflated as
                 // "implicit key" violations:
                 //
@@ -1425,20 +1638,54 @@ impl<'a> Scanner<'a> {
                 };
 
                 let key_content = &self.input[sk.index..key_end_trimmed];
-                if key_content.iter().any(|&b| b == b'\n' || b == b'\r') {
+                let key_has_newline = key_content.iter().any(|&b| b == b'\n' || b == b'\r');
+
+                if key_has_newline && self.flow_level == 0 {
+                    // When `?` introduced the key, the simple-key
+                    // tracker is permitted to span newlines (the key
+                    // is *explicit*, not implicit). Invalidate the
+                    // tracker and fall through to the else branch so
+                    // the `:` is emitted as the explicit-key value
+                    // indicator (JTV5, M5DY). Without `?`, this is
+                    // the genuine "implicit key spans newlines" error.
+                    if self.explicit_key_pending {
+                        if let Some(last) = self.simple_keys.last_mut() {
+                            last.possible = false;
+                        }
+                        return Ok(());
+                    }
                     return Err(self.error(
                         "implicit mapping key in block context cannot span multiple lines",
                     ));
                 }
 
-                if self.input[key_end_trimmed..self.pos]
+                let between_has_newline = self.input[key_end_trimmed..self.pos]
                     .iter()
-                    .any(|&b| b == b'\n' || b == b'\r')
-                {
-                    // Rule 1 violation — invalidate and fall through.
-                    sk.possible = false;
-                    if let Some(last) = self.simple_keys.last_mut() {
-                        last.possible = false;
+                    .any(|&b| b == b'\n' || b == b'\r');
+
+                if between_has_newline {
+                    if self.flow_level == 0 {
+                        // Rule 1: Key ends on line N, ':' on line N+1.
+                        // Invalidate the simple key so it doesn't get retroactively
+                        // converted to a mapping, but don't error (6M2F).
+                        if let Some(last) = self.simple_keys.last_mut() {
+                            last.possible = false;
+                        }
+                        return Ok(());
+                    } else {
+                        // In flow context, Rule 1 is generally allowed (4MUZ).
+                        // BUT in a flow sequence (where we are looking for a
+                        // single-pair mapping), the colon must be on the same
+                        // line as the key (DK4H, ZXT5).
+                        let in_flow_seq = self.flow_stack.last().copied().unwrap_or(false);
+
+                        if in_flow_seq {
+                            return Err(self.error("implicit mapping key in flow sequence must be on the same line as the colon"));
+                        }
+
+                        if key_has_newline && (self.pos == 0 || (self.input[self.pos - 1] != b' ' && self.input[self.pos - 1] != b'\t')) {
+                             return Err(self.error("implicit mapping key cannot span multiple lines (flow)"));
+                        }
                     }
                 }
             }
@@ -1455,14 +1702,24 @@ impl<'a> Scanner<'a> {
                 // Roll indent for block mapping.
                 if self.flow_level == 0 {
                     self.reject_block_inline_with_doc_start("':'")?;
-                    let col = {
-                        // Find column of the simple key start.
-                        let slice = &self.input[..sk.index];
-                        match slice.iter().rposition(|&b| b == b'\n') {
-                            Some(nl) => sk.index - nl - 1,
-                            None => sk.index,
-                        }
-                    } as i32;
+                    let line_start = self.input[..sk.index]
+                        .iter()
+                        .rposition(|&b| b == b'\n')
+                        .map_or(0, |nl| nl + 1);
+                    let leading = &self.input[line_start..sk.index];
+                    // YAML 1.2.2 §6.1: block-mapping key indentation
+                    // must be spaces only. A tab in the leading
+                    // whitespace before a block-mapping key (DK95
+                    // sub-case 7: `  \tb: 2`) is an indentation tab.
+                    // Plain-scalar continuation (DK95 sub-case 1
+                    // `\tbar` after `foo:`) is unaffected — no Key
+                    // promotion happens for the continuation line.
+                    if leading.contains(&b'\t') {
+                        return Err(self.error(
+                            "tab characters are not allowed in block-mapping key indentation",
+                        ));
+                    }
+                    let col = (sk.index - line_start) as i32;
                     self.roll_indent(
                         col,
                         Some(sk.token_number),
@@ -1501,19 +1758,41 @@ impl<'a> Scanner<'a> {
         self.explicit_key_pending = false;
         self.mark = self.pos;
         self.advance();
-        self.reject_tab_indent_after_indicator("':'")?;
+        let start_val = self.pos;
+        self.skip_blank();
+        if self.flow_level == 0 {
+            self.reject_illegal_tab(start_val, "':'")?;
+        }
         self.emit(TokenKind::Value);
         self.last_token_opens_block = true;
         Ok(())
     }
 
     fn fetch_anchor(&mut self) -> ScanResult<()> {
+        if self.flow_level == 0 {
+            self.check_pending_property_indent()?;
+        }
         self.save_simple_key();
         self.simple_key_allowed = false;
         self.mark = self.pos;
         self.advance(); // skip '&'
         let name = self.scan_anchor_name()?;
         self.emit(TokenKind::Anchor(name));
+        Ok(())
+    }
+
+    /// If a previous Anchor/Tag has not yet been followed by content
+    /// and we are about to emit *another* node-property token at a
+    /// column that is no greater than the current block indent, the
+    /// new property is at parent's level — which YAML 1.2.2 §6.9.1
+    /// disallows (a node and its properties must be indented strictly
+    /// more than the surrounding block). Used by H7J7.
+    fn check_pending_property_indent(&self) -> ScanResult<()> {
+        if self.pending_property_col.is_some() && (self.column() as i32) <= self.indent {
+            return Err(self.error(
+                "node properties (anchor/tag) must be indented more than the parent block",
+            ));
+        }
         Ok(())
     }
 
@@ -1576,6 +1855,10 @@ impl<'a> Scanner<'a> {
         /// Maximum length of a tag URI (in bytes).
         const MAX_TAG_LEN: usize = 1024;
 
+        if self.flow_level == 0 {
+            self.check_pending_property_indent()?;
+        }
+
         self.save_simple_key();
         self.simple_key_allowed = false;
         self.mark = self.pos;
@@ -1600,7 +1883,7 @@ impl<'a> Scanner<'a> {
                 self.advance();
             }
         } else if self.peek() == b'!' {
-            // Secondary tag handle !!
+            // Secondary tag handle `!!suffix`.
             handle = Cow::Borrowed("!!");
             self.advance();
             let start = self.pos;
@@ -1619,9 +1902,13 @@ impl<'a> Scanner<'a> {
             }
             suffix = Cow::Borrowed(self.slice_str(start, self.pos));
         } else {
-            // Primary tag handle !suffix or just !
-            handle = Cow::Borrowed("!");
+            // Primary `!suffix` OR named `!handle!suffix`. The two
+            // forms are distinguished by whether a second `!` appears
+            // before the next separator: scan up to that separator, and
+            // if a `!` was crossed, treat the bytes up to and including
+            // it as the handle.
             let start = self.pos;
+            let mut second_bang: Option<usize> = None;
             while !self.is_eof()
                 && !Self::is_blank_or_break(self.peek())
                 && self.peek() != b','
@@ -1630,26 +1917,69 @@ impl<'a> Scanner<'a> {
                 && self.peek() != b'{'
                 && self.peek() != b'}'
             {
+                if self.peek() == b'!' && second_bang.is_none() {
+                    second_bang = Some(self.pos);
+                }
                 if self.pos - start > MAX_TAG_LEN {
                     return Err(self.error("tag suffix exceeds maximum length of 1024 bytes"));
                 }
                 self.advance();
             }
-            suffix = Cow::Borrowed(self.slice_str(start, self.pos));
+            if let Some(bang_pos) = second_bang {
+                // Named handle: `!handle!suffix` — handle includes the
+                // second `!`, suffix is what follows it.
+                handle = Cow::Owned(format!("!{}!", self.slice_str(start, bang_pos)));
+                suffix = Cow::Borrowed(self.slice_str(bang_pos + 1, self.pos));
+            } else {
+                handle = Cow::Borrowed("!");
+                suffix = Cow::Borrowed(self.slice_str(start, self.pos));
+            }
         }
 
         // Per YAML 1.2.2 §6.9.1, a tag URI is followed by separation
-        // (whitespace or a line break) before the next node. A flow
-        // indicator (`{`, `}`, `[`, `]`, `,`) packed directly against
-        // the tag without a separator means the URI itself is
-        // malformed (`!invalid{}tag` — LHL4).
-        if matches!(self.peek(), b'{' | b'}' | b'[' | b']' | b',') {
+        // (whitespace or a line break) before the next node. The
+        // collection openers `{` and `[` packed directly against the
+        // tag are always malformed — `!invalid{}tag` (LHL4) — because
+        // they would have to start a *nested* node and the tag has no
+        // separator.
+        //
+        // The terminators `,` / `]` / `}` are different: in flow
+        // context they validly mark the end of a tagged *empty* scalar
+        // (`!!str,` and `!!str]`/`!!str}` — WZ62). Only treat them as
+        // malformed outside flow.
+        let next = self.peek();
+        let is_malformed = matches!(next, b'{' | b'[')
+            || (self.flow_level == 0 && matches!(next, b'}' | b']' | b','));
+        if is_malformed {
             return Err(self.error(
                 "tag must be followed by whitespace or a line break, not a flow indicator",
             ));
         }
 
-        self.emit(TokenKind::Tag(handle, suffix));
+        // Apply any active `%TAG handle prefix` directive: replace
+        // the handle with the declared URI prefix so the loader sees
+        // the resolved tag (P76L spec example 6.19). Default handles
+        // `!` and `!!` are always available; *named* handles
+        // (`!foo!`) must be declared in a `%TAG` directive for the
+        // current document — otherwise reject (QLJ7 spec example 6.21).
+        let resolved_handle = if let Some(prefix) = self.tag_handles.get(handle.as_ref()) {
+            Cow::Owned(prefix.clone())
+        } else {
+            let h: &str = handle.as_ref();
+            // A *named* handle has the form `!foo!` — at least one
+            // character between the two bangs. The primary `!` and
+            // the secondary `!!` are not "named" — they have implicit
+            // default URI prefixes per YAML 1.2.2 §6.8.2.
+            let is_named = h.len() > 2 && h.starts_with('!') && h.ends_with('!');
+            if is_named {
+                return Err(self.error(
+                    "named tag handle is not declared by a %TAG directive in this document",
+                ));
+            }
+            handle
+        };
+
+        self.emit(TokenKind::Tag(resolved_handle, suffix));
         Ok(())
     }
 
@@ -2192,12 +2522,29 @@ impl<'a> Scanner<'a> {
 
                     self.reject_doc_marker_in_quoted("double-quoted")?;
 
+                    // YAML 1.2.2 §6.1: only spaces count as
+                    // indentation. Count leading *spaces* before any
+                    // tab so the continuation-indent check uses the
+                    // space-only column, not `self.col` (which counts
+                    // tabs as columns and would mask a tab-as-indent
+                    // bug in DK95 sub-case 2).
+                    let space_indent = {
+                        let mut n = 0;
+                        while self.input.get(self.pos + n).copied() == Some(b' ') {
+                            n += 1;
+                        }
+                        n as i32
+                    };
+
                     // Skip leading blanks on the new line.
                     while Self::is_blank(self.peek()) {
                         self.advance();
                     }
 
-                    self.require_quoted_continuation_indent("double-quoted")?;
+                    self.require_quoted_continuation_indent_spaces(
+                        "double-quoted",
+                        space_indent,
+                    )?;
                 }
                 _ => {
                     if leading_break {
@@ -2421,6 +2768,17 @@ impl<'a> Scanner<'a> {
                 self.advance();
             }
 
+            // YAML 1.2.2 §6.1: tabs MUST NOT serve as indentation. If
+            // we're below the established block indent and the next
+            // byte is a tab (not a line break / EOF), the user is
+            // attempting to use the tab as further indentation —
+            // reject (Y79Y sub-case 1).
+            if spaces < block_indent && self.peek() == b'\t' {
+                return Err(self.error(
+                    "tab characters are not allowed as block-scalar indentation",
+                ));
+            }
+
             if spaces < block_indent && !Self::is_break(self.peek()) && !self.is_eof() {
                 // End of block scalar.
                 break;
@@ -2439,10 +2797,25 @@ impl<'a> Scanner<'a> {
             // empty-line region and contribute only their `\n`, not
             // their indent characters.
             if Self::is_break(self.peek()) || self.is_eof() {
+                let extra = spaces.saturating_sub(block_indent);
                 if !Self::is_break(self.peek()) {
+                    // EOF reached after counting `spaces` blanks. Treat
+                    // a whitespace-only trailing line as if it had a
+                    // synthetic line break so the chomping pass below
+                    // sees the same shape it would for the
+                    // newline-terminated case (L24T spec test).
+                    if literal && extra > 0 && !string.is_empty() {
+                        if !trailing_breaks.is_empty() {
+                            string.push_str(&trailing_breaks);
+                            trailing_breaks.clear();
+                        }
+                        for _ in 0..extra {
+                            string.push(' ');
+                        }
+                        trailing_breaks.push('\n');
+                    }
                     break;
                 }
-                let extra = spaces.saturating_sub(block_indent);
                 if literal && extra > 0 && !string.is_empty() {
                     if !trailing_breaks.is_empty() {
                         string.push_str(&trailing_breaks);

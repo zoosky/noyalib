@@ -1003,97 +1003,97 @@ fn value_deserialize_map() {
 #[test]
 fn failsafe_schema_rejects_null() {
     // schema.rs:71-73
-    assert!(noyalib::validate_failsafe_schema(&Value::Null).is_err());
+    assert!(noyalib::validate_yaml_failsafe_schema(&Value::Null).is_err());
 }
 
 #[test]
 fn failsafe_schema_rejects_bool() {
     // schema.rs:74-76
-    assert!(noyalib::validate_failsafe_schema(&Value::Bool(true)).is_err());
+    assert!(noyalib::validate_yaml_failsafe_schema(&Value::Bool(true)).is_err());
 }
 
 #[test]
 fn failsafe_schema_rejects_number() {
     // schema.rs:77-79
-    assert!(noyalib::validate_failsafe_schema(&Value::from(42)).is_err());
+    assert!(noyalib::validate_yaml_failsafe_schema(&Value::from(42)).is_err());
 }
 
 #[test]
 fn failsafe_schema_rejects_tagged() {
     // schema.rs:80-81
     let tagged = Value::Tagged(Box::new(TaggedValue::new(Tag::new("t"), Value::Null)));
-    assert!(noyalib::validate_failsafe_schema(&tagged).is_err());
+    assert!(noyalib::validate_yaml_failsafe_schema(&tagged).is_err());
 }
 
 #[test]
 fn failsafe_schema_validates_nested_strings() {
     // schema.rs:61, 67 — recursive validation in seq/map
     let seq = Value::Sequence(vec![Value::from("a"), Value::from("b")]);
-    assert!(noyalib::validate_failsafe_schema(&seq).is_ok());
+    assert!(noyalib::validate_yaml_failsafe_schema(&seq).is_ok());
 
     let mut m = Mapping::new();
     m.insert("k", Value::from("v"));
-    assert!(noyalib::validate_failsafe_schema(&Value::Mapping(m)).is_ok());
+    assert!(noyalib::validate_yaml_failsafe_schema(&Value::Mapping(m)).is_ok());
 }
 
 #[test]
 fn failsafe_schema_rejects_nested_number() {
     // schema.rs:61 — nested non-string in sequence
     let seq = Value::Sequence(vec![Value::from(42)]);
-    assert!(noyalib::validate_failsafe_schema(&seq).is_err());
+    assert!(noyalib::validate_yaml_failsafe_schema(&seq).is_err());
 }
 
 #[test]
 fn json_schema_rejects_nan() {
     // schema.rs:133 — NaN not allowed
-    assert!(!noyalib::is_json_compatible(&Value::from(f64::NAN)));
+    assert!(!noyalib::is_yaml_json_compatible(&Value::from(f64::NAN)));
 }
 
 #[test]
 fn json_schema_rejects_infinity() {
     // schema.rs:133 — Infinity not allowed
-    assert!(!noyalib::is_json_compatible(&Value::from(f64::INFINITY)));
+    assert!(!noyalib::is_yaml_json_compatible(&Value::from(f64::INFINITY)));
 }
 
 #[test]
 fn json_schema_rejects_tagged() {
     // schema.rs:143-144
     let tagged = Value::Tagged(Box::new(TaggedValue::new(Tag::new("t"), Value::Null)));
-    assert!(noyalib::validate_json_schema(&tagged).is_err());
+    assert!(noyalib::validate_yaml_json_schema(&tagged).is_err());
 }
 
 #[test]
 fn json_schema_validates_nested() {
     // schema.rs:132-141 — recursive validation
     let seq = Value::Sequence(vec![Value::from(1), Value::from("a")]);
-    assert!(noyalib::validate_json_schema(&seq).is_ok());
+    assert!(noyalib::validate_yaml_json_schema(&seq).is_ok());
 
     let mut m = Mapping::new();
     m.insert("k", Value::from(true));
-    assert!(noyalib::validate_json_schema(&Value::Mapping(m)).is_ok());
+    assert!(noyalib::validate_yaml_json_schema(&Value::Mapping(m)).is_ok());
 }
 
 #[test]
 fn core_schema_validates_everything() {
     // schema.rs:181, 187, 191, 193 — core schema recursive
     let seq = Value::Sequence(vec![Value::from(f64::NAN), Value::Null]);
-    assert!(noyalib::validate_core_schema(&seq).is_ok());
+    assert!(noyalib::validate_yaml_core_schema(&seq).is_ok());
 
     let mut m = Mapping::new();
     m.insert("k", Value::from(true));
-    assert!(noyalib::validate_core_schema(&Value::Mapping(m)).is_ok());
+    assert!(noyalib::validate_yaml_core_schema(&Value::Mapping(m)).is_ok());
 
     let tagged = Value::Tagged(Box::new(TaggedValue::new(
         Tag::new("custom"),
         Value::from("inner"),
     )));
-    assert!(noyalib::validate_core_schema(&tagged).is_ok());
+    assert!(noyalib::validate_yaml_core_schema(&tagged).is_ok());
 }
 
 #[test]
 fn is_failsafe_compatible_function() {
-    assert!(noyalib::is_failsafe_compatible(&Value::from("hello")));
-    assert!(!noyalib::is_failsafe_compatible(&Value::from(42)));
+    assert!(noyalib::is_yaml_failsafe_compatible(&Value::from("hello")));
+    assert!(!noyalib::is_yaml_failsafe_compatible(&Value::from(42)));
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -3,14 +3,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-use std::cell::RefCell;
-use std::sync::Arc;
+use crate::prelude::*;
+#[cfg(feature = "std")]
+use core::cell::RefCell;
 
 use rustc_hash::FxHashMap;
 
+#[cfg(feature = "std")]
 use crate::value::Value;
 
 /// Parallel tree of source spans, built alongside `Value` during loading.
+///
+/// Only built on the `std` path; `no_std` builds use the span-free
+/// loader (`load_one_no_spans` / `load_all_no_spans`) and so never
+/// instantiate this enum.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone)]
 pub(crate) enum SpanTree {
     /// A leaf node (scalar, alias, null).
@@ -38,26 +45,40 @@ pub struct SpanContext {
     pub source: Arc<str>,
 }
 
-thread_local! {
-    static SPAN_CONTEXT: RefCell<Option<SpanContext>> = const { RefCell::new(None) };
+// Thread-local storage requires `std::thread` and is unavailable under
+// `#![no_std]`. The TLS-backed `SpanContextGuard` and `set_span_context`
+// helpers wire `Spanned<T>` deserialization via a shared context, so
+// they are only compiled with the `std` feature. The `SpanTree` data
+// structure and `build_span_map` walker above are alloc-only and stay
+// available everywhere.
+#[cfg(feature = "std")]
+mod tls {
+    use super::{RefCell, SpanContext};
+
+    thread_local! {
+        pub(super) static SPAN_CONTEXT: RefCell<Option<SpanContext>> = const { RefCell::new(None) };
+    }
 }
 
 /// RAII guard that owns the span context and clears the thread-local on
 /// drop. Holding the guard keeps the context alive so callers can borrow
 /// it via [`SpanContextGuard::as_ref`] without cloning the span map.
+#[cfg(feature = "std")]
 pub(crate) struct SpanContextGuard {
     ctx: SpanContext,
 }
 
+#[cfg(feature = "std")]
 impl SpanContextGuard {
     pub(crate) fn as_ref(&self) -> &SpanContext {
         &self.ctx
     }
 }
 
+#[cfg(feature = "std")]
 impl Drop for SpanContextGuard {
     fn drop(&mut self) {
-        SPAN_CONTEXT.with(|cell| {
+        tls::SPAN_CONTEXT.with(|cell| {
             *cell.borrow_mut() = None;
         });
     }
@@ -67,12 +88,13 @@ impl Drop for SpanContextGuard {
 /// the context and clears the thread-local on drop. The thread-local
 /// stores only the source `Arc<str>` (the hot lookup path consults the
 /// guard's `SpanContext` directly, avoiding a map clone per parse).
+#[cfg(feature = "std")]
 pub(crate) fn set_span_context(ctx: SpanContext) -> SpanContextGuard {
     let thread_local_ctx = SpanContext {
         spans: FxHashMap::default(),
         source: Arc::clone(&ctx.source),
     };
-    SPAN_CONTEXT.with(|cell| {
+    tls::SPAN_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(thread_local_ctx);
     });
     SpanContextGuard { ctx }
@@ -80,12 +102,14 @@ pub(crate) fn set_span_context(ctx: SpanContext) -> SpanContextGuard {
 
 /// Walk a `Value` tree and a `SpanTree` in lockstep, collecting pointer → span
 /// mappings.
+#[cfg(feature = "std")]
 pub(crate) fn build_span_map(value: &Value, tree: &SpanTree) -> FxHashMap<usize, (usize, usize)> {
     let mut map = FxHashMap::default();
     walk(value, tree, &mut map);
     map
 }
 
+#[cfg(feature = "std")]
 fn walk(value: &Value, tree: &SpanTree, map: &mut FxHashMap<usize, (usize, usize)>) {
     // Walk the tree in DFS order to build the pointer → span map.
     let p: *const Value = value;

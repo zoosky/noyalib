@@ -5,7 +5,6 @@
 
 use crate::prelude::*;
 use core::fmt;
-use std::sync::Arc;
 
 /// A byte-offset location in a YAML document.
 ///

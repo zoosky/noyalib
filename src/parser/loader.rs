@@ -7,6 +7,8 @@
 
 use crate::error::{Error, Result};
 use crate::parser::events::Event;
+use crate::prelude::*;
+#[cfg(feature = "std")]
 use crate::span_context::SpanTree;
 use crate::value::{Mapping, Number, Tag, Value};
 use indexmap::IndexMap;
@@ -81,6 +83,7 @@ pub enum DuplicateKeyPolicy {
 }
 
 /// Walk a stream of events and return a list of YAML documents.
+#[cfg(feature = "std")]
 pub(crate) fn load(
     parser: &mut crate::parser::events::Parser<'_>,
     config: &ParseConfig,
@@ -101,6 +104,7 @@ pub(crate) fn load(
 }
 
 /// Load the first document from a YAML stream.
+#[cfg(feature = "std")]
 pub(crate) fn load_one(
     parser: &mut crate::parser::events::Parser<'_>,
     config: &ParseConfig,
@@ -116,6 +120,7 @@ pub(crate) fn load_one(
 }
 
 /// Stack frame for the tree builder.
+#[cfg(feature = "std")]
 #[derive(Debug)]
 enum Frame {
     Sequence {
@@ -143,6 +148,7 @@ enum Frame {
 }
 
 /// YAML tree builder with security limits and span tracking.
+#[cfg(feature = "std")]
 struct Loader<'a> {
     docs: Vec<(Value, SpanTree)>,
     stack: Vec<Frame>,
@@ -154,6 +160,7 @@ struct Loader<'a> {
     in_document: bool,
 }
 
+#[cfg(feature = "std")]
 impl<'a> Loader<'a> {
     fn new(config: &'a ParseConfig) -> Self {
         Loader {
@@ -375,11 +382,11 @@ impl<'a> Loader<'a> {
                 } else {
                     (0, 0)
                 };
-                let old_map = std::mem::take(map);
-                let old_span_entries = std::mem::take(span_entries);
+                let old_map = core::mem::take(map);
+                let old_span_entries = core::mem::take(span_entries);
                 let old_start = *start;
                 let old_anchor = anchor.take();
-                let old_merge_values = std::mem::take(merge_values);
+                let old_merge_values = core::mem::take(merge_values);
 
                 *self.stack.last_mut().unwrap() = Frame::MappingValue {
                     map: old_map,
@@ -427,11 +434,11 @@ impl<'a> Loader<'a> {
                     }
                 }
 
-                let old_map = std::mem::take(map);
-                let old_span_entries = std::mem::take(span_entries);
+                let old_map = core::mem::take(map);
+                let old_span_entries = core::mem::take(span_entries);
                 let old_start = *start;
                 let old_anchor = anchor.take();
-                let old_merge_values = std::mem::take(merge_values);
+                let old_merge_values = core::mem::take(merge_values);
 
                 *self.stack.last_mut().unwrap() = Frame::MappingKey {
                     map: old_map,
@@ -489,6 +496,14 @@ fn estimate_value_size(v: &Value) -> usize {
 
 #[cfg(not(feature = "std"))]
 pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Value> {
+    Ok(load_all_no_spans(input, config)?
+        .into_iter()
+        .next()
+        .unwrap_or(Value::Null))
+}
+
+#[cfg(not(feature = "std"))]
+pub(crate) fn load_all_no_spans(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
     let mut parser = crate::parser::events::Parser::new(input);
     let mut loader = NoSpanLoader::new(config);
     loop {
@@ -501,7 +516,7 @@ pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Val
             Err(e) => return Err(Error::parse_at(&*e.message, input, e.index)),
         }
     }
-    Ok(loader.docs.into_iter().next().unwrap_or(Value::Null))
+    Ok(loader.docs)
 }
 
 #[cfg(not(feature = "std"))]
@@ -551,6 +566,7 @@ impl<'a> NoSpanLoader<'a> {
         }
     }
 
+    #[allow(dead_code)] // load_all_no_spans drains `self.docs` directly today.
     fn into_docs(self) -> Vec<Value> {
         self.docs
     }
@@ -674,9 +690,9 @@ impl<'a> NoSpanLoader<'a> {
                 merge_values,
             } => {
                 if let Some(key) = value_to_key_string(value) {
-                    let old_map = std::mem::take(map);
+                    let old_map = core::mem::take(map);
                     let old_anchor = anchor.take();
-                    let old_merge_values = std::mem::take(merge_values);
+                    let old_merge_values = core::mem::take(merge_values);
                     *self.stack.last_mut().unwrap() = NoSpanFrame::MappingValue {
                         map: old_map,
                         key,
@@ -696,9 +712,9 @@ impl<'a> NoSpanLoader<'a> {
                 } else {
                     let _ = map.insert(key.clone(), value);
                 }
-                let old_map = std::mem::take(map);
+                let old_map = core::mem::take(map);
                 let old_anchor = anchor.take();
-                let old_merge_values = std::mem::take(merge_values);
+                let old_merge_values = core::mem::take(merge_values);
                 *self.stack.last_mut().unwrap() = NoSpanFrame::MappingKey {
                     map: old_map,
                     anchor: old_anchor,

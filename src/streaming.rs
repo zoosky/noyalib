@@ -14,7 +14,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use smallvec::SmallVec;
-use std::sync::Arc;
 
 use crate::error::{closest_name, Error, Result};
 use crate::parser::{Event, ParseConfig, Parser, ScalarStyle};

@@ -20,7 +20,7 @@ fn kinds(node: &GreenNode) -> Vec<SyntaxKind> {
         .collect()
 }
 
-fn first_node_of<'a>(node: &'a GreenNode, kind: SyntaxKind) -> Option<&'a GreenNode> {
+fn first_node_of(node: &GreenNode, kind: SyntaxKind) -> Option<&GreenNode> {
     for c in node.children() {
         if let GreenChild::Node(n) = c {
             if n.kind() == kind {
@@ -31,7 +31,7 @@ fn first_node_of<'a>(node: &'a GreenNode, kind: SyntaxKind) -> Option<&'a GreenN
     None
 }
 
-fn entries_of<'a>(node: &'a GreenNode) -> Vec<&'a GreenNode> {
+fn entries_of(node: &GreenNode) -> Vec<&GreenNode> {
     node.children()
         .filter_map(|c| match c {
             GreenChild::Node(n)

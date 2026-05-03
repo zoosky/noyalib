@@ -63,9 +63,11 @@
 
 mod builder;
 mod document;
+mod format;
 mod green;
 mod syntax;
 
 pub use document::{parse_document, parse_stream, Document, RepairScope};
+pub use format::{format, format_with_config, FormatConfig};
 pub use green::{GreenChild, GreenNode};
 pub use syntax::SyntaxKind;

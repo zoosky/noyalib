@@ -16,10 +16,11 @@ use crate::error::{Error, Result};
 use crate::parser::{self};
 use crate::span_context;
 use crate::value::{Number, Value};
+use crate::prelude::*;
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
+#[cfg(feature = "std")]
 use std::io;
-use std::sync::Arc;
 
 /// Deserialization configuration.
 ///
@@ -345,7 +346,7 @@ pub fn from_slice<T>(b: &[u8]) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let s = std::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
+    let s = core::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
     from_str(s)
 }
 
@@ -363,7 +364,7 @@ pub fn from_slice_with_config<T>(b: &[u8], config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let s = std::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
+    let s = core::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
     from_str_with_config(s, config)
 }
 
@@ -376,6 +377,8 @@ where
 /// let n: i32 = noyalib::from_reader(&yaml[..]).unwrap();
 /// assert_eq!(n, 42);
 /// ```
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub fn from_reader<R, T>(reader: R) -> Result<T>
 where
     R: io::Read,
@@ -395,6 +398,8 @@ where
 /// let n: i32 = from_reader_with_config(&bytes[..], &cfg).unwrap();
 /// assert_eq!(n, 7);
 /// ```
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub fn from_reader_with_config<R, T>(mut reader: R, config: &ParserConfig) -> Result<T>
 where
     R: io::Read,
@@ -850,7 +855,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
 }
 
 pub(crate) struct ValueSeqAccess<'de> {
-    iter: std::slice::Iter<'de, Value>,
+    iter: core::slice::Iter<'de, Value>,
     span_ctx: Option<&'de span_context::SpanContext>,
 }
 
@@ -1026,7 +1031,7 @@ impl<'de> de::VariantAccess<'de> for VariantAccess<'de> {
 pub(crate) struct SpannedMapAccess<'de> {
     value: &'de Value,
     span_ctx: Option<&'de span_context::SpanContext>,
-    fields: std::slice::Iter<'static, &'static str>,
+    fields: core::slice::Iter<'static, &'static str>,
 }
 
 impl<'de> SpannedMapAccess<'de> {

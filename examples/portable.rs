@@ -88,8 +88,8 @@ fn main() {
     support::task_with_output("Schema validation", || {
         let yaml = "name: test\nport: 8080\n";
         let v: Value = from_str(yaml).unwrap();
-        let json_ok = noyalib::validate_json_schema(&v).is_ok();
-        let core_ok = noyalib::validate_core_schema(&v).is_ok();
+        let json_ok = noyalib::validate_yaml_json_schema(&v).is_ok();
+        let core_ok = noyalib::validate_yaml_core_schema(&v).is_ok();
         vec![
             format!(
                 "JSON schema = {}",

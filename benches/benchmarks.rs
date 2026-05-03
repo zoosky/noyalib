@@ -27,8 +27,8 @@ use noyalib::{
     from_str_with_config,
     from_value,
     // Schema
-    is_failsafe_compatible,
-    is_json_compatible,
+    is_yaml_failsafe_compatible,
+    is_yaml_json_compatible,
     // Loader
     load_all,
     load_all_as,
@@ -45,9 +45,9 @@ use noyalib::{
     to_writer_multi_with_config,
     to_writer_with_config,
     try_load_all,
-    validate_core_schema,
-    validate_failsafe_schema,
-    validate_json_schema,
+    validate_yaml_core_schema,
+    validate_yaml_failsafe_schema,
+    validate_yaml_json_schema,
     // Anchors
     ArcAnchor,
     ArcWeakAnchor,
@@ -2005,38 +2005,38 @@ fn bench_schema(c: &mut Criterion) {
     let failsafe_value: Value = from_str(FAILSAFE_YAML).unwrap();
     let nested: Value = from_str(NESTED_YAML).unwrap();
 
-    // validate_core_schema
+    // validate_yaml_core_schema
     let _ = group.bench_function("validate_core", |b| {
-        b.iter(|| validate_core_schema(black_box(&nested)));
+        b.iter(|| validate_yaml_core_schema(black_box(&nested)));
     });
 
-    // validate_json_schema
+    // validate_yaml_json_schema
     let _ = group.bench_function("validate_json", |b| {
-        b.iter(|| validate_json_schema(black_box(&json_value)));
+        b.iter(|| validate_yaml_json_schema(black_box(&json_value)));
     });
 
-    // validate_failsafe_schema
+    // validate_yaml_failsafe_schema
     let _ = group.bench_function("validate_failsafe", |b| {
-        b.iter(|| validate_failsafe_schema(black_box(&failsafe_value)));
+        b.iter(|| validate_yaml_failsafe_schema(black_box(&failsafe_value)));
     });
 
-    // is_json_compatible
+    // is_yaml_json_compatible
     let _ = group.bench_function("is_json_compatible_true", |b| {
-        b.iter(|| is_json_compatible(black_box(&json_value)));
+        b.iter(|| is_yaml_json_compatible(black_box(&json_value)));
     });
 
     let tagged: Value = from_str(TAGGED_YAML).unwrap();
     let _ = group.bench_function("is_json_compatible_false", |b| {
-        b.iter(|| is_json_compatible(black_box(&tagged)));
+        b.iter(|| is_yaml_json_compatible(black_box(&tagged)));
     });
 
-    // is_failsafe_compatible
+    // is_yaml_failsafe_compatible
     let _ = group.bench_function("is_failsafe_compatible_true", |b| {
-        b.iter(|| is_failsafe_compatible(black_box(&failsafe_value)));
+        b.iter(|| is_yaml_failsafe_compatible(black_box(&failsafe_value)));
     });
 
     let _ = group.bench_function("is_failsafe_compatible_false", |b| {
-        b.iter(|| is_failsafe_compatible(black_box(&json_value)));
+        b.iter(|| is_yaml_failsafe_compatible(black_box(&json_value)));
     });
 
     group.finish();

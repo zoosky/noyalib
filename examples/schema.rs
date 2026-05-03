@@ -8,7 +8,7 @@
 #[path = "support.rs"]
 mod support;
 
-use noyalib::{from_str, validate_core_schema, validate_json_schema, Value};
+use noyalib::{from_str, validate_yaml_core_schema, validate_yaml_json_schema, Value};
 
 fn main() {
     support::header("noyalib -- schema");
@@ -18,7 +18,7 @@ fn main() {
 
     support::task_with_output(
         "Validate against core schema",
-        || match validate_core_schema(&value) {
+        || match validate_yaml_core_schema(&value) {
             Ok(()) => vec!["Result: valid".to_string()],
             Err(e) => vec![format!("Result: rejected"), format!("Reason: {e}")],
         },
@@ -26,7 +26,7 @@ fn main() {
 
     support::task_with_output(
         "Validate against JSON schema",
-        || match validate_json_schema(&value) {
+        || match validate_yaml_json_schema(&value) {
             Ok(()) => vec!["Result: valid".to_string()],
             Err(e) => vec![format!("Result: rejected"), format!("Reason: {e}")],
         },
@@ -34,7 +34,7 @@ fn main() {
 
     support::task_with_output("NaN rejected by JSON schema", || {
         let nan: Value = from_str("value: .nan\n").unwrap();
-        match validate_json_schema(&nan) {
+        match validate_yaml_json_schema(&nan) {
             Ok(()) => vec!["Status: accepted (unexpected)".to_string()],
             Err(e) => vec!["Status: rejected".to_string(), format!("Reason: {e}")],
         }

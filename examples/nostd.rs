@@ -61,8 +61,8 @@ fn main() {
     support::task_with_output("Schema validation: works in no_std", || {
         let yaml = "key: value\n";
         let v: Value = from_str(yaml).unwrap();
-        let core_ok = noyalib::validate_core_schema(&v).is_ok();
-        let json_ok = noyalib::validate_json_schema(&v).is_ok();
+        let core_ok = noyalib::validate_yaml_core_schema(&v).is_ok();
+        let json_ok = noyalib::validate_yaml_json_schema(&v).is_ok();
         vec![
             format!(
                 "core schema = {}",
