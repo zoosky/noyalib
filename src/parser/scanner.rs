@@ -2047,7 +2047,22 @@ impl<'a> Scanner<'a> {
                 }
             }
 
+            // Hot-path SIMD: every byte that isn't in the boundary
+            // candidate set just increments `len` after the existing
+            // checks — those bytes are pure scalar interior. Skip
+            // straight to the next candidate byte via the SIMD-routed
+            // `clean_prefix_len` (memchr arity 1/2/3, SWAR for 4+);
+            // the per-candidate state-dependent rules below stay
+            // unchanged. Pure additive optimisation — semantics are
+            // bit-exact with the byte-by-byte loop.
+            let candidate_set: &[u8] = if in_flow { b": \t,[]{}" } else { b": \t" };
             while len < search_end {
+                let skip =
+                    crate::simd::clean_prefix_len(&remaining[len..search_end], candidate_set);
+                len += skip;
+                if len >= search_end {
+                    break;
+                }
                 let c = remaining[len];
                 if c == b':' {
                     let next = if len + 1 < remaining.len() {

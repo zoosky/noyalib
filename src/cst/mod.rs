@@ -16,14 +16,18 @@
 //!
 //! # Current scope
 //!
-//! - **Read access.** [`Document::as_value`] for a typed view,
-//!   [`Document::span_at`] / [`Document::get`] for byte-range lookups
-//!   by `path`, and [`Document::syntax`] for the green tree itself.
-//! - **Mutation.** [`Document::replace_span`] (primitive byte
-//!   replacement) and [`Document::set`] (path-targeted, the wrapper
-//!   most callers want). Both re-parse on edit and reject the change
-//!   if the spliced source is invalid YAML, leaving the document
-//!   untouched.
+//! - **Read access.** [`Document::as_value`](crate::cst::Document::as_value)
+//!   for a typed view, [`Document::span_at`](crate::cst::Document::span_at)
+//!   / [`Document::get`](crate::cst::Document::get) for byte-range
+//!   lookups by `path`, and
+//!   [`Document::syntax`](crate::cst::Document::syntax) for the green
+//!   tree itself.
+//! - **Mutation.** [`Document::replace_span`](crate::cst::Document::replace_span)
+//!   (primitive byte replacement) and
+//!   [`Document::set`](crate::cst::Document::set) (path-targeted, the
+//!   wrapper most callers want). Both re-parse on edit and reject
+//!   the change if the spliced source is invalid YAML, leaving the
+//!   document untouched.
 //!
 //! The green tree itself is still a flat sequence of leaves under a
 //! single `Document` parent — sufficient for byte-faithful
@@ -44,10 +48,11 @@
 //!
 //! # Multi-document streams
 //!
-//! Use [`parse_stream`] for inputs containing `---` / `...` separators —
-//! one [`Document`] per logical YAML document, with each slice
-//! covering the exact bytes of that document so concatenation
-//! reproduces the input verbatim:
+//! Use [`parse_stream`](crate::cst::parse_stream) for inputs
+//! containing `---` / `...` separators — one
+//! [`Document`](crate::cst::Document) per logical YAML document,
+//! with each slice covering the exact bytes of that document so
+//! concatenation reproduces the input verbatim:
 //!
 //! ```
 //! use noyalib::cst::{parse_stream, Document};

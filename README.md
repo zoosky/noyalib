@@ -104,6 +104,32 @@ features:
 
 ---
 
+## What's in v0.0.1
+
+The launch release bundles ten phases of work into one drop. See
+[`CHANGELOG.md`](CHANGELOG.md) for the full breakdown — the
+highlights:
+
+| Phase | Theme | Headline deliverable |
+| :--- | :--- | :--- |
+| 0 | Spec & compliance | YAML 1.2 official suite at 100 % literal (406/406, zero skips) |
+| 1.1 | Frictionless migration | `compat-serde-yaml` shim — `From`/`TryFrom` parity with `serde_yaml` 0.9 + `Document::validate` |
+| 1.2 | Frictionless migration | First-class `!!binary` + `serde_bytes` round-trip |
+| 1.3 | Frictionless migration | `Spanned<Value>` flatten guard with actionable error |
+| 2.1 | Lossless editing | `Document::entry(path)` — chainable mutable handle, 12 methods |
+| 2.2 | Lossless editing | `Document::indent_unit()` — auto-detect 2-/3-/4-space, inserts conform |
+| 2.3 | Lossless editing | "Smart Aliases" — `Document::anchors()` / `aliases()` / `materialise_alias_at` |
+| 3.1 | Contracts | JSON Schema codegen via `schemars` (`schema_for_yaml::<T>()`) |
+| 3.2 | Contracts | Schema validation + `noyavalidate --schema PATH --fix` |
+| 4 | Performance | `noyalib::simd` primitives + hot-path integration (~58× / ~5.4×) |
+
+Plus credibility hardening: SLSA L3 provenance, sigstore signing,
+OpenSSF Scorecard, REUSE.software 3.3 compliance, signed commits,
+`cargo-deny` / `cargo-vet` / `cargo-semver-checks` gates,
+differential fuzz, weekly soak fuzz.
+
+---
+
 ## Two APIs, one parser
 
 noyalib exposes two complementary surfaces over the same scanner and strictness rules:
@@ -118,6 +144,8 @@ noyalib exposes two complementary surfaces over the same scanner and strictness 
 noyalib ships with first-class tools built on top of its blazing-fast CST:
 
 - **`noyafmt` (Formatter / Linter)**: A built-in CLI tool (and API `noyalib::cst::format`) that auto-formats messy YAML files into a canonical style based on the CST while preserving comments and directives. Run `cargo run --bin noyafmt -- <file>`.
+- **`noyavalidate` (Validator)**: Validate YAML syntax and (optionally) a JSON Schema 2020-12 contract. `--schema PATH` enforces the contract; `--fix` rewrites the input through the lossless CST formatter; both flags compose. Build with `cargo build --features noyavalidate`.
+- **`noyalib-mcp` (Model Context Protocol server)**: A separate workspace member exposing `parse`, `format`, `get`, `set`, `validate` tools so any LLM agent can manipulate YAML through a typed MCP interface.
 - **`noyalib-wasm` (WASM First-Class Support)**: A dedicated wrapper exposing the `Document` API to JavaScript/TypeScript. It enables browser-based YAML IDEs to use the noyalib engine for lossless edits via `wasm-bindgen`.
 
 ---
@@ -130,13 +158,17 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 - **Streaming deserializer** -- bypasses the Value AST for typed targets
 - **Zero-copy** -- `BorrowedValue<'a>` borrows strings from input (18% faster)
 - **Path queries** -- `value.query("items[*].name")` with wildcards and recursive descent
+- **Lossless editing CST** -- `Document::set` / `entry()` rewrite only the touched bytes; comments and indentation survive
+- **Schema codegen + validation** -- derive `JsonSchema`, emit YAML, validate against it (`schema` / `validate-schema` features)
+- **`!!binary` first-class** -- RFC 4648 base64 round-trip with `serde_bytes`
+- **`compat-serde-yaml`** -- drop-in shim for the unmaintained `serde_yaml` 0.9
 - **DoS hardened** -- 7 configurable limits, billion-laughs safe
 - **`#![no_std]`** -- core parsing/serialization runs `alloc`-only; I/O and `Spanned<T>` require `std`
 - **`miette` diagnostics** -- rich terminal errors with source spans
 - **100% YAML Test Suite** -- 406/406 official test cases pass, no skips
 - **338 KB WASM binary** -- runs in browsers via wasm-bindgen
-- **6 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
-- **2,566 tests** -- unit, integration, doc-tests, property-based, official suite
+- **8 runtime dependencies** -- serde, indexmap, rustc-hash, thiserror, itoa, ryu, memchr, smallvec
+- **3,600+ tests** -- unit, integration, doc-tests, property-based, official suite, CLI smoke
 - **45 branded examples** with animated spinner UI
 
 ---
@@ -220,12 +252,12 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 25,606 lines across 23 modules |
-| **Test suite** | 2,566 tests + 73 doc-tests |
+| **Source** | 26,000+ lines across 25 modules |
+| **Test suite** | 3,600+ tests + doc-tests + CLI smoke |
 | **YAML Test Suite** | 100% literal compliance: 406/406 cases pass with zero skips |
 | **Examples** | 45 branded examples + WASM demo |
-| **Coverage** | 95.7% line coverage |
-| **Dependencies** | 6 runtime + 1 optional (miette) |
+| **Coverage** | 95%+ line coverage |
+| **Dependencies** | 8 runtime + 7 optional (miette, garde, validator, serde_yaml, schemars, serde_json, jsonschema) |
 | **WASM binary** | 338 KB (release, LTO) |
 | **MSRV** | Rust 1.75.0 |
 
@@ -247,6 +279,13 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
 | **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. `miette::Diagnostic` integration included (`--features miette`) for rich terminal reports with error codes, actionable help text, and source spans. |
 | **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without `std`. I/O functions (`from_reader`, `to_writer`), `Spanned<T>` deserialization (TLS), and the CST module require the `std` feature. CI enforces `cargo check --no-default-features` on every push. |
+| **CST editing** | Side-table CST (`noyalib::cst`) for byte-faithful round-tripping. `Document::set("server.port", "9090")` rewrites only the touched bytes; comments, blank lines, and sibling formatting survive. `Document::entry(path)` is the chainable mutable handle (12 methods, smart `items[0]` path composition). `Document::indent_unit()` detects 2-/3-/4-space conventions so inserts conform to the file's existing style. |
+| **Anchors v2** | `Document::anchors()` / `aliases()` / `aliases_of(name)` enumerate every `&name` / `*name` lexeme in source order. `Document::materialise_alias_at(byte_pos)` and `materialise_aliases_of(name)` "break" an alias by inlining the anchored scalar's source bytes — leaves the alias site independent of future anchor edits. |
+| **Schema codegen** | `schema` feature: derive `JsonSchema` (re-exported from `schemars`), then `schema_for::<T>() -> Result<Value>` or `schema_for_yaml::<T>() -> Result<String>` to emit the JSON Schema 2020-12 document. Honours `#[doc]`, `#[serde(default)]`, `#[serde(rename)]`, integer bounds, nested types via `$defs`. |
+| **Schema validation** | `validate-schema` feature (implies `schema`): `validate_against_schema(value, schema) -> Result<()>` enforces a JSON Schema 2020-12 contract on parsed YAML. Multiple violations aggregated with RFC 6901 JSON-pointer paths. `validate_against_schema_str` is the raw-text convenience. |
+| **Binary scalars** | First-class `!!binary` tag with RFC 4648 base64 round-trip. `serde_bytes::ByteBuf` / `Bytes` work end-to-end including non-UTF-8 payloads. |
+| **`serde_yaml` shim** | `compat-serde-yaml` feature: name-for-name re-exports plus `From` / `TryFrom` between `noyalib::Value` and `serde_yaml::Value` (`SerdeYamlConversionError` for the lossy edges). |
+| **SIMD primitives** | `noyalib::simd::find_any_of` / `clean_prefix_len` / `ByteBitmap`. The parser hot path routes through these primitives for free; the public API is exposed for callers building their own scanners. memchr arity-1/2/3 + SWAR arity-4+ on 64 KiB sparse haystack: ~58× and ~5.4× faster than the byte-by-byte baseline respectively. |
 
 ---
 
