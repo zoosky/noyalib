@@ -1454,12 +1454,8 @@ fn is_fallback_error(e: &Error) -> bool {
     }
 }
 
-pub(crate) fn resolve_plain(s: &str, strict: bool, legacy: bool) -> Scalar<'_> {
-    resolve_plain_ext(s, strict, legacy, false, false)
-}
-
-/// Extended variant of [`resolve_plain`] that exposes two extra
-/// toggles surfaced through `ParserConfig`:
+/// Resolve a plain scalar according to YAML 1.2's implicit-typing
+/// rules, with two `ParserConfig` toggles exposed:
 ///
 /// - `no_schema` — when `true`, keep every plain scalar as a
 ///   string. Useful for schema-strict pipelines where YAML's

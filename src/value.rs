@@ -2312,6 +2312,8 @@ impl Value {
     /// // tree if you need typed coercion.
     /// assert_eq!(value["service"]["port"].as_str(), Some("8080"));
     /// ```
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn interpolate_properties<S>(
         &mut self,
         properties: &std::collections::HashMap<String, S>,
@@ -2350,6 +2352,8 @@ impl Value {
     /// value.interpolate_properties_lossy(&props);
     /// assert_eq!(value["greeting"].as_str(), Some("hello world, hello "));
     /// ```
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn interpolate_properties_lossy<S>(
         &mut self,
         properties: &std::collections::HashMap<String, S>,
@@ -2369,6 +2373,7 @@ impl Value {
     /// Internal interpolation driver — `resolve` returns the
     /// substitution for a placeholder name or an error to abort
     /// the walk.
+    #[cfg(feature = "std")]
     fn interpolate_inner(
         &mut self,
         resolve: &dyn Fn(&str) -> crate::Result<String>,
@@ -2896,6 +2901,7 @@ impl ValueIndex for &Value {
 /// digits, underscore, dot. The dot allows hierarchical names like
 /// `${db.host}` for users who want to namespace their property
 /// maps. Anything that does not match is a parse error.
+#[cfg(feature = "std")]
 fn expand_placeholders(
     s: &str,
     resolve: &dyn Fn(&str) -> crate::Result<String>,
