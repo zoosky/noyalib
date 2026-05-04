@@ -42,3 +42,66 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@ce28f5bb42b7a9f2c824e633a3f6ee835bab6858 # v3
+
+  # ── Soak fuzz (weekly) ─────────────────────────────────────────────
+  # Long-running fuzz campaigns that don't fit the per-push budget.
+  # Each target gets a multi-hour slot per week; crashes / corpus
+  # additions are uploaded as artefacts and survive the workflow run
+  # for triage.
+  soak-fuzz:
+    name: Soak fuzz (${{ matrix.target }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_parse, fuzz_roundtrip, fuzz_diff, fuzz_strict]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+      - name: Run ${{ matrix.target }} for 1 hour
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=3600
+        # Don't fail the workflow when libfuzzer finds a crash —
+        # we want to upload the artefact for triage either way.
+        continue-on-error: true
+      - name: Upload corpus + crashes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          path: |
+            fuzz/corpus/${{ matrix.target }}
+            fuzz/artifacts/${{ matrix.target }}
+          retention-days: 30
+
+  # ── Soak Miri (weekly) ─────────────────────────────────────────────
+  # Defence-in-depth: even with `#![forbid(unsafe_code)]`, transitive
+  # deps (criterion, indexmap, etc.) contain `unsafe`. Miri exercises
+  # the full test suite at the source-language level under sanitised
+  # interpretation; the per-push CI runs a quick subset, this slot
+  # runs the entire suite.
+  soak-miri:
+    name: Soak Miri (full suite)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440  # 24h ceiling
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Setup Miri
+        run: cargo +nightly miri setup
+      - name: Run full suite under Miri
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-strict-provenance
+        run: cargo +nightly miri test --all-features

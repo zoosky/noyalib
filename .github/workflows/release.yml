@@ -13,6 +13,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -84,15 +85,58 @@ jobs:
           sha512sum "$CRATE_FILE" > SHA512SUMS.txt
           echo "CRATE_FILE=$CRATE_FILE" >> "$GITHUB_ENV"
 
+      # ── SLSA L3 build provenance ───────────────────────────────────
+      # Records the build's exact source commit, builder identity, and
+      # invocation parameters into the public Rekor transparency log.
+      # Anyone can later verify the artefact came from this exact CI
+      # workflow on this repo via `gh attestation verify`.
+      - name: Attest build provenance (SLSA L3)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            target/package/*.crate
+            SBOM.txt
+
+      # ── Keyless sigstore signing ──────────────────────────────────
+      # `cosign sign-blob` with no `--key` triggers Fulcio keyless
+      # signing: the workflow's OIDC token is exchanged for an
+      # ephemeral certificate bound to this repo + ref + workflow,
+      # the artefact is signed, and signature + cert land in Rekor.
+      # Verifiers run `cosign verify-blob` with the issuer / identity
+      # constraints documented in SECURITY.md.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign release artefacts (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cd target/package
+          for f in *.crate; do
+            cosign sign-blob \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+          cd -
+          cosign sign-blob \
+            --output-signature "SBOM.txt.sig" \
+            --output-certificate "SBOM.txt.pem" \
+            SBOM.txt
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-artifacts
           path: |
             target/package/*.crate
+            target/package/*.sig
+            target/package/*.pem
             target/package/SHA256SUMS.txt
             target/package/SHA512SUMS.txt
             SBOM.txt
+            SBOM.txt.sig
+            SBOM.txt.pem
           retention-days: 5
 
   # ── Cross-platform verification ─────────────────────────────────────
@@ -156,9 +200,13 @@ jobs:
             --title "noyalib $GITHUB_REF_NAME" \
             --notes-file RELEASE_NOTES.md \
             artifacts/target/package/*.crate \
+            artifacts/target/package/*.sig \
+            artifacts/target/package/*.pem \
             artifacts/target/package/SHA256SUMS.txt \
             artifacts/target/package/SHA512SUMS.txt \
-            artifacts/SBOM.txt
+            artifacts/SBOM.txt \
+            artifacts/SBOM.txt.sig \
+            artifacts/SBOM.txt.pem
 
   # ── Publish to crates.io ────────────────────────────────────────────
   crates-io:

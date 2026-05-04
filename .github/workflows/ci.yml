@@ -89,6 +89,80 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
 
+  fuzz-diff:
+    name: Differential fuzz (10s smoke)
+    # Burns 10 seconds of fuzzing per push against `fuzz_diff` to
+    # catch immediate divergences from `serde_yaml_ng` / `saphyr`.
+    # The full multi-hour campaign runs on the weekly soak job in
+    # `security.yml`. 10s is enough to surface trivial regressions
+    # the instant they land without slowing PR feedback.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - run: cargo install --locked cargo-fuzz
+      - run: cargo +nightly fuzz run fuzz_diff -- -max_total_time=10
+        working-directory: .
+        continue-on-error: true
+
+  cargo-semver-checks:
+    name: cargo-semver-checks
+    # On every PR, compare the public API of the proposed change
+    # against the latest release tag and fail if any breaking
+    # change is detected without a major-version bump. The crate
+    # is at `0.0.x` so technically every minor change can break,
+    # but running this gate now establishes the muscle for the
+    # 1.x stability promise.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: obi1kenobi/cargo-semver-checks-action@e275dda72e250d4df5b564e969e1348d67537e21 # v2
+        with:
+          package: noyalib
+
+  cargo-vet:
+    name: cargo-vet
+    # Verify every dependency in the build graph has either a local
+    # audit or coverage from one of the imported trusted audit sets
+    # (Mozilla, Google, Bytecode Alliance, Embark, ISRG). Bootstrap
+    # exemptions live in `supply-chain/config.toml`; the goal is to
+    # drive that list down to zero over time. Adding a new dep that
+    # is not yet covered will fail this job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-vet
+        run: cargo install --locked cargo-vet
+      - name: cargo vet check
+        run: cargo vet --locked
+
+  reuse-lint:
+    name: REUSE.software compliance
+    # Every source file in this crate carries an SPDX license header.
+    # `reuse lint` enforces that they remain in place, that LICENSE
+    # files exist for every license the project declares, and that no
+    # untagged file slips into the tree. Cheap belt-and-suspenders
+    # against accidental licensing rot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: fsfe/reuse-action@bb774aa972c2a89ff34781233d275075cbddf542 # v6
+
   msrv-clippy:
     name: MSRV (1.75.0) clippy
     # The test-matrix already runs `cargo test --all-features` on 1.75.0
