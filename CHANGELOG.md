@@ -101,6 +101,18 @@ spec behaviour (zero impact on existing callers):
   ISO-8601 timestamps with embedded `:` colons are correctly
   classified as strings, not as sexagesimal.
 
+### Added — `JsonSchema` for `noyalib::Value`
+
+- **`impl JsonSchema for noyalib::Value`** (gated by the
+  `schema` feature) — emits the JSON Schema 2020-12 idiom for
+  "any JSON-expressible value": a `oneOf` union of null,
+  boolean, number, string, array, and object, with the array /
+  object cases referencing the same `YamlValue` definition
+  recursively. Lets users derive [`schemars::JsonSchema`] on a
+  struct that has a `Value` field (e.g. an envelope type whose
+  `payload` is "any user-supplied YAML") without writing a
+  custom impl.
+
 ### Added — Mutable-Value experience for the CST
 
 - **`Entry::or_insert(default)`** / **`or_insert_with(f)`** /

@@ -131,6 +131,76 @@ pub fn schema_for_yaml<T: JsonSchema>() -> Result<String> {
     crate::to_string(&schema)
 }
 
+/// `JsonSchema` for [`crate::Value`] — the dynamic value tree
+/// admits any JSON-expressible shape, so the schema we emit is
+/// the JSON Schema 2020-12 idiom for "any value": `{"oneOf":
+/// [...]}` enumerating null, boolean, number, string, array,
+/// and object. Object values use a recursive `additionalProperties`
+/// reference so deeply-nested `Value` payloads typecheck without
+/// a depth bound.
+///
+/// This impl lets users derive [`JsonSchema`] on a struct that
+/// has a `noyalib::Value` field — e.g. when the field's type is
+/// "any user-supplied YAML scalar / mapping / sequence" and the
+/// caller still wants a published schema for the surrounding
+/// shape.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{schema_for, JsonSchema, Value};
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Serialize, Deserialize, JsonSchema)]
+/// struct Envelope {
+///     id: String,
+///     payload: Value,
+/// }
+///
+/// let schema = schema_for::<Envelope>().unwrap();
+/// // The `payload` field is described by the `Value` schema —
+/// // a oneOf union covering every JSON-expressible shape.
+/// assert_eq!(schema["type"].as_str(), Some("object"));
+/// assert!(matches!(schema["properties"]["payload"], Value::Mapping(_)));
+/// ```
+impl JsonSchema for Value {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("YamlValue")
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("noyalib::Value")
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // `serde_json::json!` is the path-of-least-resistance to
+        // a `Schema` value. The shape mirrors what
+        // `schemars::Schema::default()` plus a `oneOf` would
+        // produce by hand, but the macro keeps the noise down.
+        schemars::Schema::try_from(serde_json::json!({
+            "oneOf": [
+                { "type": "null" },
+                { "type": "boolean" },
+                { "type": "number" },
+                { "type": "string" },
+                {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/YamlValue" }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": { "$ref": "#/$defs/YamlValue" }
+                }
+            ],
+            "title": "YamlValue",
+            "description": "Any YAML 1.2 scalar, sequence, or mapping value. \
+                            Recursive — sequence items and mapping values are \
+                            themselves `YamlValue`s."
+        }))
+        .expect("YamlValue schema must be a valid JSON Schema document")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

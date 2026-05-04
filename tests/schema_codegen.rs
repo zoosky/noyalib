@@ -123,6 +123,31 @@ enum LogLevel {
     Error,
 }
 
+// ── JsonSchema for noyalib::Value ───────────────────────────────────
+
+#[test]
+fn json_schema_for_value_field() {
+    use noyalib::Value;
+
+    #[derive(Deserialize, JsonSchema)]
+    #[allow(dead_code)]
+    struct Envelope {
+        id: String,
+        payload: Value,
+    }
+
+    let schema = schema_for::<Envelope>().unwrap();
+    assert_eq!(schema["type"].as_str(), Some("object"));
+    // `payload` is `Value` — schemars resolves it to a `$ref`
+    // pointing at the `YamlValue` definition under `$defs`.
+    assert!(matches!(schema["properties"]["payload"], Value::Mapping(_)));
+    let defs = &schema["$defs"];
+    let yaml_value = &defs["YamlValue"];
+    // The Value schema is a oneOf union of every JSON-expressible
+    // shape.
+    assert!(matches!(yaml_value["oneOf"], Value::Sequence(_)));
+}
+
 #[test]
 fn unit_only_enum_emits_string_enum() {
     let schema = schema_for::<LogLevel>().unwrap();
