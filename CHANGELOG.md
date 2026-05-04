@@ -73,6 +73,34 @@ spec behaviour (zero impact on existing callers):
   base64 payload. Useful for migrations from Python pyyaml-style
   applications that treat the tag as advisory.
 
+### Added — `Flattened<T>` capture wrapper
+
+- **`noyalib::Flattened<T>`** — pairs a typed deserialization of
+  `T` with the underlying [`Value`] tree captured from the
+  source. Solves the "I want `#[serde(flatten)]` plus the dynamic
+  view for span lookup / unknown-field detection / schema
+  validation" use case that the built-in residue types
+  (`HashMap<String, Value>` etc.) erase. Deserializes by
+  capturing the input as a [`Value`] first, then re-running
+  `T::deserialize` against the captured tree via
+  [`crate::from_value`]. Both `flattened.value: T` and
+  `flattened.raw: Value` are exposed; `Deref<Target = T>` makes
+  the typed view ergonomic. Round-trip transparency on
+  serialize: only the typed view is emitted, mirroring
+  `Spanned<T>`.
+
+### Added — `legacy_sexagesimal` ParserConfig toggle
+
+- **`ParserConfig::legacy_sexagesimal(true)`** — accept YAML
+  1.1-style colon-separated base-60 numbers (`60:00` → 3 600,
+  `1:30:00` → 5 400, `-1:30:00` → -5 400) as integers.
+  Fractional last-component variant (`1:30:00.5` → 5 400.5)
+  resolves to a float. Off by default; YAML 1.2 dropped the
+  sexagesimal schema. Robust against false positives:
+  components other than the first are clamped to 0..=59 and
+  ISO-8601 timestamps with embedded `:` colons are correctly
+  classified as strings, not as sexagesimal.
+
 ### Added — Multi-line error snippets
 
 - **`Error::format_with_source_radius(source, radius)`** —

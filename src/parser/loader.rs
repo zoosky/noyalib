@@ -37,6 +37,7 @@ pub struct ParseConfig {
     pub merge_key_policy: MergeKeyPolicy,
     pub no_schema: bool,
     pub legacy_octal_numbers: bool,
+    pub legacy_sexagesimal: bool,
 }
 
 impl Default for ParseConfig {
@@ -53,6 +54,7 @@ impl Default for ParseConfig {
             merge_key_policy: MergeKeyPolicy::default(),
             no_schema: false,
             legacy_octal_numbers: false,
+            legacy_sexagesimal: false,
         }
     }
 }
@@ -79,6 +81,7 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             },
             no_schema: c.no_schema,
             legacy_octal_numbers: c.legacy_octal_numbers,
+            legacy_sexagesimal: c.legacy_sexagesimal,
         }
     }
 }
@@ -265,6 +268,7 @@ impl<'a> Loader<'a> {
                         self.config.legacy_booleans,
                         self.config.no_schema,
                         self.config.legacy_octal_numbers,
+                        self.config.legacy_sexagesimal,
                     ) {
                         crate::streaming::Scalar::Null => Value::Null,
                         crate::streaming::Scalar::Bool(b) => Value::Bool(b),
@@ -651,6 +655,7 @@ impl<'a> NoSpanLoader<'a> {
                         self.config.legacy_booleans,
                         self.config.no_schema,
                         self.config.legacy_octal_numbers,
+                        self.config.legacy_sexagesimal,
                     ) {
                         crate::streaming::Scalar::Null => Value::Null,
                         crate::streaming::Scalar::Bool(b) => Value::Bool(b),

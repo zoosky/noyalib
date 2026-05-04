@@ -81,6 +81,17 @@ pub struct ParserConfig {
     /// applications that treat the tag as advisory. Default
     /// `false`.
     pub ignore_binary_tag_for_string: bool,
+    /// When `true`, accept YAML 1.1-style **sexagesimal** numbers
+    /// (`60:00`, `1:30:00`) as integers. The colon-separated
+    /// digits are interpreted in base 60: each component is
+    /// multiplied by an increasing power of 60, summed left to
+    /// right. `60:00` → 3 600; `1:30:00` → 5 400. Negative values
+    /// (`-1:30:00`) and partial signs are honoured.
+    ///
+    /// Off by default to honour the YAML 1.2 schema. Useful for
+    /// migrations from YAML 1.1 / Ruby / pyyaml configs that use
+    /// the legacy time-of-day notation.
+    pub legacy_sexagesimal: bool,
 }
 
 impl Default for ParserConfig {
@@ -99,6 +110,7 @@ impl Default for ParserConfig {
             no_schema: false,
             legacy_octal_numbers: false,
             ignore_binary_tag_for_string: false,
+            legacy_sexagesimal: false,
         }
     }
 }
@@ -144,6 +156,7 @@ impl ParserConfig {
             no_schema: false,
             legacy_octal_numbers: false,
             ignore_binary_tag_for_string: false,
+            legacy_sexagesimal: false,
         }
     }
 
@@ -355,6 +368,24 @@ impl ParserConfig {
     #[must_use]
     pub fn ignore_binary_tag_for_string(mut self, on: bool) -> Self {
         self.ignore_binary_tag_for_string = on;
+        self
+    }
+
+    /// Toggle YAML 1.1-style sexagesimal number parsing
+    /// (`60:00` → 3 600). Off by default; YAML 1.2 dropped the
+    /// sexagesimal schema, so plain `1:30:00` would otherwise
+    /// surface as a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().legacy_sexagesimal(true);
+    /// assert!(cfg.legacy_sexagesimal);
+    /// ```
+    #[must_use]
+    pub fn legacy_sexagesimal(mut self, on: bool) -> Self {
+        self.legacy_sexagesimal = on;
         self
     }
 }

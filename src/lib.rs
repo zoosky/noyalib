@@ -178,6 +178,7 @@ mod error;
 #[cfg(feature = "figment")]
 #[cfg_attr(docsrs, doc(cfg(feature = "figment")))]
 pub mod figment;
+mod flattened;
 /// Formatting wrappers for per-value YAML output style control.
 pub mod fmt;
 mod parser;
@@ -235,6 +236,7 @@ pub use de::{
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
 pub use error::{Error, Location, Result};
+pub use flattened::Flattened;
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};
 pub use path::Path;
 pub use schema::{

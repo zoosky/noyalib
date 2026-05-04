@@ -596,6 +596,7 @@ impl<'a> StreamingDeserializer<'a> {
                 self.config.legacy_booleans,
                 self.config.no_schema,
                 self.config.legacy_octal_numbers,
+                self.config.legacy_sexagesimal,
             )
         } else {
             Scalar::Str(Cow::Borrowed(value))
@@ -1455,7 +1456,7 @@ fn is_fallback_error(e: &Error) -> bool {
 }
 
 /// Resolve a plain scalar according to YAML 1.2's implicit-typing
-/// rules, with two `ParserConfig` toggles exposed:
+/// rules, with three `ParserConfig` toggles exposed:
 ///
 /// - `no_schema` — when `true`, keep every plain scalar as a
 ///   string. Useful for schema-strict pipelines where YAML's
@@ -1465,12 +1466,17 @@ fn is_fallback_error(e: &Error) -> bool {
 ///   `0`-prefix octal literals (e.g. `0644`) in addition to the
 ///   YAML 1.2 `0o644` form. Off by default to honour YAML 1.2's
 ///   stricter integer schema.
+/// - `legacy_sexagesimal` — when `true`, accept YAML 1.1-style
+///   colon-separated base-60 numbers (`60:00` → 3 600,
+///   `1:30:00` → 5 400). Off by default; YAML 1.2 dropped the
+///   sexagesimal schema.
 pub(crate) fn resolve_plain_ext(
     s: &str,
     strict: bool,
     legacy: bool,
     no_schema: bool,
     legacy_octal: bool,
+    legacy_sexagesimal: bool,
 ) -> Scalar<'_> {
     if no_schema {
         // Schema-strict mode: every plain scalar surfaces as a
@@ -1493,6 +1499,16 @@ pub(crate) fn resolve_plain_ext(
         _ => {
             if let Some(n) = parse_integer(s, legacy_octal) {
                 Scalar::Int(n)
+            } else if legacy_sexagesimal {
+                if let Some(n) = parse_sexagesimal_int(s) {
+                    Scalar::Int(n)
+                } else if let Some(f) = parse_sexagesimal_float(s) {
+                    Scalar::Float(f)
+                } else if let Ok(f) = s.parse::<f64>() {
+                    Scalar::Float(f)
+                } else {
+                    Scalar::Str(Cow::Borrowed(s))
+                }
             } else if let Ok(f) = s.parse::<f64>() {
                 Scalar::Float(f)
             } else {
@@ -1500,6 +1516,78 @@ pub(crate) fn resolve_plain_ext(
             }
         }
     }
+}
+
+/// Parse a YAML 1.1 sexagesimal integer like `60:00` or
+/// `-1:30:00` — colon-separated base-60 components evaluated
+/// left-to-right. Returns `None` if the shape doesn't fit:
+///
+/// - At least one `:` is required (otherwise this overlaps with
+///   plain integer parsing).
+/// - Each component must be one or more decimal digits.
+/// - Components other than the first must be `00..=59` to avoid
+///   accepting nonsense like `1:99`.
+/// - The leading sign (`-` or `+`) applies to the whole value.
+fn parse_sexagesimal_int(s: &str) -> Option<i64> {
+    let (sign, rest) = match s.as_bytes().first() {
+        Some(b'-') => (-1i64, &s[1..]),
+        Some(b'+') => (1i64, &s[1..]),
+        _ => (1i64, s),
+    };
+    if !rest.contains(':') {
+        return None;
+    }
+    let parts: Vec<&str> = rest.split(':').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let mut total: i64 = 0;
+    for (idx, part) in parts.iter().enumerate() {
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let n: i64 = part.parse().ok()?;
+        if idx > 0 && n >= 60 {
+            return None;
+        }
+        total = total.checked_mul(60)?.checked_add(n)?;
+    }
+    sign.checked_mul(total)
+}
+
+/// Parse a YAML 1.1 sexagesimal float like `60:00.5`. Same shape
+/// as the integer variant but the *last* component may be a
+/// decimal float (`.5`, `5.5`).
+fn parse_sexagesimal_float(s: &str) -> Option<f64> {
+    let (sign, rest) = match s.as_bytes().first() {
+        Some(b'-') => (-1.0f64, &s[1..]),
+        Some(b'+') => (1.0f64, &s[1..]),
+        _ => (1.0f64, s),
+    };
+    if !rest.contains(':') {
+        return None;
+    }
+    let parts: Vec<&str> = rest.split(':').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let last_idx = parts.len() - 1;
+    let mut total: f64 = 0.0;
+    for (idx, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            return None;
+        }
+        let last_with_decimal = idx == last_idx && part.contains('.');
+        if !last_with_decimal && !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let n: f64 = part.parse().ok()?;
+        if idx > 0 && n >= 60.0 {
+            return None;
+        }
+        total = total * 60.0 + n;
+    }
+    Some(sign * total)
 }
 
 fn parse_integer(s: &str, legacy_octal: bool) -> Option<i64> {
