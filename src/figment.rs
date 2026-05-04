@@ -7,7 +7,7 @@
 //! merges multiple config sources (env vars, TOML / JSON / YAML
 //! files, CLI flags, in-memory overrides) into a single typed
 //! struct via `Figment::new().merge(...).join(...).extract()`. The
-//! [`Yaml`] provider in this module plugs noyalib into that
+//! [`Yaml`](crate::figment::Yaml) provider in this module plugs noyalib into that
 //! chain the same way `figment::providers::Toml` /
 //! `figment::providers::Json` do — without depending on the
 //! unmaintained `serde_yaml` 0.9 crate.
