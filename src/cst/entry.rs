@@ -170,19 +170,41 @@ impl<'a> Entry<'a> {
     }
 
     /// Insert a `key: value` pair where the value is a typed
-    /// [`Value`]. The value is YAML-emitted via the standard
-    /// serializer and routed through [`Self::insert`].
+    /// [`Value`]. The value is emitted via the standard serializer
+    /// using the file's *detected* indent unit
+    /// ([`Document::indent_unit`]) so a nested block value matches
+    /// the surrounding file's 2- vs 4-space convention. Multi-line
+    /// emissions are then spliced as `key:\n<reindented children>`;
+    /// single-line emissions (scalars, flow collections) take the
+    /// inline `key: value` path.
     ///
     /// # Errors
     ///
-    /// As [`Self::insert`].
+    /// As [`Self::insert`], plus serializer errors when the value
+    /// cannot be emitted as YAML.
     pub fn insert_value(self, key: &str, value: &Value) -> Result<()> {
-        let fragment = crate::to_string(value)?;
+        let unit = self.doc.indent_unit();
+        let cfg = crate::SerializerConfig::new().indent(unit);
+        let emitted = crate::to_string_with_config(value, &cfg)?;
         // `to_string` adds a trailing `\n` for top-level emission;
-        // strip it so the spliced fragment fits on a single mapping
-        // line.
-        let trimmed = fragment.trim_end_matches('\n');
-        self.doc.insert_entry(&self.path, key, trimmed)
+        // strip it so the spliced fragment fits cleanly into the
+        // splice templates inside `Document::insert_entry`.
+        let trimmed = emitted.trim_end_matches('\n');
+        // Collections (Mapping/Sequence) must be spliced as
+        // `key:\n<children>` even when their emission happens to fit
+        // on a single line (a one-entry mapping like `cpu: "100m"`
+        // would otherwise yield an invalid `resources: cpu: "100m"`
+        // single-line composition). Forcing a leading `\n` makes
+        // `insert_entry` take its multi-line path; the stripped-blank
+        // logic there suppresses the artificial empty line.
+        let force_block =
+            matches!(value, Value::Mapping(_) | Value::Sequence(_)) && !trimmed.contains('\n');
+        let fragment = if force_block {
+            format!("\n{trimmed}")
+        } else {
+            trimmed.to_owned()
+        };
+        self.doc.insert_entry(&self.path, key, &fragment)
     }
 
     /// Append `fragment` as a new item to the sequence at this path.
@@ -296,10 +318,7 @@ mod tests {
 
     #[test]
     fn entry_set_replaces_value_losslessly() {
-        let mut doc = parse_document(
-            "# top comment\nport: 8080  # inline comment\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("# top comment\nport: 8080  # inline comment\n").unwrap();
         doc.entry("port").set("9090").unwrap();
         let out = doc.to_string();
         assert!(out.contains("port: 9090"));
@@ -309,23 +328,15 @@ mod tests {
 
     #[test]
     fn entry_chains_through_dotted_path() {
-        let mut doc = parse_document(
-            "server:\n  host: localhost\n  port: 8080\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("server:\n  host: localhost\n  port: 8080\n").unwrap();
         doc.entry("server").entry("port").set("9090").unwrap();
         assert!(doc.to_string().contains("port: 9090"));
     }
 
     #[test]
     fn entry_insert_into_mapping() {
-        let mut doc = parse_document(
-            "metadata:\n  labels:\n    app: noyalib\n",
-        )
-        .unwrap();
-        doc.entry("metadata.labels")
-            .insert("env", "prod")
-            .unwrap();
+        let mut doc = parse_document("metadata:\n  labels:\n    app: noyalib\n").unwrap();
+        doc.entry("metadata.labels").insert("env", "prod").unwrap();
         let out = doc.to_string();
         assert!(out.contains("app: noyalib"));
         assert!(out.contains("env: prod"));
@@ -333,10 +344,7 @@ mod tests {
 
     #[test]
     fn entry_insert_value_typed() {
-        let mut doc = parse_document(
-            "metadata:\n  labels:\n    app: noyalib\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("metadata:\n  labels:\n    app: noyalib\n").unwrap();
         let v = Value::Number(crate::Number::Integer(3));
         doc.entry("metadata.labels")
             .insert_value("replicas", &v)
@@ -347,10 +355,7 @@ mod tests {
 
     #[test]
     fn entry_remove() {
-        let mut doc = parse_document(
-            "a: 1\nb: 2\nc: 3\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("a: 1\nb: 2\nc: 3\n").unwrap();
         doc.entry("b").remove().unwrap();
         let out = doc.to_string();
         assert!(out.contains("a: 1"));
@@ -360,10 +365,7 @@ mod tests {
 
     #[test]
     fn entry_push_back_to_sequence() {
-        let mut doc = parse_document(
-            "items:\n  - one\n  - two\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("items:\n  - one\n  - two\n").unwrap();
         doc.entry("items").push_back("three").unwrap();
         let out = doc.to_string();
         assert!(out.contains("- one"));
@@ -373,10 +375,7 @@ mod tests {
 
     #[test]
     fn entry_insert_after_in_sequence() {
-        let mut doc = parse_document(
-            "items:\n  - one\n  - three\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("items:\n  - one\n  - three\n").unwrap();
         doc.entry("items[0]").insert_after("two").unwrap();
         let out = doc.to_string();
         let one_pos = out.find("one").unwrap();
@@ -412,10 +411,7 @@ mod tests {
 
     #[test]
     fn entry_with_index_uses_no_dot_separator() {
-        let mut doc = parse_document(
-            "items:\n  - one\n  - two\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("items:\n  - one\n  - two\n").unwrap();
         // `entry("items").entry("[0]")` should produce `items[0]`,
         // not `items.[0]`.
         let e = doc.entry("items").entry("[0]");
@@ -424,10 +420,7 @@ mod tests {
 
     #[test]
     fn entry_comments_forwards_to_document() {
-        let mut doc = parse_document(
-            "# decorator\nport: 8080  # inline\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("# decorator\nport: 8080  # inline\n").unwrap();
         let bundle = doc.entry("port").comments();
         assert_eq!(bundle.before.len(), 1);
         assert_eq!(bundle.before[0].text, " decorator");
@@ -446,10 +439,7 @@ mod tests {
         // Multiple Entry-driven edits in sequence — each releases
         // its borrow at the end of its statement, the next can
         // reborrow doc cleanly.
-        let mut doc = parse_document(
-            "name: noyalib\nversion: 0.0.1\n",
-        )
-        .unwrap();
+        let mut doc = parse_document("name: noyalib\nversion: 0.0.1\n").unwrap();
         doc.entry("name").set("renamed").unwrap();
         doc.entry("version").set("0.0.2").unwrap();
         let out = doc.to_string();

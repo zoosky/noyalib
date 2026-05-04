@@ -205,9 +205,8 @@ impl Document {
             return;
         }
         let cfg = crate::parser::ParseConfig::default();
-        let parsed = crate::parser::parse_one(&self.source, &cfg).expect(
-            "Document source must always parse — local repair invariant violated",
-        );
+        let parsed = crate::parser::parse_one(&self.source, &cfg)
+            .expect("Document source must always parse — local repair invariant violated");
         *self.cache.borrow_mut() = Some(parsed);
     }
 
@@ -406,15 +405,10 @@ impl Document {
 
             match parse_subtree(fragment, ctx, cand.kind) {
                 Ok(new_sub)
-                    if new_sub.kind() == cand.kind
-                        && new_sub.text_len() == fragment.len() =>
+                    if new_sub.kind() == cand.kind && new_sub.text_len() == fragment.len() =>
                 {
-                    let new_root = rebuild_with_splice(
-                        &self.green,
-                        n_old_start,
-                        n_old_end,
-                        new_sub,
-                    );
+                    let new_root =
+                        rebuild_with_splice(&self.green, n_old_start, n_old_end, new_sub);
                     return Some((new_root, scope_for_kind(cand.kind)));
                 }
                 Ok(_) | Err(_) => {
@@ -636,6 +630,47 @@ impl Document {
         self.replace_span(line_end, line_end, &new_line)
     }
 
+    /// Detect the indentation unit (in spaces) used by this document.
+    ///
+    /// Walks the source line-by-line, looks for any pair of
+    /// consecutive non-empty/non-comment lines where the second is
+    /// more deeply indented than the first, and returns the smallest
+    /// such delta — that is the file's "indent step", typically 2 or
+    /// 4 spaces. A document with no nested structure (or only
+    /// top-level keys) has no detectable step; the default `2` is
+    /// returned in that case.
+    ///
+    /// Used internally by the [`crate::cst::Entry`] insertion paths
+    /// to keep the inserted YAML's inner indentation consistent with
+    /// what the rest of the file already uses (2-space file → 2-space
+    /// inserts; 4-space file → 4-space inserts). Exposed publicly so
+    /// callers building their own emission paths can match the same
+    /// convention.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let two_space = parse_document(
+    ///     "metadata:\n  labels:\n    app: noyalib\n",
+    /// ).unwrap();
+    /// assert_eq!(two_space.indent_unit(), 2);
+    ///
+    /// let four_space = parse_document(
+    ///     "metadata:\n    labels:\n        app: noyalib\n",
+    /// ).unwrap();
+    /// assert_eq!(four_space.indent_unit(), 4);
+    ///
+    /// // No nested structure — defaults to 2.
+    /// let flat = parse_document("a: 1\nb: 2\n").unwrap();
+    /// assert_eq!(flat.indent_unit(), 2);
+    /// ```
+    #[must_use]
+    pub fn indent_unit(&self) -> usize {
+        detect_indent_unit(&self.source)
+    }
+
     /// Insert a new `key: fragment` entry into the block mapping at
     /// `mapping_path`. The mapping-side analogue of
     /// [`Document::push_back`].
@@ -687,9 +722,8 @@ impl Document {
             let target = if mapping_path.is_empty() {
                 value
             } else {
-                path_value(value, mapping_path).ok_or_else(|| {
-                    Error::Parse(format!("path not found: {mapping_path}"))
-                })?
+                path_value(value, mapping_path)
+                    .ok_or_else(|| Error::Parse(format!("path not found: {mapping_path}")))?
             };
             let mapping = match target {
                 Value::Mapping(m) => m,
@@ -717,21 +751,44 @@ impl Document {
         } else {
             format!("{mapping_path}.{last_key}")
         };
-        let (last_value_start, last_value_end) =
-            self.span_at(&last_path).ok_or_else(|| {
-                Error::Parse(
-                    "insert_entry: could not resolve last entry span".into(),
-                )
-            })?;
+        let (last_value_start, last_value_end) = self.span_at(&last_path).ok_or_else(|| {
+            Error::Parse("insert_entry: could not resolve last entry span".into())
+        })?;
         let key_col = column_of_key_at(&self.source, last_value_start).ok_or_else(|| {
-            Error::Parse(
-                "insert_entry: could not locate last key's column for indentation"
-                    .into(),
-            )
+            Error::Parse("insert_entry: could not locate last key's column for indentation".into())
         })?;
         let line_end = end_of_line(&self.source, last_value_end);
         let indent: String = " ".repeat(key_col);
-        let new_line = format!("{indent}{key}: {fragment}\n");
+
+        // Single-line values (scalars, flow collections, anything
+        // without an interior newline) splice inline. Multi-line
+        // fragments — typically the YAML emission of a nested block
+        // mapping or sequence — splice as `{key}:\n{children}` with
+        // the children re-indented by `key_col + indent_unit` so the
+        // nested structure lines up with the surrounding file's
+        // convention (Phase 2.2).
+        let new_line = if fragment.contains('\n') {
+            let unit = detect_indent_unit(&self.source);
+            let inner_indent: String = " ".repeat(key_col + unit);
+            // Strip leading blank lines so a caller that prefixed `\n`
+            // to force block form (see `Entry::insert_value` for a
+            // single-entry collection) does not introduce a stray
+            // blank between the key and its first child.
+            let body = fragment.trim_start_matches('\n');
+            let mut buf = format!("{indent}{key}:\n");
+            for line in body.split('\n') {
+                if line.is_empty() {
+                    buf.push('\n');
+                } else {
+                    buf.push_str(&inner_indent);
+                    buf.push_str(line);
+                    buf.push('\n');
+                }
+            }
+            buf
+        } else {
+            format!("{indent}{key}: {fragment}\n")
+        };
         self.replace_span(line_end, line_end, &new_line)
     }
 
@@ -994,9 +1051,7 @@ fn walk_tokens(
 /// the replacement bytes. Phase A is conservative — any whiff of
 /// these in `replacement` forces escalation.
 fn replacement_introduces_anchor_alias_or_tag(replacement: &str) -> bool {
-    replacement
-        .bytes()
-        .any(|b| matches!(b, b'&' | b'*' | b'!'))
+    replacement.bytes().any(|b| matches!(b, b'&' | b'*' | b'!'))
 }
 
 // ── Green-tree path resolution (Phase A.3) ──────────────────────────
@@ -1024,10 +1079,7 @@ fn resolve_path_in_green(
     walk_path(collection, segments, base, source)
 }
 
-fn first_collection_child(
-    node: &GreenNode,
-    base: usize,
-) -> Option<(&GreenNode, usize)> {
+fn first_collection_child(node: &GreenNode, base: usize) -> Option<(&GreenNode, usize)> {
     let mut pos = base;
     for child in node.children() {
         let len = child.text_len();
@@ -1473,25 +1525,138 @@ fn column_of_preceding_dash(source: &str, value_start: usize) -> Option<usize> {
     Some(dash_pos - line_start)
 }
 
-/// Column at which the key on the line containing `value_start`
-/// begins — i.e. the count of leading space bytes on that line.
-/// Used by `insert_entry` to compute the indent for a freshly
-/// spliced sibling key. Returns `None` if `value_start` is out of
-/// range.
+/// Walk every line in `source`, find pairs of consecutive
+/// non-empty/non-comment lines where the second is more deeply
+/// indented than the first, and return the smallest such delta —
+/// the file's indent step. Defaults to `2` when nothing is detected
+/// (single-level documents, all-top-level mappings).
+///
+/// Tab-indented lines are skipped: tabs cannot serve as YAML
+/// indentation per spec §6.1, and trying to mix them into the
+/// detection produces nonsense for the typical-case mixed-edit
+/// scenario.
+fn detect_indent_unit(source: &str) -> usize {
+    let mut prev_indent: Option<usize> = None;
+    let mut min_step: Option<usize> = None;
+    for line in source.lines() {
+        // Count leading spaces; bail on tab-indented lines.
+        let mut spaces = 0;
+        let bytes = line.as_bytes();
+        let mut tab_seen = false;
+        for &b in bytes {
+            if b == b' ' {
+                spaces += 1;
+            } else if b == b'\t' {
+                tab_seen = true;
+                break;
+            } else {
+                break;
+            }
+        }
+        if tab_seen {
+            // Tab line — leaves prev_indent unchanged so the next
+            // pair compares across the tab line.
+            continue;
+        }
+        // Skip blank and comment-only lines.
+        let trimmed = &line[spaces..];
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(prev) = prev_indent {
+            if spaces > prev {
+                let step = spaces - prev;
+                min_step = Some(min_step.map_or(step, |m| m.min(step)));
+            }
+        }
+        prev_indent = Some(spaces);
+    }
+    min_step.unwrap_or(2)
+}
+
+/// Column of the *key* that owns the value at `value_start`.
+///
+/// Two layouts to handle:
+///
+/// - **Inline:** `key: value` — key and value share a line. The key's
+///   column is the leading-space count on that line.
+/// - **Nested block:** `key:\n  child: …` — the value's first byte
+///   sits on a child line, indented past the key. The key's column is
+///   the leading-space count of an *earlier* non-blank/non-comment
+///   line whose indent is *smaller* than the value-line's indent.
+///
+/// Walks backwards from `value_start`, skipping blank and comment
+/// lines, and returns the first content line's column that is shallower
+/// than the value line's column. Falls back to the value line's own
+/// column for the inline case.
+///
+/// Returns `None` if `value_start` is out of range.
 fn column_of_key_at(source: &str, value_start: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     if value_start > bytes.len() {
         return None;
     }
-    let mut line_start = value_start;
-    while line_start > 0 && bytes[line_start - 1] != b'\n' {
-        line_start -= 1;
+
+    // Locate the line that contains value_start.
+    let line_start = |pos: usize| -> usize {
+        let mut s = pos;
+        while s > 0 && bytes[s - 1] != b'\n' {
+            s -= 1;
+        }
+        s
+    };
+    let leading_spaces = |start: usize| -> usize {
+        let mut c = 0;
+        while start + c < bytes.len() && bytes[start + c] == b' ' {
+            c += 1;
+        }
+        c
+    };
+
+    let value_line_start = line_start(value_start);
+    let value_col = leading_spaces(value_line_start);
+
+    // If there is real content (not just whitespace) on the value line
+    // at or before `value_start`, the key is inline on this same line.
+    let mut probe = value_line_start + value_col;
+    let mut inline_content = false;
+    while probe < value_start {
+        let b = bytes[probe];
+        if b != b' ' && b != b'\t' {
+            inline_content = true;
+            break;
+        }
+        probe += 1;
     }
-    let mut col = 0;
-    while line_start + col < bytes.len() && bytes[line_start + col] == b' ' {
-        col += 1;
+    if inline_content {
+        return Some(value_col);
     }
-    Some(col)
+
+    // Nested case: walk backward by line, skipping blanks and
+    // comment-only lines, until we find content at a *smaller* column.
+    if value_line_start == 0 {
+        return Some(value_col);
+    }
+    let mut cursor = value_line_start - 1; // past the trailing '\n'
+    loop {
+        // Find the start of the line ending at `cursor`.
+        let mut prev_start = cursor;
+        while prev_start > 0 && bytes[prev_start - 1] != b'\n' {
+            prev_start -= 1;
+        }
+        let prev_col = leading_spaces(prev_start);
+        let first_content = prev_start + prev_col;
+        let after_content = cursor; // cursor still points at the '\n' index
+        let is_blank = first_content >= after_content;
+        let is_comment = !is_blank && bytes[first_content] == b'#';
+        if !is_blank && !is_comment && prev_col < value_col {
+            return Some(prev_col);
+        }
+        if prev_start == 0 {
+            return Some(value_col);
+        }
+        cursor = prev_start - 1;
+    }
 }
 
 /// Position of the byte immediately past the next `\n` at or after
@@ -1648,10 +1813,7 @@ fn enclosing_mapping_and_entry(
 /// `mapping` *except* the entry being modified. Return the
 /// dominant quoted style if and only if it is uniquely the most
 /// frequent and there are at least two siblings vouching for it.
-fn dominant_sibling_value_kind(
-    mapping: &GreenNode,
-    exclude: &GreenNode,
-) -> Option<SyntaxKind> {
+fn dominant_sibling_value_kind(mapping: &GreenNode, exclude: &GreenNode) -> Option<SyntaxKind> {
     let exclude_ptr: *const GreenNode = exclude;
     let mut plain = 0usize;
     let mut single = 0usize;
@@ -1873,7 +2035,8 @@ fn format_block_literal(s: &str, entry_col: usize) -> String {
     let body = if trailing_nl { &s[..s.len() - 1] } else { s };
     let indent_str = " ".repeat(entry_col + 2);
 
-    let mut out = String::with_capacity(s.len() + 8 + indent_str.len() * (body.matches('\n').count() + 1));
+    let mut out =
+        String::with_capacity(s.len() + 8 + indent_str.len() * (body.matches('\n').count() + 1));
     out.push('|');
     if !trailing_nl {
         // Strip chomping indicator removes any trailing newlines, so
