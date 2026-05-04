@@ -54,6 +54,45 @@ pub(crate) const SPANNED_FIELDS: &[&str] = &[
 ///     port: Spanned<u16>,
 /// }
 /// ```
+///
+/// # Limitation: `#[serde(flatten)]`
+///
+/// `Spanned<T>` cannot be the target of a `#[serde(flatten)]` field. The
+/// limitation is in serde itself: `FlatMapDeserializer::deserialize_struct`
+/// uses `FlatStructAccess`, which filters the residue by the FIELDS list
+/// passed to `deserialize_struct`. Because `Spanned` advertises internal
+/// magic field names (`$__noyalib_value` and friends) that never appear in
+/// real input, every residue entry is filtered out before our visitor
+/// runs.
+///
+/// The supported pattern is to flatten a bare [`crate::Value`] (which works
+/// today) and look up source spans through the [`crate::cst::Document`]
+/// API separately:
+///
+/// ```rust,ignore
+/// // Works.
+/// #[derive(Deserialize)]
+/// struct Config {
+///     name: String,
+///     #[serde(flatten)]
+///     extra: noyalib::Value,
+/// }
+///
+/// // Errors with a clear message at deserialize time.
+/// #[derive(Deserialize)]
+/// struct AlsoConfig {
+///     name: String,
+///     #[serde(flatten)]
+///     extra: noyalib::Spanned<noyalib::Value>,  // not supported
+/// }
+/// ```
+///
+/// If the use case is "agent edits YAML, also wants source position of
+/// each unflattened field", parse the source via
+/// [`crate::cst::parse_document`] and use
+/// [`crate::cst::Document::span_at`] / [`crate::cst::Document::comments_at`]
+/// — those resolve byte ranges by path, work post-edit, and are not
+/// constrained by serde's flatten mechanics.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Spanned<T> {
     /// The deserialized value.
@@ -186,8 +225,18 @@ impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for SpannedVisitor<T> {
         let mut end_column: Option<usize> = None;
         let mut end_index: Option<usize> = None;
         let mut value: Option<T> = None;
+        // We track whether *any* keys were yielded so we can produce
+        // a more helpful error in the `#[serde(flatten)]` corner —
+        // serde's `FlatStructAccess` filters residue entries by the
+        // FIELDS list passed to `deserialize_struct`, and our magic
+        // SPANNED_FIELDS never match the real residue keys, so the
+        // visitor sees zero entries. The bare `missing_field` error
+        // is unhelpful in that case; we want to point the user at
+        // the workaround.
+        let mut saw_any_key = false;
 
         while let Some(key) = map.next_key::<&str>()? {
+            saw_any_key = true;
             match key {
                 SPANNED_FIELD_START_LINE => start_line = Some(map.next_value()?),
                 SPANNED_FIELD_START_COLUMN => start_column = Some(map.next_value()?),
@@ -203,7 +252,20 @@ impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for SpannedVisitor<T> {
             }
         }
 
-        let value = value.ok_or_else(|| serde::de::Error::missing_field(SPANNED_FIELD_VALUE))?;
+        let value = value.ok_or_else(|| {
+            if saw_any_key {
+                serde::de::Error::missing_field(SPANNED_FIELD_VALUE)
+            } else {
+                serde::de::Error::custom(
+                    "Spanned<T> can not be deserialized via `#[serde(flatten)]` — \
+                     serde's FlatStructAccess filters residue entries by the field \
+                     name list, and Spanned uses internal magic field names that \
+                     never match real residue keys. Use a bare `Value` for the \
+                     flatten target and look the span up separately via \
+                     `Document::span_at`/`comments_at`.",
+                )
+            }
+        })?;
 
         let start = Location::new(
             start_line.unwrap_or(0),
