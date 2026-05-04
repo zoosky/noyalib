@@ -583,4 +583,43 @@ mod tests {
         assert_eq!(e.to_string(), "a.b.c.d.e");
         assert_eq!(e.depth(), 5);
     }
+
+    #[test]
+    fn parse_query_path_handles_inline_star_after_key() {
+        // `field*` — the `*` glyph mid-path with a non-empty
+        // accumulated key. The parser must flush the key first,
+        // then push a Wildcard segment.
+        let segments = parse_query_path("field*");
+        assert_eq!(segments.len(), 2);
+        assert!(matches!(&segments[0], QuerySegment::Key(s) if s == "field"));
+        assert!(matches!(&segments[1], QuerySegment::Wildcard));
+    }
+
+    #[test]
+    fn parse_query_path_drops_unparseable_bracket_content() {
+        // `items[abc]` — bracket content is neither `*` nor a
+        // numeric index. The current contract silently drops the
+        // bracket; callers get back the leading key only.
+        let segments = parse_query_path("items[abc]");
+        assert_eq!(segments.len(), 1);
+        assert!(matches!(&segments[0], QuerySegment::Key(s) if s == "items"));
+    }
+
+    #[test]
+    fn parse_query_path_handles_standalone_star_segment() {
+        // `*` on its own — recursive descent's "match anything at
+        // this level" form.
+        let segments = parse_query_path("*");
+        assert_eq!(segments.len(), 1);
+        assert!(matches!(&segments[0], QuerySegment::Wildcard));
+    }
+
+    #[test]
+    fn parse_query_path_handles_recursive_descent() {
+        // `..name` — descend recursively, then look up `name`.
+        let segments = parse_query_path("..name");
+        assert_eq!(segments.len(), 2);
+        assert!(matches!(&segments[0], QuerySegment::RecursiveDescent));
+        assert!(matches!(&segments[1], QuerySegment::Key(s) if s == "name"));
+    }
 }
