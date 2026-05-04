@@ -590,10 +590,12 @@ impl<'a> StreamingDeserializer<'a> {
 
     fn resolve_scalar<'s>(&self, value: &'s str, style: ScalarStyle) -> Scalar<'s> {
         if style == ScalarStyle::Plain {
-            resolve_plain(
+            resolve_plain_ext(
                 value,
                 self.config.strict_booleans,
                 self.config.legacy_booleans,
+                self.config.no_schema,
+                self.config.legacy_octal_numbers,
             )
         } else {
             Scalar::Str(Cow::Borrowed(value))
@@ -1453,6 +1455,32 @@ fn is_fallback_error(e: &Error) -> bool {
 }
 
 pub(crate) fn resolve_plain(s: &str, strict: bool, legacy: bool) -> Scalar<'_> {
+    resolve_plain_ext(s, strict, legacy, false, false)
+}
+
+/// Extended variant of [`resolve_plain`] that exposes two extra
+/// toggles surfaced through `ParserConfig`:
+///
+/// - `no_schema` — when `true`, keep every plain scalar as a
+///   string. Useful for schema-strict pipelines where YAML's
+///   implicit resolution of `yes` → `true` or `null` → `Null`
+///   produces unwanted ambiguity.
+/// - `legacy_octal` — when `true`, accept YAML 1.1-style bare
+///   `0`-prefix octal literals (e.g. `0644`) in addition to the
+///   YAML 1.2 `0o644` form. Off by default to honour YAML 1.2's
+///   stricter integer schema.
+pub(crate) fn resolve_plain_ext(
+    s: &str,
+    strict: bool,
+    legacy: bool,
+    no_schema: bool,
+    legacy_octal: bool,
+) -> Scalar<'_> {
+    if no_schema {
+        // Schema-strict mode: every plain scalar surfaces as a
+        // string so callers see exactly what the file said.
+        return Scalar::Str(Cow::Borrowed(s));
+    }
     match s {
         "" | "~" | "null" | "Null" | "NULL" => Scalar::Null,
         "true" => Scalar::Bool(true),
@@ -1467,7 +1495,7 @@ pub(crate) fn resolve_plain(s: &str, strict: bool, legacy: bool) -> Scalar<'_> {
         "on" | "On" | "ON" if !strict && legacy => Scalar::Bool(true),
         "off" | "Off" | "OFF" if !strict && legacy => Scalar::Bool(false),
         _ => {
-            if let Some(n) = parse_integer(s) {
+            if let Some(n) = parse_integer(s, legacy_octal) {
                 Scalar::Int(n)
             } else if let Ok(f) = s.parse::<f64>() {
                 Scalar::Float(f)
@@ -1478,7 +1506,7 @@ pub(crate) fn resolve_plain(s: &str, strict: bool, legacy: bool) -> Scalar<'_> {
     }
 }
 
-fn parse_integer(s: &str) -> Option<i64> {
+fn parse_integer(s: &str, legacy_octal: bool) -> Option<i64> {
     let b = s.as_bytes();
     if b.is_empty() {
         return None;
@@ -1488,6 +1516,17 @@ fn parse_integer(s: &str) -> Option<i64> {
     }
     if b.len() > 2 && b[0] == b'0' && (bytes_to_char(b[1]) == 'o' || bytes_to_char(b[1]) == 'O') {
         return i64::from_str_radix(&s[2..], 8).ok();
+    }
+    // YAML 1.1-style bare `0`-prefix octal — only when explicitly
+    // opted in. The leading `0` must be followed by an octal digit
+    // (0-7) so we don't misclassify `08` (decimal eight) as an
+    // invalid octal.
+    if legacy_octal
+        && b.len() >= 2
+        && b[0] == b'0'
+        && b[1..].iter().all(|&c| c.is_ascii_digit() && c <= b'7')
+    {
+        return i64::from_str_radix(&s[1..], 8).ok();
     }
     let start = if b[0] == b'+' || b[0] == b'-' { 1 } else { 0 };
     if start >= b.len() {

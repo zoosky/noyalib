@@ -34,6 +34,9 @@ pub struct ParseConfig {
     pub duplicate_key_policy: DuplicateKeyPolicy,
     pub strict_booleans: bool,
     pub legacy_booleans: bool,
+    pub merge_key_policy: MergeKeyPolicy,
+    pub no_schema: bool,
+    pub legacy_octal_numbers: bool,
 }
 
 impl Default for ParseConfig {
@@ -47,6 +50,9 @@ impl Default for ParseConfig {
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
             legacy_booleans: false,
+            merge_key_policy: MergeKeyPolicy::default(),
+            no_schema: false,
+            legacy_octal_numbers: false,
         }
     }
 }
@@ -66,8 +72,25 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             },
             strict_booleans: c.strict_booleans,
             legacy_booleans: c.legacy_booleans,
+            merge_key_policy: match c.merge_key_policy {
+                crate::de::MergeKeyPolicy::Auto => MergeKeyPolicy::Auto,
+                crate::de::MergeKeyPolicy::AsOrdinary => MergeKeyPolicy::AsOrdinary,
+                crate::de::MergeKeyPolicy::Error => MergeKeyPolicy::Error,
+            },
+            no_schema: c.no_schema,
+            legacy_octal_numbers: c.legacy_octal_numbers,
         }
     }
+}
+
+/// Internal mirror of [`crate::MergeKeyPolicy`]; see that type for
+/// the full rationale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeKeyPolicy {
+    #[default]
+    Auto,
+    AsOrdinary,
+    Error,
 }
 
 /// Policy for handling duplicate keys in a YAML mapping.
@@ -236,10 +259,12 @@ impl<'a> Loader<'a> {
                     // plain scalars.
                     Value::String(value.into_owned())
                 } else {
-                    match crate::streaming::resolve_plain(
+                    match crate::streaming::resolve_plain_ext(
                         &value,
                         self.config.strict_booleans,
                         self.config.legacy_booleans,
+                        self.config.no_schema,
+                        self.config.legacy_octal_numbers,
                     ) {
                         crate::streaming::Scalar::Null => Value::Null,
                         crate::streaming::Scalar::Bool(b) => Value::Bool(b),
@@ -407,7 +432,16 @@ impl<'a> Loader<'a> {
                 anchor,
                 merge_values,
             } => {
-                if key == MERGE_KEY {
+                let is_merge = key == MERGE_KEY;
+                let merge_treat_as_ordinary =
+                    matches!(self.config.merge_key_policy, MergeKeyPolicy::AsOrdinary);
+                let merge_reject = matches!(self.config.merge_key_policy, MergeKeyPolicy::Error);
+                if is_merge && merge_reject {
+                    return Err(Error::Custom(
+                        "merge key `<<` rejected by MergeKeyPolicy::Error".to_owned(),
+                    ));
+                }
+                if is_merge && !merge_treat_as_ordinary {
                     merge_values.push(value);
                 } else {
                     if map.len() >= self.config.max_mapping_keys {
@@ -611,10 +645,12 @@ impl<'a> NoSpanLoader<'a> {
                 } else if style != crate::parser::ScalarStyle::Plain {
                     Value::String(value.into_owned())
                 } else {
-                    match crate::streaming::resolve_plain(
+                    match crate::streaming::resolve_plain_ext(
                         &value,
                         self.config.strict_booleans,
                         self.config.legacy_booleans,
+                        self.config.no_schema,
+                        self.config.legacy_octal_numbers,
                     ) {
                         crate::streaming::Scalar::Null => Value::Null,
                         crate::streaming::Scalar::Bool(b) => Value::Bool(b),
@@ -707,7 +743,16 @@ impl<'a> NoSpanLoader<'a> {
                 anchor,
                 merge_values,
             } => {
-                if key == MERGE_KEY {
+                let is_merge = key == MERGE_KEY;
+                let merge_treat_as_ordinary =
+                    matches!(self.config.merge_key_policy, MergeKeyPolicy::AsOrdinary);
+                let merge_reject = matches!(self.config.merge_key_policy, MergeKeyPolicy::Error);
+                if is_merge && merge_reject {
+                    return Err(Error::Custom(
+                        "merge key `<<` rejected by MergeKeyPolicy::Error".to_owned(),
+                    ));
+                }
+                if is_merge && !merge_treat_as_ordinary {
                     merge_values.push(value);
                 } else {
                     let _ = map.insert(key.clone(), value);

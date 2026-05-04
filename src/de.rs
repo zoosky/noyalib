@@ -55,6 +55,32 @@ pub struct ParserConfig {
     /// `None` (default) preserves the legacy behaviour of routing every
     /// custom-tagged value through the AST fallback.
     pub tag_registry: Option<Arc<crate::TagRegistry>>,
+    /// How the YAML merge key (`<<`) should be handled.
+    ///
+    /// See [`MergeKeyPolicy`] for the available policies. The
+    /// default is [`MergeKeyPolicy::Auto`] — the YAML 1.2 spec
+    /// behaviour where `<<:` triggers automatic mapping merge.
+    pub merge_key_policy: MergeKeyPolicy,
+    /// When `true`, plain scalars are *never* resolved to
+    /// `null` / `bool` / `int` / `float` — every plain scalar
+    /// becomes a string. Useful for schema-strict pipelines that
+    /// require the user to quote intent explicitly. Default
+    /// `false`.
+    pub no_schema: bool,
+    /// When `true`, accept YAML 1.1-style bare `0`-prefix octal
+    /// literals (e.g. `0644` parsed as 420) in addition to the
+    /// YAML 1.2 `0o644` form. Default `false` to honour the YAML
+    /// 1.2 schema.
+    pub legacy_octal_numbers: bool,
+    /// When `true`, deserializing `!!binary "ABCD"` into a
+    /// [`String`] target yields the literal base64 source string
+    /// (`"ABCD"`) rather than rejecting on tag mismatch. The
+    /// canonical bytes path (`Vec<u8>`,
+    /// `serde_bytes::ByteBuf`) still decodes the base64 payload
+    /// either way. Useful for migrations from Python pyyaml-style
+    /// applications that treat the tag as advisory. Default
+    /// `false`.
+    pub ignore_binary_tag_for_string: bool,
 }
 
 impl Default for ParserConfig {
@@ -69,6 +95,10 @@ impl Default for ParserConfig {
             strict_booleans: false,
             legacy_booleans: false,
             tag_registry: None,
+            merge_key_policy: MergeKeyPolicy::default(),
+            no_schema: false,
+            legacy_octal_numbers: false,
+            ignore_binary_tag_for_string: false,
         }
     }
 }
@@ -110,6 +140,10 @@ impl ParserConfig {
             legacy_booleans: false,
             duplicate_key_policy: DuplicateKeyPolicy::Error,
             tag_registry: None,
+            merge_key_policy: MergeKeyPolicy::default(),
+            no_schema: false,
+            legacy_octal_numbers: false,
+            ignore_binary_tag_for_string: false,
         }
     }
 
@@ -254,6 +288,107 @@ impl ParserConfig {
         self.tag_registry = Some(registry);
         self
     }
+
+    /// Set the policy for handling the YAML merge key (`<<`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{MergeKeyPolicy, ParserConfig};
+    /// let cfg = ParserConfig::new().merge_key_policy(MergeKeyPolicy::AsOrdinary);
+    /// assert_eq!(cfg.merge_key_policy, MergeKeyPolicy::AsOrdinary);
+    /// ```
+    #[must_use]
+    pub fn merge_key_policy(mut self, policy: MergeKeyPolicy) -> Self {
+        self.merge_key_policy = policy;
+        self
+    }
+
+    /// Toggle schema-free plain-scalar resolution. When `true`,
+    /// every plain scalar becomes a string regardless of whether
+    /// it would normally resolve to `null`, `bool`, integer, or
+    /// float.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().no_schema(true);
+    /// assert!(cfg.no_schema);
+    /// ```
+    #[must_use]
+    pub fn no_schema(mut self, no_schema: bool) -> Self {
+        self.no_schema = no_schema;
+        self
+    }
+
+    /// Toggle YAML 1.1-style bare `0`-prefix octal parsing
+    /// (e.g. `0644` → 420). Off by default; YAML 1.2 requires the
+    /// `0o` prefix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().legacy_octal_numbers(true);
+    /// assert!(cfg.legacy_octal_numbers);
+    /// ```
+    #[must_use]
+    pub fn legacy_octal_numbers(mut self, on: bool) -> Self {
+        self.legacy_octal_numbers = on;
+        self
+    }
+
+    /// Toggle the migration-helper behaviour where
+    /// `!!binary "ABCD"` deserializes into a [`String`] target as
+    /// the literal base64 source string. The canonical bytes
+    /// path (`Vec<u8>`, `serde_bytes::ByteBuf`) is unaffected —
+    /// it always decodes the base64 payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().ignore_binary_tag_for_string(true);
+    /// assert!(cfg.ignore_binary_tag_for_string);
+    /// ```
+    #[must_use]
+    pub fn ignore_binary_tag_for_string(mut self, on: bool) -> Self {
+        self.ignore_binary_tag_for_string = on;
+        self
+    }
+}
+
+/// Policy for handling the YAML merge key (`<<`) during parsing.
+///
+/// YAML 1.2 §10.2 defines `<<` as a "merge key" that, when used as
+/// a mapping key, splices the value's mapping (or sequence of
+/// mappings) into the enclosing mapping. The variants below let
+/// callers opt out of that behaviour.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::MergeKeyPolicy;
+/// assert_eq!(MergeKeyPolicy::default(), MergeKeyPolicy::Auto);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeKeyPolicy {
+    /// Apply the YAML 1.2 merge-key semantics — `<<:` keys trigger
+    /// automatic merge of the value into the enclosing mapping.
+    /// Default.
+    #[default]
+    Auto,
+    /// Treat `<<` as an ordinary string key. The mapping retains a
+    /// literal `<<` entry whose value is whatever the YAML
+    /// document supplied. Useful when round-tripping configuration
+    /// files that happen to contain a `<<` key for non-merge
+    /// reasons.
+    AsOrdinary,
+    /// Reject any document that contains a `<<` key with
+    /// [`crate::Error::Custom`]. Useful for schema-strict pipelines
+    /// where merge keys are forbidden.
+    Error,
 }
 
 /// Policy for handling duplicate keys in a YAML mapping.
@@ -305,8 +440,18 @@ where
     T: for<'de> Deserialize<'de>,
 {
     // Try streaming path first (faster, no intermediate Value AST).
-    if let Some(res) = crate::streaming::from_str_streaming(s, config) {
-        return res;
+    // The streaming path bakes in YAML 1.2 semantics:
+    // - `<<: *alias` merges natively;
+    // - `!!binary` is propagated as a typed tag.
+    // When the caller asked for a non-default behaviour on either
+    // axis, route through the AST loader so the relevant toggle
+    // takes effect.
+    let stream_eligible =
+        config.merge_key_policy == MergeKeyPolicy::Auto && !config.ignore_binary_tag_for_string;
+    if stream_eligible {
+        if let Some(res) = crate::streaming::from_str_streaming(s, config) {
+            return res;
+        }
     }
 
     let parse_config = parser::ParseConfig::from(config);
@@ -320,17 +465,22 @@ where
             source: s.into(),
         };
         let _guard = span_context::set_span_context(ctx);
-        let de = Deserializer {
-            value: &value,
-            span_ctx: Some(_guard.as_ref()),
-        };
+        let de = Deserializer::with_options(
+            &value,
+            Some(_guard.as_ref()),
+            config.ignore_binary_tag_for_string,
+        );
         T::deserialize(de)
     }
 
     #[cfg(not(feature = "std"))]
     {
         let value = parser::parse_one_value(s, &parse_config)?;
-        T::deserialize(Deserializer::new(&value))
+        T::deserialize(Deserializer::with_options(
+            &value,
+            None,
+            config.ignore_binary_tag_for_string,
+        ))
     }
 }
 
@@ -443,6 +593,12 @@ where
 pub struct Deserializer<'de> {
     pub(crate) value: &'de Value,
     pub(crate) span_ctx: Option<&'de span_context::SpanContext>,
+    /// Per-call flag mirroring
+    /// [`ParserConfig::ignore_binary_tag_for_string`]. When `true`,
+    /// `!!binary "ABCD"` deserializes into `String` as the literal
+    /// `"ABCD"` (no base64 decode). Default `false` preserves YAML
+    /// 1.2 semantics.
+    pub(crate) ignore_binary_tag_for_string: bool,
 }
 
 impl<'de> Deserializer<'de> {
@@ -460,6 +616,7 @@ impl<'de> Deserializer<'de> {
         Deserializer {
             value,
             span_ctx: None,
+            ignore_binary_tag_for_string: false,
         }
     }
 
@@ -484,6 +641,35 @@ impl<'de> Deserializer<'de> {
         Deserializer {
             value,
             span_ctx: Some(span_ctx),
+            ignore_binary_tag_for_string: false,
+        }
+    }
+
+    /// Pass-through constructor for the
+    /// [`crate::ParserConfig::ignore_binary_tag_for_string`] flag.
+    /// Used internally by [`from_str_with_config`] when the caller
+    /// has opted in to the migration helper.
+    pub(crate) fn with_options(
+        value: &'de Value,
+        span_ctx: Option<&'de span_context::SpanContext>,
+        ignore_binary_tag_for_string: bool,
+    ) -> Self {
+        Deserializer {
+            value,
+            span_ctx,
+            ignore_binary_tag_for_string,
+        }
+    }
+
+    /// Construct a child deserializer for `value`, propagating the
+    /// span context and every per-call config toggle from `self`.
+    /// Used by every descent site (struct field, sequence element,
+    /// tagged inner value) so the toggles survive the walk.
+    pub(crate) fn descend(&self, value: &'de Value) -> Self {
+        Deserializer {
+            value,
+            span_ctx: self.span_ctx,
+            ignore_binary_tag_for_string: self.ignore_binary_tag_for_string,
         }
     }
 
@@ -520,11 +706,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Sequence(_) => self.deserialize_seq(visitor),
             Value::Mapping(_) => self.deserialize_map(visitor),
             Value::Tagged(tagged) => {
-                let de = if let Some(ctx) = self.span_ctx {
-                    Deserializer::with_span_context(tagged.value(), ctx)
-                } else {
-                    Deserializer::new(tagged.value())
-                };
+                let de = self.descend(tagged.value());
                 de.deserialize_any(visitor)
             }
         }
@@ -668,6 +850,24 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::String(s) => self.wrap_err(visitor.visit_str(s)),
+            // Migration helper: when the source declared
+            // `!!binary "ABCD"` and the caller opted in to
+            // `ignore_binary_tag_for_string`, surface the literal
+            // source string rather than rejecting on tag mismatch.
+            // The base64 encoding stays as the user-facing value;
+            // the application layer can decode (or not) as it
+            // sees fit.
+            Value::Tagged(boxed)
+                if self.ignore_binary_tag_for_string && is_binary_tag(boxed.tag().as_str()) =>
+            {
+                match boxed.value() {
+                    Value::String(s) => self.wrap_err(visitor.visit_str(s)),
+                    other => self.wrap_err(Err(Error::TypeMismatch {
+                        expected: "string-shaped !!binary content",
+                        found: type_name(other),
+                    })),
+                }
+            }
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "string",
                 found: type_name(self.value),
@@ -762,7 +962,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::Sequence(seq) => {
-                self.wrap_err(visitor.visit_seq(ValueSeqAccess::new(seq, self.span_ctx)))
+                self.wrap_err(visitor.visit_seq(ValueSeqAccess::from_de(&self, seq)))
             }
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "sequence",
@@ -796,7 +996,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::Mapping(map) => {
-                self.wrap_err(visitor.visit_map(ValueMapAccess::new(map, self.span_ctx)))
+                self.wrap_err(visitor.visit_map(ValueMapAccess::from_de(&self, map)))
             }
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "mapping",
@@ -871,13 +1071,15 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
 pub(crate) struct ValueSeqAccess<'de> {
     iter: core::slice::Iter<'de, Value>,
     span_ctx: Option<&'de span_context::SpanContext>,
+    ignore_binary_tag_for_string: bool,
 }
 
 impl<'de> ValueSeqAccess<'de> {
-    pub(crate) fn new(seq: &'de [Value], span_ctx: Option<&'de span_context::SpanContext>) -> Self {
+    pub(crate) fn from_de(de: &Deserializer<'de>, seq: &'de [Value]) -> Self {
         ValueSeqAccess {
             iter: seq.iter(),
-            span_ctx,
+            span_ctx: de.span_ctx,
+            ignore_binary_tag_for_string: de.ignore_binary_tag_for_string,
         }
     }
 }
@@ -891,11 +1093,11 @@ impl<'de> SeqAccess<'de> for ValueSeqAccess<'de> {
     {
         match self.iter.next() {
             Some(value) => {
-                let de = if let Some(ctx) = self.span_ctx {
-                    Deserializer::with_span_context(value, ctx)
-                } else {
-                    Deserializer::new(value)
-                };
+                let de = Deserializer::with_options(
+                    value,
+                    self.span_ctx,
+                    self.ignore_binary_tag_for_string,
+                );
                 seed.deserialize(de).map(Some)
             }
             None => Ok(None),
@@ -907,17 +1109,16 @@ pub(crate) struct ValueMapAccess<'de> {
     iter: indexmap::map::Iter<'de, String, Value>,
     value: Option<&'de Value>,
     span_ctx: Option<&'de span_context::SpanContext>,
+    ignore_binary_tag_for_string: bool,
 }
 
 impl<'de> ValueMapAccess<'de> {
-    pub(crate) fn new(
-        map: &'de crate::value::Mapping,
-        span_ctx: Option<&'de span_context::SpanContext>,
-    ) -> Self {
+    pub(crate) fn from_de(de: &Deserializer<'de>, map: &'de crate::value::Mapping) -> Self {
         ValueMapAccess {
             iter: map.iter(),
             value: None,
-            span_ctx,
+            span_ctx: de.span_ctx,
+            ignore_binary_tag_for_string: de.ignore_binary_tag_for_string,
         }
     }
 }
@@ -932,11 +1133,11 @@ impl<'de> MapAccess<'de> for ValueMapAccess<'de> {
         match self.iter.next() {
             Some((key, value)) => {
                 self.value = Some(value);
-                let de = if let Some(ctx) = self.span_ctx {
-                    Deserializer::with_span_context(value, ctx)
-                } else {
-                    Deserializer::new(value)
-                };
+                let de = Deserializer::with_options(
+                    value,
+                    self.span_ctx,
+                    self.ignore_binary_tag_for_string,
+                );
                 let key_de: de::value::StrDeserializer<'de, Error> =
                     key.as_str().into_deserializer();
                 de.wrap_err(seed.deserialize(key_de).map(Some))
@@ -951,11 +1152,11 @@ impl<'de> MapAccess<'de> for ValueMapAccess<'de> {
     {
         match self.value.take() {
             Some(value) => {
-                let de = if let Some(ctx) = self.span_ctx {
-                    Deserializer::with_span_context(value, ctx)
-                } else {
-                    Deserializer::new(value)
-                };
+                let de = Deserializer::with_options(
+                    value,
+                    self.span_ctx,
+                    self.ignore_binary_tag_for_string,
+                );
                 let res = seed.deserialize(de);
                 de.wrap_err(res)
             }

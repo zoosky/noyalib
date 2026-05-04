@@ -225,7 +225,7 @@ pub use comments::{load_comments, Comment, CommentKind};
 pub use de::{from_reader, from_reader_with_config};
 pub use de::{
     from_slice, from_slice_with_config, from_str, from_str_with_config, from_value, Deserializer,
-    DuplicateKeyPolicy, ParserConfig,
+    DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig,
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
 pub use error::{Error, Location, Result};
