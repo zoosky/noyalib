@@ -183,6 +183,8 @@ mod flattened;
 pub mod fmt;
 mod parser;
 mod path;
+/// Pluggable parser policies for "Safe YAML" enforcement.
+pub mod policy;
 /// Robotics and scientific numeric types (requires `robotics` feature).
 #[cfg(feature = "robotics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "robotics")))]

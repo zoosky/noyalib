@@ -92,6 +92,18 @@ pub struct ParserConfig {
     /// migrations from YAML 1.1 / Ruby / pyyaml configs that use
     /// the legacy time-of-day notation.
     pub legacy_sexagesimal: bool,
+    /// Pluggable "Safe YAML" policies, run during parsing.
+    ///
+    /// Each [`Policy`](crate::policy::Policy) inspects parser
+    /// events and the post-parse [`Value`] tree; any policy
+    /// returning `Err(...)` aborts the parse with that diagnostic.
+    /// Empty by default.
+    ///
+    /// Use [`ParserConfig::with_policy`] to register a policy.
+    /// When at least one policy is present the streaming fast-path
+    /// is bypassed automatically so the policy contract holds for
+    /// every code path.
+    pub policies: Vec<Arc<dyn crate::policy::Policy>>,
 }
 
 impl Default for ParserConfig {
@@ -111,6 +123,7 @@ impl Default for ParserConfig {
             legacy_octal_numbers: false,
             ignore_binary_tag_for_string: false,
             legacy_sexagesimal: false,
+            policies: Vec::new(),
         }
     }
 }
@@ -157,7 +170,36 @@ impl ParserConfig {
             legacy_octal_numbers: false,
             ignore_binary_tag_for_string: false,
             legacy_sexagesimal: false,
+            policies: Vec::new(),
         }
+    }
+
+    /// Register a [`Policy`](crate::policy::Policy) to enforce
+    /// during parsing.
+    ///
+    /// Multiple policies may be registered; they all run in
+    /// registration order, and the first error short-circuits the
+    /// parse. When any policy is present the streaming fast-path
+    /// is bypassed so the policy contract is enforced uniformly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str_with_config, ParserConfig, Value};
+    /// use noyalib::policy::DenyAnchors;
+    ///
+    /// let cfg = ParserConfig::new().with_policy(DenyAnchors);
+    /// let res: Result<Value, _> =
+    ///     from_str_with_config("a: &x 1\nb: *x\n", &cfg);
+    /// assert!(res.is_err());
+    /// ```
+    #[must_use]
+    pub fn with_policy<P>(mut self, policy: P) -> Self
+    where
+        P: crate::policy::Policy + 'static,
+    {
+        self.policies.push(Arc::new(policy));
+        self
     }
 
     /// Set the maximum recursion depth.
@@ -477,8 +519,9 @@ where
     // When the caller asked for a non-default behaviour on either
     // axis, route through the AST loader so the relevant toggle
     // takes effect.
-    let stream_eligible =
-        config.merge_key_policy == MergeKeyPolicy::Auto && !config.ignore_binary_tag_for_string;
+    let stream_eligible = config.merge_key_policy == MergeKeyPolicy::Auto
+        && !config.ignore_binary_tag_for_string
+        && config.policies.is_empty();
     if stream_eligible {
         if let Some(res) = crate::streaming::from_str_streaming(s, config) {
             return res;
@@ -490,6 +533,9 @@ where
     #[cfg(feature = "std")]
     {
         let (value, span_tree) = parser::parse_one(s, &parse_config)?;
+        for p in &config.policies {
+            p.check_value(&value)?;
+        }
         let spans = span_context::build_span_map(&value, &span_tree);
         let ctx = span_context::SpanContext {
             spans,

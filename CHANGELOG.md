@@ -17,6 +17,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   int / float / bool / null produce a `TypeMismatch` rather than
   silently coercing their UTF-8 representation to bytes.
 
+### Added — Pluggable parser policies
+
+- **`noyalib::policy` module** — `Policy` trait with
+  `check_event(&PolicyEvent)` and `check_value(&Value)` hooks for
+  enforcing organisational "Safe YAML" constraints during parsing.
+- **Built-in policies**: `DenyAnchors` (rejects `&name` definitions
+  and `*name` aliases — covers the billion-laughs vector and
+  audit-readability concerns), `DenyTags` (rejects custom tags
+  while permitting YAML 1.2 core tags), `MaxScalarLength(n)` (caps
+  individual scalar size in bytes).
+- **`ParserConfig::with_policy(p)`** — register one or more
+  policies; they run in registration order during the AST loader's
+  event walk. The streaming fast-path is bypassed automatically
+  when any policy is registered, ensuring uniform enforcement.
+- 11 integration tests in `tests/policy.rs` cover each built-in
+  policy, custom-policy composition, short-circuit-on-first-error
+  semantics, and streaming-path bypass.
+
 ## [0.0.1] - 2026-05-04
 
 The launch release. Sections below catalogue every capability the

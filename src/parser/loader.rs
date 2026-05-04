@@ -24,7 +24,7 @@ const NODE_OVERHEAD: usize = 32;
 const MERGE_KEY: &str = "<<";
 
 /// Configuration for the internal parser, mirroring `ParserConfig`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ParseConfig {
     pub max_depth: usize,
     pub max_document_length: usize,
@@ -38,6 +38,7 @@ pub struct ParseConfig {
     pub no_schema: bool,
     pub legacy_octal_numbers: bool,
     pub legacy_sexagesimal: bool,
+    pub policies: Vec<Arc<dyn crate::policy::Policy>>,
 }
 
 impl Default for ParseConfig {
@@ -55,6 +56,7 @@ impl Default for ParseConfig {
             no_schema: false,
             legacy_octal_numbers: false,
             legacy_sexagesimal: false,
+            policies: Vec::new(),
         }
     }
 }
@@ -82,6 +84,7 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             no_schema: c.no_schema,
             legacy_octal_numbers: c.legacy_octal_numbers,
             legacy_sexagesimal: c.legacy_sexagesimal,
+            policies: c.policies.clone(),
         }
     }
 }
@@ -206,6 +209,9 @@ impl<'a> Loader<'a> {
     }
 
     fn process_event(&mut self, event: Event<'_>, input: &str) -> Result<()> {
+        if !self.config.policies.is_empty() {
+            run_event_policies(&event, &self.config.policies)?;
+        }
         match event {
             Event::StreamStart | Event::StreamEnd => {}
             Event::DocumentStart => {
@@ -610,6 +616,9 @@ impl<'a> NoSpanLoader<'a> {
     }
 
     fn process_event(&mut self, event: Event<'_>, input: &str) -> Result<()> {
+        if !self.config.policies.is_empty() {
+            run_event_policies(&event, &self.config.policies)?;
+        }
         match event {
             Event::StreamStart | Event::StreamEnd => {}
             Event::DocumentStart => {
@@ -883,4 +892,69 @@ fn resolve_tagged_scalar(handle: &str, suffix: &str, value: &str) -> Result<Valu
             Value::String(value.to_owned()),
         ))))
     }
+}
+
+/// Run every registered policy against this parser event. The
+/// loader calls this on each event before further processing; the
+/// first policy to reject aborts the parse.
+fn run_event_policies(
+    event: &Event<'_>,
+    policies: &[Arc<dyn crate::policy::Policy>],
+) -> Result<()> {
+    use crate::policy::{PolicyEvent, PolicyEventKind};
+    let (kind, anchor, tag, scalar) = match event {
+        Event::Scalar {
+            value, anchor, tag, ..
+        } => {
+            let tag_str = tag.as_ref().map(|(h, s)| format!("{h}{s}"));
+            (
+                Some(PolicyEventKind::Scalar),
+                anchor.as_deref(),
+                tag_str,
+                Some(value.as_ref()),
+            )
+        }
+        Event::SequenceStart { anchor, tag, .. } => {
+            let tag_str = tag.as_ref().map(|(h, s)| format!("{h}{s}"));
+            (
+                Some(PolicyEventKind::SequenceStart),
+                anchor.as_deref(),
+                tag_str,
+                None,
+            )
+        }
+        Event::MappingStart { anchor, tag, .. } => {
+            let tag_str = tag.as_ref().map(|(h, s)| format!("{h}{s}"));
+            (
+                Some(PolicyEventKind::MappingStart),
+                anchor.as_deref(),
+                tag_str,
+                None,
+            )
+        }
+        Event::Alias { .. } => (
+            // `Event::Alias.anchor` carries the *target* anchor name,
+            // not a fresh definition — surface this as a pure Alias
+            // kind without an `anchor` field so policies can
+            // distinguish "this node is anchored" from "this node
+            // dereferences an existing anchor".
+            Some(PolicyEventKind::Alias),
+            None,
+            None,
+            None,
+        ),
+        _ => (None, None, None, None),
+    };
+    if let Some(kind) = kind {
+        let projected = PolicyEvent {
+            kind,
+            anchor,
+            tag: tag.as_deref(),
+            scalar,
+        };
+        for p in policies {
+            p.check_event(projected)?;
+        }
+    }
+    Ok(())
 }
