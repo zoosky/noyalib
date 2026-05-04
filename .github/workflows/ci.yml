@@ -117,6 +117,13 @@ jobs:
     # is at `0.0.x` so technically every minor change can break,
     # but running this gate now establishes the muscle for the
     # 1.x stability promise.
+    #
+    # Pre-publication guard: cargo-semver-checks needs a baseline
+    # to compare against. Until `noyalib` ships its first crates.io
+    # release the gate has nothing to compare and would always fail
+    # with "noyalib not found in registry". The job is wired in
+    # ready for v0.0.1's first publish; the published-package
+    # probe below short-circuits to success in the meantime.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -127,7 +134,17 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - id: published
+        name: Probe crates.io for an existing release
+        run: |
+          if curl -sfL "https://crates.io/api/v1/crates/noyalib" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "noyalib not yet on crates.io — skipping semver-checks until first publish."
+          fi
       - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        if: steps.published.outputs.exists == 'true'
         with:
           package: noyalib
 
