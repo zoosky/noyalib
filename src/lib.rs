@@ -196,15 +196,14 @@ mod schema_codegen;
 #[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
 mod schema_validate;
 mod ser;
-/// SIMD-friendly multi-byte search primitives — Phase 4.
+/// SIMD-friendly multi-byte search primitives.
 ///
 /// Pure-safe Rust (no `unsafe`, no platform intrinsics, no
 /// hardware-specific deps). The vectorisation comes from
-/// `memchr`'s already-validated SSE2 / NEON dispatch for arity
-/// 1/2/3 and SWAR (SIMD-Within-A-Register) for arity 4+. The
-/// parser hot path uses these primitives unconditionally — the
-/// `simd` Cargo feature is retained as a no-op for forward
-/// compatibility with future opt-in vectorisation work.
+/// `memchr`'s SSE2 / NEON dispatch for arity 1/2/3 and SWAR
+/// (SIMD-Within-A-Register) for arity 4+. The parser hot path
+/// uses these primitives unconditionally; the `simd` Cargo
+/// feature is retained as a no-op for forward compatibility.
 pub mod simd;
 pub(crate) mod span_context;
 pub(crate) mod spanned;

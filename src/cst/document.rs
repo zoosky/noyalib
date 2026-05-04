@@ -85,7 +85,7 @@ impl Clone for Document {
 /// [`Document::last_repair_scope`] for tests and tooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairScope {
-    /// Reserved — Phase A does not yet repair at scalar granularity.
+    /// Reserved — scalar-granularity repair is not yet implemented.
     Scalar,
     /// The smallest ancestor that contained the edit was a
     /// `MappingEntry` or `SequenceItem`.
@@ -1010,8 +1010,8 @@ fn collect_ancestors(
 }
 
 /// `true` when source bytes in `[start, end)` contain an anchor
-/// (`&`), alias (`*`), or tag (`!`) lexeme. Phase A escalates any
-/// edit overlapping these — we don't try to reason about
+/// (`&`), alias (`*`), or tag (`!`) lexeme. Edits overlapping
+/// these are escalated to a full re-parse — we do not reason about
 /// cross-document name resolution after a localised splice.
 fn region_has_anchor_alias_or_tag(root: &GreenNode, start: usize, end: usize) -> bool {
     let mut found = false;
@@ -1048,8 +1048,8 @@ fn walk_tokens(
 }
 
 /// Cheap textual screen for anchor / alias / tag introduction in
-/// the replacement bytes. Phase A is conservative — any whiff of
-/// these in `replacement` forces escalation.
+/// the replacement bytes. Conservative by design — any whiff of
+/// these in `replacement` forces escalation to a full re-parse.
 fn replacement_introduces_anchor_alias_or_tag(replacement: &str) -> bool {
     replacement.bytes().any(|b| matches!(b, b'&' | b'*' | b'!'))
 }
@@ -1690,7 +1690,7 @@ fn locate_preceding_dash(source: &str, value_start: usize) -> Option<usize> {
     None
 }
 
-/// Reject ranges that span multiple lines — Phase 2C `remove` only
+/// Reject ranges that span multiple lines — `remove` currently only
 /// handles entries whose value ends on the same line as the key /
 /// dash.
 fn require_single_line(source: &str, start: usize, end: usize) -> Result<()> {

@@ -9,12 +9,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.0.1] - 2026-05-04
 
-The launch release. Every section below catalogues a deliberate
-phase of work that was bundled into v0.0.1 — see
+The launch release. Sections below catalogue every capability the
+library ships at launch, grouped by theme. See
 [`docs/design/`](docs/design/) for the architecture rationale and
-the per-phase commit messages on `main` for full context.
+the commit history on `main` for per-change context.
 
-### Added — Spec & compliance (Phase 0)
+### Added — Spec compliance
 
 - **Native YAML 1.2 scanner and parser**, written entirely in safe
   Rust — `#![forbid(unsafe_code)]` at the crate root.
@@ -37,7 +37,7 @@ the per-phase commit messages on `main` for full context.
   depth limits, document-length cap, alias-expansion cap,
   duplicate-key policy, recursion-depth probe.
 
-### Added — Frictionless migration (Phase 1)
+### Added — Frictionless migration from `serde_yaml`
 
 - **Comment-aware reads** (`load_comments`, `Comment`,
   `CommentKind`) — extract leading / trailing / standalone
@@ -51,7 +51,7 @@ the per-phase commit messages on `main` for full context.
 - **WASM playground** (`noyalib-wasm`): 201 KB
   `wasm32-unknown-unknown` build with browser demo.
 
-#### Added — `serde_yaml` compat shim (Phase 1.1)
+#### Added — `serde_yaml` compat shim
 
 - **`compat-serde-yaml` feature**: drop-in surface for the
   unmaintained `serde_yaml` 0.9 crate.
@@ -66,7 +66,7 @@ the per-phase commit messages on `main` for full context.
   for callers that want to surface invalid-source errors as
   `Result` rather than via lazy panic.
 
-#### Added — `!!binary` first-class support (Phase 1.2)
+#### Added — `!!binary` first-class support
 
 - **`!!binary` tag** with RFC 4648 base64 codec
   (`src/base64.rs`, hand-rolled, whitespace-tolerant decoder).
@@ -76,7 +76,7 @@ the per-phase commit messages on `main` for full context.
 - `Value::Tagged` carries `Tag::new("!!binary")` for callers
   that walk the typed tree.
 
-#### Added — `Spanned<Value>` flatten guard (Phase 1.3)
+#### Added — `Spanned<Value>` flatten guard
 
 - Bare `Value` as the target of `#[serde(flatten)]` collects
   unmatched keys into a `Value::Mapping` exactly as
@@ -87,7 +87,7 @@ the per-phase commit messages on `main` for full context.
   the bare `missing_field` gibberish that resulted from serde's
   `FlatStructAccess` filtering.
 
-### Added — Lossless editing API (Phase 2)
+### Added — Lossless editing API
 
 - **Side-table CST** (`noyalib::cst`) for byte-faithful
   round-tripping: `parse_document(s)?.to_string() == s` for any
@@ -100,21 +100,21 @@ the per-phase commit messages on `main` for full context.
   `Document::replace_span` for mutation — every edit is
   byte-faithful outside the spliced region; comments, blank
   lines, and sibling formatting survive verbatim.
-- **Phase A.1 incremental repair**: localised `replace_span`
-  re-parses the smallest enclosing block; Document-scope
-  re-parse only on shape inversion.
-- **Phase A.2 lazy `Value` / `SpanTree`**: typed cache
-  invalidated rather than re-parsed eagerly — successive edits
-  in a batch don't pay the parser cost; the deferred parse
-  runs once on the first read (~6× single edit).
-- **Phase A.3 green-tree path resolution**: walks the structural
-  CST directly, skipping the typed cache for the common
+- **Incremental repair**: localised `replace_span` re-parses the
+  smallest enclosing block; Document-scope re-parse only on
+  shape inversion.
+- **Lazy `Value` / `SpanTree`**: typed cache invalidated rather
+  than re-parsed eagerly — successive edits in a batch don't
+  pay the parser cost; the deferred parse runs once on the
+  first read (~6× single edit).
+- **Green-tree path resolution**: walks the structural CST
+  directly, skipping the typed cache for the common
   set-then-set pattern (~7.6× batch).
-- **Phase B relative-len leaves**: O(log N) splice — the green
-  node only stores child lengths, not absolute byte ranges
-  (~37× over baseline).
+- **Relative-len leaves**: O(log N) splice — the green node only
+  stores child lengths, not absolute byte ranges (~37× over
+  baseline).
 
-#### Added — `Entry` API (Phase 2.1)
+#### Added — `Entry` API
 
 - **`Document::entry(path) -> Entry<'_>`** path-shaped mutable
   handle, complementing the functional `set` / `remove` /
@@ -127,7 +127,7 @@ the per-phase commit messages on `main` for full context.
 - New primitive `Document::insert_entry` — mapping-side
   analogue of `push_back` for sequences.
 
-#### Added — automatic indent detection (Phase 2.2)
+#### Added — automatic indent detection
 
 - **`Document::indent_unit()`**: detects 2- / 3- / 4-space block
   indents from non-empty/non-comment line deltas; defaults to 2
@@ -140,7 +140,7 @@ the per-phase commit messages on `main` for full context.
   insert under a parent whose last value is a nested block
   lands at the correct column.
 
-#### Added — anchor management ("Smart Aliases") (Phase 2.3)
+#### Added — anchor management
 
 - **`Document::anchors()`**, **`aliases()`**, **`aliases_of(name)`**:
   every `&name` / `*name` lexeme in source order with byte spans.
@@ -156,9 +156,9 @@ the per-phase commit messages on `main` for full context.
   error pointing at `Document::anchors()` + `replace_span()`
   for manual splicing — out of scope for v0.0.1.
 
-### Added — Contracts & governance (Phase 3)
+### Added — Schema contracts
 
-#### Added — JSON Schema codegen (Phase 3.1)
+#### Added — JSON Schema codegen
 
 - **`schema` Cargo feature** (off by default).
 - **`pub use schemars::JsonSchema`** — derive imported via
@@ -171,7 +171,7 @@ the per-phase commit messages on `main` for full context.
   from `required`), `#[serde(rename)]` (renames property), and
   emits `minimum`/`maximum` for fixed-width integers.
 
-#### Added — Schema validation + enhanced CLI (Phase 3.2)
+#### Added — Schema validation and enhanced CLI
 
 - **`validate-schema` Cargo feature** (implies `schema`).
 - **`validate_against_schema(value, schema) -> Result<()>`**:
@@ -190,7 +190,7 @@ the per-phase commit messages on `main` for full context.
   rejects the input — otherwise a buggy file would be silently
   rewritten with the violation in place.
 
-### Added — SIMD primitives + hot-path integration (Phase 4)
+### Added — SIMD primitives and hot-path integration
 
 - **`noyalib::simd` module**: pure-safe Rust multi-byte search
   primitives.
@@ -230,10 +230,10 @@ single-key edits):
 
 | Optimisation | Speedup |
 |---|---|
-| Phase A.1 — incremental repair | baseline |
-| Phase A.2 — lazy `Value`/`SpanTree` | ~6× single edit |
-| Phase A.3 — green-tree path resolution | ~7.6× batch |
-| Phase B — relative-len leaves | ~37× over baseline |
+| Incremental repair | baseline |
+| Lazy `Value`/`SpanTree` | ~6× single edit |
+| Green-tree path resolution | ~7.6× batch |
+| Relative-len leaves | ~37× over baseline |
 
 ### Added — API surface (foundation)
 
@@ -285,8 +285,9 @@ single-key edits):
 ### Added — Tooling & CLIs
 
 - **`noyavalidate`**: validate YAML syntax (and optional JSON
-  Schema) with rich `miette` diagnostics. `--schema` and
-  `--fix` flags shipped in Phase 3.2.
+  Schema) with rich `miette` diagnostics; supports `--schema
+  PATH` (enforces a JSON Schema 2020-12 contract) and `--fix`
+  (in-place lossless reformat through the CST).
 - **`noyafmt`**: lossless CST-driven formatter.
 - **`noyalib-mcp`**: Model Context Protocol server (separate
   workspace member).

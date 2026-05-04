@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! JSON Schema validation — Phase 3.2 "Contract enforcement".
+//! JSON Schema 2020-12 validation against a parsed [`crate::Value`].
 //!
-//! Validate a parsed [`crate::Value`] against a JSON Schema 2020-12
-//! document (also expressible as YAML, since JSON ⊂ YAML 1.2).
-//! Pairs naturally with the Phase 3.1 codegen path: derive
-//! [`crate::JsonSchema`] for a Rust type, emit the schema with
-//! [`crate::schema_for_yaml`], then enforce it on inputs that
-//! arrive as YAML at runtime.
+//! The schema document may itself be expressed as YAML (since JSON
+//! is a subset of YAML 1.2). Pairs naturally with the codegen
+//! surface: derive [`crate::JsonSchema`] on a Rust type, emit the
+//! schema with [`crate::schema_for_yaml`], then enforce it on
+//! inputs that arrive as YAML at runtime.
 //!
 //! Gated behind the `validate-schema` Cargo feature (which implies
 //! `schema`).

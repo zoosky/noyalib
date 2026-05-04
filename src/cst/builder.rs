@@ -3,7 +3,7 @@
 
 //! Build the parts of a [`crate::cst::Document`] from input bytes.
 //!
-//! Phase B: green-tree leaves carry their byte length only — no
+//! Green-tree leaves carry their byte length only, with no
 //! absolute range. The owning [`crate::cst::Document`] holds the
 //! source `Arc<str>`. Splicing a sub-tree only rewrites the path
 //! from the root down to the splice target's parent — pre- and
@@ -55,8 +55,8 @@ pub(crate) struct SubtreeContext {
     /// content must indent strictly past this column.
     pub indent: usize,
     /// `0` for block context, non-zero when nested inside flow
-    /// brackets. Phase A only wraps for block context; flow
-    /// contexts pass through verbatim.
+    /// brackets. Sub-tree wrapping applies only in block context;
+    /// flow contexts pass through verbatim.
     #[allow(dead_code)]
     pub flow_level: u32,
 }

@@ -104,29 +104,26 @@ features:
 
 ---
 
-## What's in v0.0.1
+## What's in 0.0.1
 
-The launch release bundles ten phases of work into one drop. See
-[`CHANGELOG.md`](CHANGELOG.md) for the full breakdown — the
-highlights:
+The launch release ships a complete YAML 1.2 stack. See
+[`CHANGELOG.md`](CHANGELOG.md) for the detailed inventory; the
+table below summarises the headline deliverables grouped by
+capability theme.
 
-| Phase | Theme | Headline deliverable |
-| :--- | :--- | :--- |
-| 0 | Spec & compliance | YAML 1.2 official suite at 100 % literal (406/406, zero skips) |
-| 1.1 | Frictionless migration | `compat-serde-yaml` shim — `From`/`TryFrom` parity with `serde_yaml` 0.9 + `Document::validate` |
-| 1.2 | Frictionless migration | First-class `!!binary` + `serde_bytes` round-trip |
-| 1.3 | Frictionless migration | `Spanned<Value>` flatten guard with actionable error |
-| 2.1 | Lossless editing | `Document::entry(path)` — chainable mutable handle, 12 methods |
-| 2.2 | Lossless editing | `Document::indent_unit()` — auto-detect 2-/3-/4-space, inserts conform |
-| 2.3 | Lossless editing | "Smart Aliases" — `Document::anchors()` / `aliases()` / `materialise_alias_at` |
-| 3.1 | Contracts | JSON Schema codegen via `schemars` (`schema_for_yaml::<T>()`) |
-| 3.2 | Contracts | Schema validation + `noyavalidate --schema PATH --fix` |
-| 4 | Performance | `noyalib::simd` primitives + hot-path integration (~58× / ~5.4×) |
-
-Plus credibility hardening: SLSA L3 provenance, sigstore signing,
-OpenSSF Scorecard, REUSE.software 3.3 compliance, signed commits,
-`cargo-deny` / `cargo-vet` / `cargo-semver-checks` gates,
-differential fuzz, weekly soak fuzz.
+| Theme | Headline deliverables |
+| :--- | :--- |
+| Spec compliance | YAML 1.2 official test suite at 100% literal (406/406 pass, zero skips); YAML 1.1 opt-in compatibility for the "Norway problem"; multi-document streams |
+| Migration from `serde_yaml` | `compat-serde-yaml` feature with name-for-name re-exports; `From`/`TryFrom` parity for `Value`/`Mapping`/`Number`; `Document::validate`; comment-aware reads via `load_comments` |
+| Binary scalars | First-class `!!binary` tag; RFC 4648 base64 round-trip with `serde_bytes::ByteBuf`/`Bytes`; non-UTF-8 payloads supported |
+| Flatten guard | `Spanned<Value>` in `#[serde(flatten)]` returns an actionable error pointing at the working alternative |
+| Lossless editing | Side-table CST with byte-faithful round-trip; `Document::entry(path)` chainable mutable handle (12 methods); automatic indent detection (2/3/4-space) |
+| Anchor management | `Document::anchors()` / `aliases()` / `aliases_of(name)`; `materialise_alias_at(byte_pos)` and `materialise_aliases_of(name)` for breaking aliases |
+| Schema codegen | `schema` feature: `JsonSchema` derive re-export; `schema_for::<T>()` and `schema_for_yaml::<T>()`; honours `#[doc]`, `#[serde(default)]`, `#[serde(rename)]` |
+| Schema validation | `validate-schema` feature: `validate_against_schema(value, schema)`; aggregated violations with RFC 6901 paths |
+| Tooling | `noyavalidate` (with `--schema` and `--fix`), `noyafmt`, `noyalib-mcp`, `noyalib-wasm` |
+| Performance | `noyalib::simd` primitives — `find_any_of`, `clean_prefix_len`, `ByteBitmap`; parser hot path integrated; ~58× and ~5.4× over byte-by-byte at arities 3 and 8 |
+| Supply chain | SLSA L3 provenance, sigstore signing, OpenSSF Scorecard, REUSE.software 3.3 compliance, signed commits, `cargo-deny` / `cargo-vet` / `cargo-semver-checks` gates, differential and soak fuzz |
 
 ---
 

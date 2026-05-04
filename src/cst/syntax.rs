@@ -89,11 +89,11 @@ pub enum SyntaxKind {
     /// nodes (or trivia) in source order.
     BlockSequence,
     /// A `{ … }` flow mapping. Children are the brace tokens, the
-    /// entries' tokens, and inter-token trivia. Phase 1 keeps flow
-    /// content flat — flow entries are not subdivided into
+    /// entries' tokens, and inter-token trivia. Flow content is
+    /// kept flat — flow entries are not subdivided into
     /// [`Self::MappingEntry`] composites.
     FlowMapping,
-    /// A `[ … ]` flow sequence. Phase 1 keeps flow content flat — see
+    /// A `[ … ]` flow sequence. Flow content is kept flat — see
     /// [`Self::FlowMapping`].
     FlowSequence,
     /// A single key/value entry of a [`Self::BlockMapping`]. Holds

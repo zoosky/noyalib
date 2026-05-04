@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! JSON Schema codegen — Phase 3.1 "Contracts".
+//! JSON Schema codegen for Rust types.
 //!
 //! Derive [`JsonSchema`] for a Rust type and emit a JSON Schema
 //! 2020-12 document that describes its YAML shape. Useful for:
@@ -16,9 +16,9 @@
 //!   consumed by any JSON Schema implementation in any language.
 //!
 //! This module is gated behind the `schema` Cargo feature (off by
-//! default). Schema *validation* of a YAML document against a schema
-//! is the Phase 3.2 deliverable — this phase establishes the codegen
-//! direction.
+//! default). Schema *validation* of a YAML document against the
+//! emitted schema lives in [`crate::validate_against_schema`] —
+//! enable the `validate-schema` feature for that path.
 //!
 //! # Examples
 //!

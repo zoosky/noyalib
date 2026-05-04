@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! Anchor and alias management — Phase 2.3 "Smart Aliases".
+//! Anchor and alias management.
 //!
 //! YAML's `&name` (anchor) declares a node by name; `*name` (alias)
 //! references it. At parse time the loader resolves every alias to

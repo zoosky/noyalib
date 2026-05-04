@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! SIMD-friendly structural-scanning primitives — Phase 4.
+//! SIMD-friendly structural-scanning primitives.
 //!
 //! YAML's parser hot paths are dominated by *multi-byte search* —
 //! "find the next byte that's any of `[':', ',', '[', ']', '{',
@@ -28,15 +28,6 @@
 //! `core::arch::*` intrinsics directly; it lets memchr's already-
 //! validated unsafe abstractions do the platform dispatch and uses
 //! pure SWAR bit-twiddling for the wider-arity cases.
-//!
-//! # Strategic guardrail
-//!
-//! Per the v0.0.1 design contract: SIMD is **additive**. Hot-path
-//! integrations land incrementally as benchmarks identify the
-//! highest-leverage call sites; for the launch this module ships
-//! the primitive surface with full equivalence and throughput
-//! testing so future integrations have a stable, verified API to
-//! build on.
 //!
 //! # Examples
 //!

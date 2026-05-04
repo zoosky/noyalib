@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
-//! Immutable green-node primitive (Phase B: relative-len leaves).
+//! Immutable green-node primitive with relative-length leaves.
 //!
 //! A `GreenNode` is purely structural — it stores `SyntaxKind` plus
 //! children, and tracks `text_len` (the sum of its descendants'
@@ -13,14 +13,10 @@
 //! This shape is what makes incremental edits cheap: a splice only
 //! rewrites the path from the root down to the spliced node's
 //! parent. Pre- and post-splice subtrees are reused via cheap
-//! `Arc<[GreenChild]>` clones — no per-leaf range arithmetic.
-//!
-//! # Migrating from the absolute-range API
-//!
-//! Phase A's `GreenChild::Token { kind, range }` is now
-//! `{ kind, len }`. To recover an absolute byte position, walk
-//! the tree from the root accumulating offsets — see the doctest
-//! on [`GreenChild::token_text`].
+//! `Arc<[GreenChild]>` clones — no per-leaf range arithmetic. To
+//! recover an absolute byte position, walk the tree from the root
+//! accumulating offsets — see the doctest on
+//! [`GreenChild::token_text`].
 
 use crate::cst::syntax::SyntaxKind;
 use crate::prelude::*;
@@ -130,7 +126,7 @@ impl GreenChild {
 
 /// An immutable, byte-faithful syntax-tree node.
 ///
-/// Phase B: a `GreenNode` is purely structural — it carries `kind`,
+/// A `GreenNode` is purely structural — it carries `kind`,
 /// `text_len`, and an `Arc<[GreenChild]>` of children. The actual
 /// source text lives elsewhere (on the owning [`crate::cst::Document`]),
 /// and every text-bearing API takes the source as an argument.
