@@ -186,6 +186,12 @@ mod schema;
 #[cfg(feature = "schema")]
 #[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 mod schema_codegen;
+/// Schema *validation* — enforce a JSON Schema 2020-12 contract
+/// against a parsed [`Value`]. Pairs with [`schema_codegen`].
+/// Requires the `validate-schema` feature (which implies `schema`).
+#[cfg(feature = "validate-schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
+mod schema_validate;
 mod ser;
 pub(crate) mod span_context;
 pub(crate) mod spanned;
@@ -220,6 +226,9 @@ pub use schema::{
 #[cfg(feature = "schema")]
 #[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 pub use schema_codegen::{schema_for, schema_for_yaml, JsonSchema};
+#[cfg(feature = "validate-schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
+pub use schema_validate::{validate_against_schema, validate_against_schema_str};
 pub use ser::{
     to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,
     to_string_multi_with_config, to_string_with_config, to_value, FlowStyle, ScalarStyle,

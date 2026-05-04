@@ -223,3 +223,168 @@ fn double_dash_allows_path_with_leading_dash() {
     let output = bin().args(["--"]).arg(&path).output().unwrap();
     assert_eq!(output.status.code().unwrap(), 0);
 }
+
+// ── Phase 3.2: --schema ──────────────────────────────────────────────────
+
+#[test]
+fn schema_flag_with_no_path_exits_2() {
+    let output = bin().arg("--schema").output().unwrap();
+    assert_eq!(output.status.code().unwrap(), 2);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--schema requires"));
+}
+
+#[test]
+fn schema_match_exits_0() {
+    let schema = tmp(
+        "schema_ok",
+        "type: object\nrequired: [port]\nproperties:\n  port: { type: integer }\n",
+    );
+    let yaml = tmp("data_ok", "port: 8080\n");
+    let output = bin()
+        .arg("--schema")
+        .arg(&schema)
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code().unwrap(), 0);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("schema-checked"));
+}
+
+#[test]
+fn schema_short_flag_works() {
+    let schema = tmp("schema_short", "type: object\nrequired: [x]\n");
+    let yaml = tmp("data_short", "x: 1\n");
+    let output = bin().arg("-s").arg(&schema).arg(&yaml).output().unwrap();
+    assert_eq!(output.status.code().unwrap(), 0);
+}
+
+#[test]
+fn schema_eq_form_works() {
+    let schema = tmp("schema_eq", "type: object\nrequired: [x]\n");
+    let yaml = tmp("data_eq", "x: 1\n");
+    let arg = format!("--schema={}", schema.display());
+    let output = bin().arg(arg).arg(&yaml).output().unwrap();
+    assert_eq!(output.status.code().unwrap(), 0);
+}
+
+#[test]
+fn schema_violation_exits_1() {
+    let schema = tmp(
+        "schema_v",
+        "type: object\nrequired: [port]\nproperties:\n  port: { type: integer }\n",
+    );
+    let yaml = tmp("data_v", "port: not-int\n");
+    let output = bin()
+        .arg("--schema")
+        .arg(&schema)
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code().unwrap(), 1);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("schema violation"), "stderr: {stderr}");
+}
+
+#[test]
+fn schema_missing_file_exits_3() {
+    let yaml = tmp("data_msch", "port: 1\n");
+    let output = bin()
+        .arg("--schema")
+        .arg("/tmp/__noyavalidate_no_such_schema__.yaml")
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code().unwrap(), 3);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("reading schema"));
+}
+
+#[test]
+fn schema_validates_each_doc_in_multi_doc_stream() {
+    let schema = tmp("schema_multi", "type: object\nrequired: [port]\n");
+    // Second document is missing the required field.
+    let yaml = tmp("data_multi", "---\nport: 1\n---\nhost: x\n");
+    let output = bin()
+        .arg("--schema")
+        .arg(&schema)
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code().unwrap(), 1);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    // The label should disambiguate which document failed.
+    assert!(stderr.contains("document 2"), "stderr: {stderr}");
+}
+
+// ── Phase 3.2: --fix ─────────────────────────────────────────────────────
+
+#[test]
+fn fix_normalises_whitespace_in_place() {
+    let yaml = tmp("fix_in_place", "port:    8080\nhost:    localhost\n");
+    let output = bin().arg("--fix").arg(&yaml).output().unwrap();
+    assert_eq!(output.status.code().unwrap(), 0);
+    let after = std::fs::read_to_string(&yaml).unwrap();
+    assert_eq!(after, "port: 8080\nhost: localhost\n");
+}
+
+#[test]
+fn fix_with_stdin_writes_clean_stdout() {
+    let (code, stdout, _) = run_with_stdin("port:    8080\n", &["--fix"]);
+    assert_eq!(code, 0);
+    // No success chatter — the formatted bytes are the only stdout
+    // content so downstream consumers can pipe through cleanly.
+    assert_eq!(stdout, "port: 8080\n");
+}
+
+#[test]
+fn fix_with_invalid_yaml_exits_1() {
+    let yaml = tmp("fix_bad", "port: [unclosed\n");
+    let output = bin().arg("--fix").arg(&yaml).output().unwrap();
+    assert_eq!(output.status.code().unwrap(), 1);
+}
+
+#[test]
+fn schema_and_fix_combine() {
+    let schema = tmp(
+        "combo_s",
+        "type: object\nrequired: [port]\nproperties:\n  port: { type: integer }\n",
+    );
+    let yaml = tmp("combo_d", "port:    8080\n");
+    let output = bin()
+        .arg("--schema")
+        .arg(&schema)
+        .arg("--fix")
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code().unwrap(), 0);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("schema-checked, fixed"));
+    let after = std::fs::read_to_string(&yaml).unwrap();
+    assert_eq!(after, "port: 8080\n");
+}
+
+#[test]
+fn fix_skipped_when_schema_violates() {
+    // Schema check happens before --fix. If the data is rejected,
+    // the file must NOT be rewritten — that would silently wipe the
+    // original buggy input.
+    let schema = tmp("guard_s", "type: object\nrequired: [port]\n");
+    let original = "host: localhost\n"; // missing required `port`
+    let yaml = tmp("guard_d", original);
+    let output = bin()
+        .arg("--schema")
+        .arg(&schema)
+        .arg("--fix")
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code().unwrap(), 1);
+    let after = std::fs::read_to_string(&yaml).unwrap();
+    assert_eq!(
+        after, original,
+        "fix must not run if schema rejected the input"
+    );
+}

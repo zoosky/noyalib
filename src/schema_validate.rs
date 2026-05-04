@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! JSON Schema validation — Phase 3.2 "Contract enforcement".
+//!
+//! Validate a parsed [`crate::Value`] against a JSON Schema 2020-12
+//! document (also expressible as YAML, since JSON ⊂ YAML 1.2).
+//! Pairs naturally with the Phase 3.1 codegen path: derive
+//! [`crate::JsonSchema`] for a Rust type, emit the schema with
+//! [`crate::schema_for_yaml`], then enforce it on inputs that
+//! arrive as YAML at runtime.
+//!
+//! Gated behind the `validate-schema` Cargo feature (which implies
+//! `schema`).
+//!
+//! # Examples
+//!
+//! ```
+//! use noyalib::{from_str, validate_against_schema, Value};
+//!
+//! let schema_yaml = "\
+//! type: object
+//! properties:
+//!   port:
+//!     type: integer
+//!     minimum: 0
+//!     maximum: 65535
+//! required:
+//!   - port
+//! ";
+//! let schema: Value = from_str(schema_yaml).unwrap();
+//!
+//! let good: Value = from_str("port: 8080\n").unwrap();
+//! assert!(validate_against_schema(&good, &schema).is_ok());
+//!
+//! let bad: Value = from_str("port: not-a-number\n").unwrap();
+//! assert!(validate_against_schema(&bad, &schema).is_err());
+//! ```
+
+use crate::error::{Error, Result};
+use crate::value::Value;
+
+/// Validate `value` against the JSON Schema 2020-12 document
+/// `schema`. Both inputs are [`Value`] trees — the schema is
+/// usually loaded from a YAML / JSON file via [`crate::from_str`],
+/// or built programmatically.
+///
+/// Multiple violations are aggregated into a single error message,
+/// each line carrying the JSON-pointer path of the offending
+/// instance. The path syntax follows RFC 6901: `/` for the root,
+/// `/port` for a top-level field, `/items/0/name` for nested
+/// data. A schema-side build failure (malformed schema document)
+/// is reported separately so callers can distinguish "your schema
+/// is broken" from "your data is broken".
+///
+/// # Errors
+///
+/// - The schema cannot be compiled (invalid JSON Schema shape).
+/// - The instance violates one or more constraints declared in
+///   the schema.
+/// - Internal JSON serialization fails for either input
+///   (vanishingly unlikely — would indicate a noyalib serializer
+///   bug).
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str, validate_against_schema, Value};
+///
+/// let schema: Value = from_str(
+///     "type: object\nrequired: [port]\nproperties:\n  port:\n    type: integer\n",
+/// ).unwrap();
+/// let v: Value = from_str("port: 8080\n").unwrap();
+/// validate_against_schema(&v, &schema).unwrap();
+/// ```
+pub fn validate_against_schema(value: &Value, schema: &Value) -> Result<()> {
+    let schema_json = value_to_json(schema)
+        .map_err(|e| Error::Custom(format!("validate_against_schema: schema -> JSON: {e}")))?;
+    let instance_json = value_to_json(value)
+        .map_err(|e| Error::Parse(format!("validate_against_schema: value -> JSON: {e}")))?;
+
+    let validator = jsonschema::validator_for(&schema_json).map_err(|e| {
+        Error::Custom(format!(
+            "validate_against_schema: schema is not a valid JSON Schema: {e}"
+        ))
+    })?;
+
+    if validator.is_valid(&instance_json) {
+        return Ok(());
+    }
+
+    let mut messages: Vec<String> = Vec::new();
+    for err in validator.iter_errors(&instance_json) {
+        messages.push(format!("{} (at `{}`)", err, err.instance_path));
+    }
+    let summary = if messages.len() == 1 {
+        format!("schema violation: {}", messages[0])
+    } else {
+        let joined = messages.join("\n  - ");
+        format!(
+            "schema violations ({} total):\n  - {}",
+            messages.len(),
+            joined
+        )
+    };
+    Err(Error::Custom(summary))
+}
+
+/// Validate the YAML text in `yaml` against the JSON Schema
+/// document in `schema_yaml`. Convenience wrapper around
+/// [`validate_against_schema`] — parses both inputs and forwards.
+///
+/// # Errors
+///
+/// As [`validate_against_schema`], plus YAML parse errors for
+/// either input.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::validate_against_schema_str;
+///
+/// let schema = "type: object\nrequired: [port]\n";
+/// let yaml = "port: 8080\n";
+/// validate_against_schema_str(yaml, schema).unwrap();
+/// ```
+pub fn validate_against_schema_str(yaml: &str, schema_yaml: &str) -> Result<()> {
+    let value: Value = crate::from_str(yaml)?;
+    let schema: Value = crate::from_str(schema_yaml)?;
+    validate_against_schema(&value, &schema)
+}
+
+/// Convert a [`Value`] tree to a [`serde_json::Value`] via the
+/// existing `Serialize` impl on `Value`. Lossless for every
+/// JSON-expressible shape; YAML-only constructs (NaN, Infinity,
+/// non-string keys) become JSON-incompatible at this boundary —
+/// JSON Schema does not have semantics for them either, so the
+/// validator would reject them downstream regardless.
+fn value_to_json(v: &Value) -> core::result::Result<serde_json::Value, String> {
+    serde_json::to_value(v).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(s: &str) -> Value {
+        crate::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn valid_value_returns_ok() {
+        let schema =
+            parse("type: object\nrequired: [port]\nproperties:\n  port:\n    type: integer\n");
+        let value = parse("port: 8080\n");
+        assert!(validate_against_schema(&value, &schema).is_ok());
+    }
+
+    #[test]
+    fn type_mismatch_returns_err() {
+        let schema = parse("type: object\nproperties:\n  port:\n    type: integer\n");
+        let value = parse("port: hello\n");
+        let err = validate_against_schema(&value, &schema).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("schema violation"), "got: {msg}");
+        assert!(msg.contains("/port"), "path missing: {msg}");
+    }
+
+    #[test]
+    fn missing_required_field_returns_err() {
+        let schema = parse("type: object\nrequired: [port]\n");
+        let value = parse("host: localhost\n");
+        let err = validate_against_schema(&value, &schema).unwrap_err();
+        assert!(err.to_string().contains("port"));
+    }
+
+    #[test]
+    fn multiple_violations_aggregated() {
+        let schema = parse(
+            "type: object
+required: [port, host]
+properties:
+  port:
+    type: integer
+  host:
+    type: string
+",
+        );
+        let value = parse("port: not-int\n");
+        let err = validate_against_schema(&value, &schema).unwrap_err();
+        let msg = err.to_string();
+        // Two distinct violations: type mismatch on port, missing host.
+        assert!(msg.contains("schema violations"), "got: {msg}");
+        assert!(msg.contains("port"));
+        assert!(msg.contains("host"));
+    }
+
+    #[test]
+    fn invalid_schema_distinguished_from_invalid_data() {
+        // `type` cannot be a number per JSON Schema.
+        let schema = parse("type: 42\n");
+        let value = parse("anything: 1\n");
+        let err = validate_against_schema(&value, &schema).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not a valid JSON Schema"),
+            "expected schema-side error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn enum_constraint_enforced() {
+        let schema = parse(
+            "type: object
+properties:
+  level:
+    enum: [trace, debug, info, warn, error]
+",
+        );
+        assert!(validate_against_schema(&parse("level: warn\n"), &schema).is_ok());
+        assert!(validate_against_schema(&parse("level: ULTRA\n"), &schema).is_err());
+    }
+
+    #[test]
+    fn integer_bounds_enforced() {
+        let schema = parse(
+            "type: object
+properties:
+  port:
+    type: integer
+    minimum: 0
+    maximum: 65535
+",
+        );
+        assert!(validate_against_schema(&parse("port: 8080\n"), &schema).is_ok());
+        assert!(validate_against_schema(&parse("port: 70000\n"), &schema).is_err());
+        assert!(validate_against_schema(&parse("port: -1\n"), &schema).is_err());
+    }
+
+    #[test]
+    fn nested_object_validated() {
+        let schema = parse(
+            "type: object
+properties:
+  db:
+    type: object
+    required: [host]
+    properties:
+      host:
+        type: string
+",
+        );
+        let good = parse("db:\n  host: localhost\n");
+        let bad = parse("db: {}\n");
+        assert!(validate_against_schema(&good, &schema).is_ok());
+        assert!(validate_against_schema(&bad, &schema).is_err());
+    }
+
+    #[test]
+    fn validate_against_schema_str_parses_both_inputs() {
+        let schema = "type: object\nrequired: [port]\n";
+        let yaml = "port: 8080\n";
+        assert!(validate_against_schema_str(yaml, schema).is_ok());
+    }
+
+    #[test]
+    fn schema_for_codegen_round_trip_validates_self() {
+        // Phase 3.1 + 3.2 together — derive JsonSchema, emit, then
+        // validate sample data against the emitted schema.
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, crate::JsonSchema)]
+        #[allow(dead_code)]
+        struct Cfg {
+            port: u16,
+            #[serde(default)]
+            host: String,
+        }
+
+        let schema = crate::schema_for::<Cfg>().unwrap();
+        let good = parse("port: 8080\nhost: localhost\n");
+        assert!(validate_against_schema(&good, &schema).is_ok());
+
+        let bad = parse("host: localhost\n"); // missing required `port`
+        let err = validate_against_schema(&bad, &schema).unwrap_err();
+        assert!(err.to_string().contains("port"));
+    }
+}
