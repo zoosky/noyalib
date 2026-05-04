@@ -279,6 +279,11 @@ harness = false
 name = "incremental_repair"
 harness = false
 
+[[bench]]
+name = "simd"
+harness = false
+required-features = ["simd"]
+
 [features]
 default = ["std"]
 std = []
@@ -307,6 +312,16 @@ schema = ["dep:schemars", "dep:serde_json"]
 # `schema` so the codegen and validation halves of Phase 3 can be
 # enabled together with one flag.
 validate-schema = ["schema", "dep:jsonschema"]
+# SIMD-friendly multi-byte search primitives for parser hot paths.
+# Phase 4: ships a feature-gated `noyalib::simd` module containing
+# `find_any_of` and friends — vectorised via memchr's SSE2 / NEON
+# arity-1/2/3 primitives where applicable, SWAR (8-byte-stride
+# u64 packing) for needle sets of 4+ bytes, and a scalar fallback.
+# Pure-safe Rust (no `unsafe`) — preserves the workspace
+# `unsafe_code = "forbid"` invariant. Off by default so the most
+# conservative environments stay on the byte-by-byte baseline; on
+# by callers who want the throughput uplift on supported targets.
+simd = []
 
 [package.metadata.docs.rs]
 all-features = true

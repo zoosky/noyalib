@@ -193,6 +193,13 @@ mod schema_codegen;
 #[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
 mod schema_validate;
 mod ser;
+/// SIMD-friendly multi-byte search primitives — Phase 4. Off by
+/// default; enable the `simd` feature to expose `noyalib::simd`.
+/// Future hot-path integrations route through this module so
+/// non-SIMD environments stay on the byte-by-byte baseline.
+#[cfg(feature = "simd")]
+#[cfg_attr(docsrs, doc(cfg(feature = "simd")))]
+pub mod simd;
 pub(crate) mod span_context;
 pub(crate) mod spanned;
 mod streaming;
