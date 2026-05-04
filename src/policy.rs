@@ -34,6 +34,7 @@
 //! ```
 
 use crate::error::{Error, Result};
+use crate::prelude::*;
 use crate::value::Value;
 
 /// Kind of parser event handed to a policy.
@@ -73,7 +74,7 @@ pub struct PolicyEvent<'a> {
 /// implementations accept everything, so a policy that only cares
 /// about the post-parse value can leave [`Policy::check_event`]
 /// alone.
-pub trait Policy: Send + Sync + core::fmt::Debug {
+pub trait Policy: Send + Sync + fmt::Debug {
     /// Inspect a parser event during loading. Return `Err(...)` to
     /// abort the parse with a diagnostic.
     fn check_event(&self, _event: PolicyEvent<'_>) -> Result<()> {
