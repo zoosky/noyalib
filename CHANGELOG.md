@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-05-04
+
+The launch release. Sections below catalogue every capability the
+library ships at launch, grouped by theme. See
+[`docs/design/`](docs/design/) for the architecture rationale and
+the commit history on `main` for per-change context.
+
 ### Added — Property interpolation
 
 - **`Value::interpolate_properties(&map)`** — substitute `${name}`
@@ -167,13 +174,6 @@ spec behaviour (zero impact on existing callers):
   is past EOF.
 - The original [`crate::Error::format_with_source`] is preserved
   byte-for-byte; the radius variant is purely additive.
-
-## [0.0.1] - 2026-05-04
-
-The launch release. Sections below catalogue every capability the
-library ships at launch, grouped by theme. See
-[`docs/design/`](docs/design/) for the architecture rationale and
-the commit history on `main` for per-change context.
 
 ### Added — Spec compliance
 
