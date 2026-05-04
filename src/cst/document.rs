@@ -636,6 +636,105 @@ impl Document {
         self.replace_span(line_end, line_end, &new_line)
     }
 
+    /// Insert a new `key: fragment` entry into the block mapping at
+    /// `mapping_path`. The mapping-side analogue of
+    /// [`Document::push_back`].
+    ///
+    /// Behaves like `set` when the key already exists (the value is
+    /// replaced losslessly). When the key is new, a sibling line is
+    /// spliced after the last existing entry, with the indent matched
+    /// to the last entry's key column so the file stays canonical.
+    /// Block mappings only in this phase; flow mappings (`{…}`) and
+    /// empty mappings are rejected.
+    ///
+    /// # Errors
+    ///
+    /// - `mapping_path` does not resolve to a mapping.
+    /// - The mapping is empty (no anchor for indentation; use `set`
+    ///   with a fragment instead).
+    /// - The same parse-after-edit errors as
+    ///   [`Document::replace_span`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document(
+    ///     "metadata:\n  labels:\n    app: noyalib\n",
+    /// ).unwrap();
+    /// doc.insert_entry("metadata.labels", "env", "prod").unwrap();
+    /// let out = doc.to_string();
+    /// assert!(out.contains("app: noyalib"));
+    /// assert!(out.contains("env: prod"));
+    /// ```
+    pub fn insert_entry(&mut self, mapping_path: &str, key: &str, fragment: &str) -> Result<()> {
+        // Easy path: if the key already exists, just replace.
+        let child_path = if mapping_path.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{mapping_path}.{key}")
+        };
+        if self.span_at(&child_path).is_some() {
+            return self.set(&child_path, fragment);
+        }
+
+        // New-key path — splice a sibling line.
+        self.ensure_cache();
+        let last_key: String = {
+            let cache = self.cache.borrow();
+            let (value, _) = cache.as_ref().expect("ensure_cache populated");
+            let target = if mapping_path.is_empty() {
+                value
+            } else {
+                path_value(value, mapping_path).ok_or_else(|| {
+                    Error::Parse(format!("path not found: {mapping_path}"))
+                })?
+            };
+            let mapping = match target {
+                Value::Mapping(m) => m,
+                _ => {
+                    return Err(Error::Parse(
+                        "insert_entry: target path is not a mapping".into(),
+                    ));
+                }
+            };
+            if mapping.is_empty() {
+                return Err(Error::Parse(
+                    "insert_entry: empty mapping has no anchor for indentation — \
+                     use `set` with a fragment instead"
+                        .into(),
+                ));
+            }
+            mapping
+                .iter()
+                .last()
+                .map(|(k, _)| k.clone())
+                .expect("non-empty mapping has a last entry")
+        };
+        let last_path = if mapping_path.is_empty() {
+            last_key
+        } else {
+            format!("{mapping_path}.{last_key}")
+        };
+        let (last_value_start, last_value_end) =
+            self.span_at(&last_path).ok_or_else(|| {
+                Error::Parse(
+                    "insert_entry: could not resolve last entry span".into(),
+                )
+            })?;
+        let key_col = column_of_key_at(&self.source, last_value_start).ok_or_else(|| {
+            Error::Parse(
+                "insert_entry: could not locate last key's column for indentation"
+                    .into(),
+            )
+        })?;
+        let line_end = end_of_line(&self.source, last_value_end);
+        let indent: String = " ".repeat(key_col);
+        let new_line = format!("{indent}{key}: {fragment}\n");
+        self.replace_span(line_end, line_end, &new_line)
+    }
+
     /// Insert a new sequence item immediately after the item at
     /// `item_path` (e.g. `"items[1]"`).
     ///
@@ -1372,6 +1471,27 @@ fn column_of_preceding_dash(source: &str, value_start: usize) -> Option<usize> {
         line_start -= 1;
     }
     Some(dash_pos - line_start)
+}
+
+/// Column at which the key on the line containing `value_start`
+/// begins — i.e. the count of leading space bytes on that line.
+/// Used by `insert_entry` to compute the indent for a freshly
+/// spliced sibling key. Returns `None` if `value_start` is out of
+/// range.
+fn column_of_key_at(source: &str, value_start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if value_start > bytes.len() {
+        return None;
+    }
+    let mut line_start = value_start;
+    while line_start > 0 && bytes[line_start - 1] != b'\n' {
+        line_start -= 1;
+    }
+    let mut col = 0;
+    while line_start + col < bytes.len() && bytes[line_start + col] == b' ' {
+        col += 1;
+    }
+    Some(col)
 }
 
 /// Position of the byte immediately past the next `\n` at or after

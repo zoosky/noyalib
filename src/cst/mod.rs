@@ -64,12 +64,14 @@
 mod annotated;
 mod builder;
 mod document;
+mod entry;
 mod format;
 mod green;
 mod syntax;
 
 pub use annotated::CommentBundle;
 pub use document::{parse_document, parse_stream, Document, RepairScope};
+pub use entry::Entry;
 pub use format::{format, format_with_config, FormatConfig};
 pub use green::{GreenChild, GreenNode};
 pub use syntax::SyntaxKind;
