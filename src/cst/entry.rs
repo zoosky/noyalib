@@ -248,6 +248,209 @@ impl<'a> Entry<'a> {
         let combined = compose_path(&self.path, child);
         Entry::new(self.doc, combined)
     }
+
+    /// Ensure a value exists at this path: if the entry already
+    /// resolves, leave it untouched; if it does not, splice
+    /// `default` as the new value.
+    ///
+    /// Mirrors the [`std::collections::hash_map::Entry::or_insert`]
+    /// pattern adapted to the CST: the path is *resolved through the
+    /// green tree first*, then the splice runs only on the vacant
+    /// branch. The resolution is byte-faithful and skips the typed
+    /// `Value` cache, so the call is cheap on already-occupied paths.
+    ///
+    /// Returns `Ok(true)` when the splice ran (the entry was
+    /// vacant), `Ok(false)` when the entry was already occupied
+    /// (no-op).
+    ///
+    /// # Errors
+    ///
+    /// - For mapping inserts: as [`Self::insert`] — the parent
+    ///   mapping must exist at the dotted-path prefix and must not
+    ///   be empty.
+    /// - For top-level inserts (no `.` in path): rejected with a
+    ///   clear message; use [`Document::set`] with a fresh document
+    ///   for that case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document(
+    ///     "metadata:\n  labels:\n    app: noyalib\n",
+    /// ).unwrap();
+    ///
+    /// // First call: the path was vacant, so the splice ran.
+    /// let inserted = doc.entry("metadata.labels.env")
+    ///     .or_insert("prod")
+    ///     .unwrap();
+    /// assert!(inserted);
+    /// assert!(doc.to_string().contains("env: prod"));
+    ///
+    /// // Second call on the same path: the entry is now occupied,
+    /// // so it returns `false` and leaves the value untouched.
+    /// let inserted = doc.entry("metadata.labels.env")
+    ///     .or_insert("staging")
+    ///     .unwrap();
+    /// assert!(!inserted);
+    /// assert!(doc.to_string().contains("env: prod"));
+    /// ```
+    pub fn or_insert(self, default: &str) -> Result<bool> {
+        if self.exists() {
+            return Ok(false);
+        }
+        self.insert_at_path(default)?;
+        Ok(true)
+    }
+
+    /// Like [`Self::or_insert`] but constructs the default lazily —
+    /// the closure runs only on the vacant branch.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::or_insert`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document(
+    ///     "metadata:\n  labels:\n    app: noyalib\n",
+    /// ).unwrap();
+    /// let _ = doc.entry("metadata.labels.env")
+    ///     .or_insert_with(|| "prod".to_owned())
+    ///     .unwrap();
+    /// assert!(doc.to_string().contains("env: prod"));
+    /// ```
+    pub fn or_insert_with<F>(self, default: F) -> Result<bool>
+    where
+        F: FnOnce() -> String,
+    {
+        if self.exists() {
+            return Ok(false);
+        }
+        let frag = default();
+        self.insert_at_path(&frag)?;
+        Ok(true)
+    }
+
+    /// Like [`Self::or_insert`] but takes a typed [`Value`]. Honours
+    /// the file's detected indent unit
+    /// ([`Document::indent_unit`]) when emitting the value.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::or_insert`], plus serializer errors when the value
+    /// cannot be emitted as YAML.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    /// use noyalib::Value;
+    ///
+    /// let mut doc = parse_document(
+    ///     "metadata:\n  labels:\n    app: noyalib\n",
+    /// ).unwrap();
+    /// let _ = doc.entry("metadata.labels.replicas")
+    ///     .or_insert_value(&Value::Number(noyalib::Number::Integer(3)))
+    ///     .unwrap();
+    /// assert!(doc.to_string().contains("replicas: 3"));
+    /// ```
+    pub fn or_insert_value(self, default: &Value) -> Result<bool> {
+        if self.exists() {
+            return Ok(false);
+        }
+        // Reuse the typed-insert logic by constructing a fresh
+        // Entry on the parent path and calling `insert_value` with
+        // the leaf key — same code path as the non-or_insert
+        // typed-insert API.
+        let unit = self.doc.indent_unit();
+        let cfg = crate::SerializerConfig::new().indent(unit);
+        let emitted = crate::to_string_with_config(default, &cfg)?;
+        let trimmed = emitted.trim_end_matches('\n');
+        let force_block =
+            matches!(default, Value::Mapping(_) | Value::Sequence(_)) && !trimmed.contains('\n');
+        let fragment = if force_block {
+            format!("\n{trimmed}")
+        } else {
+            trimmed.to_owned()
+        };
+        self.insert_at_path(&fragment)?;
+        Ok(true)
+    }
+
+    /// If the entry is occupied, run `f` and let it apply
+    /// arbitrary mutations through a fresh sub-borrow of the
+    /// document. No-op when the entry is vacant. The closure
+    /// receives a [`Document`] reference so it can touch any path,
+    /// not just `self.path` — useful for "if this exists, also
+    /// update its sibling" patterns.
+    ///
+    /// Returns `self` for further chaining (typically with
+    /// [`Self::or_insert`]) — mirrors
+    /// [`std::collections::hash_map::Entry::and_modify`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document(
+    ///     "service:\n  port: 8080\n",
+    /// ).unwrap();
+    ///
+    /// // Increment-style update: read, mutate, write — all under
+    /// // the same Entry handle. The closure only runs because the
+    /// // path is occupied.
+    /// let _ = doc.entry("service.port")
+    ///     .and_modify(|d| {
+    ///         let _ = d.set("service.port", "9090");
+    ///     })
+    ///     .or_insert("8080") // no-op now: path exists
+    ///     .unwrap();
+    /// assert!(doc.to_string().contains("port: 9090"));
+    /// ```
+    pub fn and_modify<F>(self, f: F) -> Self
+    where
+        F: FnOnce(&mut Document),
+    {
+        if self.doc.span_at(&self.path).is_some() {
+            f(self.doc);
+        }
+        self
+    }
+
+    /// Helper: split `self.path` into `(parent, leaf)` and call
+    /// `Document::insert_entry`. Top-level paths (no `.`) and
+    /// sequence-index paths are rejected with an actionable error.
+    fn insert_at_path(self, fragment: &str) -> Result<()> {
+        let path = self.path;
+        // Sequence indexes can't be inserted via the mapping path —
+        // detect either a leading `[` or a final `[index]` segment
+        // anywhere in the dotted path so the error is actionable.
+        if path.contains('[') {
+            return Err(Error::Parse(format!(
+                "or_insert: cannot insert at sequence index `{path}`; \
+                 use Entry::push_back or Entry::insert_after instead"
+            )));
+        }
+        match path.rfind('.') {
+            Some(idx) => {
+                let (parent, key_with_dot) = path.split_at(idx);
+                // Skip the leading `.` to get the leaf key.
+                let key = &key_with_dot[1..];
+                self.doc.insert_entry(parent, key, fragment)
+            }
+            None => Err(Error::Parse(format!(
+                "or_insert: cannot insert at top-level key `{path}` \
+                 on an existing document — use Document::set on a \
+                 non-existent path or insert through a parent mapping"
+            ))),
+        }
+    }
 }
 
 impl Document {

@@ -223,6 +223,115 @@ fn materialise_unknown_position_errors_clearly() {
     assert!(msg.contains("no alias mark begins at byte 0"));
 }
 
+// ── rename_anchor — atomic anchor + alias refactor ──────────────────
+
+#[test]
+fn rename_anchor_updates_declaration_and_all_aliases() {
+    let src = "\
+defaults: &cfg
+  port: 8080
+service:
+  <<: *cfg
+backup: *cfg
+";
+    let mut doc = parse_document(src).unwrap();
+    let n = doc.rename_anchor("cfg", "defaults").unwrap();
+    assert_eq!(n, 3, "1 anchor + 2 aliases");
+    let out = doc.to_string();
+    assert!(!out.contains("&cfg"));
+    assert!(!out.contains("*cfg"));
+    assert!(out.contains("&defaults"));
+    assert!(out.contains("*defaults"));
+}
+
+#[test]
+fn rename_anchor_with_only_declaration_no_aliases() {
+    let src = "x: &solo 1\ny: 2\n";
+    let mut doc = parse_document(src).unwrap();
+    let n = doc.rename_anchor("solo", "renamed").unwrap();
+    assert_eq!(n, 1);
+    assert!(doc.to_string().contains("&renamed"));
+}
+
+#[test]
+fn rename_anchor_unknown_name_errors() {
+    let mut doc = parse_document("a: 1\nb: 2\n").unwrap();
+    let err = doc.rename_anchor("ghost", "newname").unwrap_err();
+    assert!(err.to_string().contains("no `&ghost`"));
+}
+
+#[test]
+fn rename_anchor_invalid_target_name_errors() {
+    let mut doc = parse_document("x: &cfg 1\ny: *cfg\n").unwrap();
+    // Whitespace and flow indicators are forbidden in YAML anchor
+    // names per §6.9.2 — the rename must reject them upfront.
+    let err = doc.rename_anchor("cfg", "has space").unwrap_err();
+    assert!(err.to_string().contains("not a valid YAML anchor name"));
+    let err2 = doc.rename_anchor("cfg", "").unwrap_err();
+    assert!(err2.to_string().contains("not a valid YAML anchor name"));
+    let err3 = doc.rename_anchor("cfg", "with[brackets").unwrap_err();
+    assert!(err3.to_string().contains("not a valid YAML anchor name"));
+}
+
+#[test]
+fn rename_anchor_preserves_byte_faithful_around_marks() {
+    let src = "\
+# top-level comment
+defaults: &cfg
+  port: 8080  # bound port
+service:
+  <<: *cfg
+  host: api.example.com
+
+backup: *cfg
+";
+    let mut doc = parse_document(src).unwrap();
+    let _ = doc.rename_anchor("cfg", "shared").unwrap();
+    let out = doc.to_string();
+    assert!(out.contains("# top-level comment"));
+    assert!(out.contains("# bound port"));
+    assert!(out.contains("host: api.example.com"));
+    assert!(out.contains("&shared"));
+    assert!(out.contains("*shared"));
+}
+
+#[test]
+fn rename_anchor_does_not_touch_unrelated_anchors() {
+    let src = "\
+a: &one 1
+b: &two 2
+c: *one
+d: *two
+";
+    let mut doc = parse_document(src).unwrap();
+    let n = doc.rename_anchor("one", "first").unwrap();
+    assert_eq!(n, 2);
+    let out = doc.to_string();
+    // `one` and its aliases are renamed.
+    assert!(!out.contains("&one"));
+    assert!(!out.contains("*one"));
+    assert!(out.contains("&first"));
+    assert!(out.contains("*first"));
+    // `two` is untouched.
+    assert!(out.contains("&two"));
+    assert!(out.contains("*two"));
+}
+
+#[test]
+fn rename_anchor_resolves_to_same_value_after() {
+    let src = "\
+defaults: &cfg
+  port: 8080
+service:
+  <<: *cfg
+";
+    let mut doc = parse_document(src).unwrap();
+    let _ = doc.rename_anchor("cfg", "shared").unwrap();
+    // The merged value at service.port still resolves correctly.
+    let v = doc.as_value();
+    assert_eq!(v["service"]["port"].as_i64(), Some(8080));
+}
+
 // ── Edits over anchor-decorated regions stay byte-faithful ──────────
 
 #[test]

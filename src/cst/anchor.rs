@@ -274,6 +274,103 @@ impl Document {
         Ok(total)
     }
 
+    /// Rename every `&old` anchor declaration and every `*old`
+    /// alias reference to `new` in one atomic pass. Returns the
+    /// total number of touched sites (anchors + aliases).
+    ///
+    /// Splices run in *reverse source order* so each successive
+    /// splice's offsets stay valid for earlier sites. The whole
+    /// rename is byte-faithful outside the touched marks —
+    /// comments, blank lines, and sibling formatting survive
+    /// verbatim.
+    ///
+    /// # Errors
+    ///
+    /// - `new` is empty or contains characters that would not be
+    ///   accepted as a YAML anchor name (any of the flow
+    ///   indicators `,[]{}` or whitespace per YAML 1.2 §6.9.2).
+    /// - `old` does not match any anchor or alias in the document
+    ///   (so the call is a no-op the user probably did not
+    ///   intend) — surfaced as an error rather than a silent
+    ///   zero-count.
+    /// - The same parse-after-edit errors as
+    ///   [`crate::cst::Document::replace_span`] for any individual
+    ///   splice. The first failing splice aborts the batch;
+    ///   already-renamed sites stay renamed, so callers should
+    ///   treat a partial-failure error as a recoverable state and
+    ///   inspect the document.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document(
+    ///     "defaults: &cfg\n  port: 8080\nservice:\n  <<: *cfg\nbackup: *cfg\n",
+    /// ).unwrap();
+    ///
+    /// // Rename `cfg` → `defaults`. The single `&cfg` declaration
+    /// // and both `*cfg` references are updated in one call.
+    /// let n = doc.rename_anchor("cfg", "defaults").unwrap();
+    /// assert_eq!(n, 3); // 1 anchor + 2 aliases
+    /// let out = doc.to_string();
+    /// assert!(!out.contains("&cfg"));
+    /// assert!(!out.contains("*cfg"));
+    /// assert!(out.contains("&defaults"));
+    /// assert!(out.contains("*defaults"));
+    /// ```
+    pub fn rename_anchor(&mut self, old: &str, new: &str) -> Result<usize> {
+        if !is_valid_anchor_name(new) {
+            return Err(Error::Parse(format!(
+                "rename_anchor: `{new}` is not a valid YAML anchor name \
+                 (must be non-empty and free of flow indicators / whitespace)"
+            )));
+        }
+
+        // Collect every site (anchor or alias) in source order.
+        let anchors = self.anchors();
+        let aliases = self.aliases();
+        let mut sites: Vec<(char, (usize, usize))> = anchors
+            .iter()
+            .filter(|a| a.name == old)
+            .map(|a| ('&', a.mark_span))
+            .chain(
+                aliases
+                    .iter()
+                    .filter(|a| a.name == old)
+                    .map(|a| ('*', a.mark_span)),
+            )
+            .collect();
+        if sites.is_empty() {
+            return Err(Error::Parse(format!(
+                "rename_anchor: no `&{old}` declaration or `*{old}` reference \
+                 found in the document"
+            )));
+        }
+        sites.sort_unstable_by_key(|(_, span)| span.0);
+
+        // Build the new source by stitching together the original
+        // bytes between sites and the renamed marker text at each
+        // site. A single `replace_span` over the whole document
+        // commits the atomic edit — intermediate states that would
+        // otherwise have a mismatched anchor / alias name pair
+        // (and fail re-parse) are never observed.
+        let total = sites.len();
+        let original = self.source().to_owned();
+        let mut new_source = String::with_capacity(original.len());
+        let mut cursor = 0;
+        for (marker, (start, end)) in sites {
+            new_source.push_str(&original[cursor..start]);
+            new_source.push(marker);
+            new_source.push_str(new);
+            cursor = end;
+        }
+        new_source.push_str(&original[cursor..]);
+
+        self.replace_span(0, original.len(), &new_source)?;
+        Ok(total)
+    }
+
     /// Look up `name` as the closest `&name` anchor declared at byte
     /// position `<= before` in source order, and return the source
     /// text of its decorated scalar value. Returns an error if the
@@ -433,6 +530,20 @@ fn decorated_value_span(
     // empty span anchored at the mark's end. Callers that read
     // `source[start..end]` will see "" and treat it as not-a-scalar.
     (anchor_end, anchor_end)
+}
+
+/// `true` when `name` is a valid YAML anchor name per §6.9.2 —
+/// non-empty, no flow indicators (`,[]{}`), no whitespace.
+fn is_valid_anchor_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    name.bytes().all(|b| {
+        !matches!(
+            b,
+            b',' | b'[' | b']' | b'{' | b'}' | b' ' | b'\t' | b'\r' | b'\n'
+        )
+    })
 }
 
 fn is_trivia_or_property(kind: SyntaxKind) -> bool {
