@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 //! # noyalib
 //!
 //! A YAML 1.2 library for Rust. Pure safe code. Full serde integration.
