@@ -101,6 +101,49 @@ spec behaviour (zero impact on existing callers):
   ISO-8601 timestamps with embedded `:` colons are correctly
   classified as strings, not as sexagesimal.
 
+### Added — Mutable-Value experience for the CST
+
+- **`Entry::or_insert(default)`** / **`or_insert_with(f)`** /
+  **`or_insert_value(default)`** — std-collections-style
+  ergonomics on top of the existing path-shaped Entry handle.
+  Returns `Ok(true)` when the splice ran (path was vacant),
+  `Ok(false)` when the path was already occupied. Top-level
+  keys and sequence-index paths get actionable errors that
+  redirect to `Document::set` and `push_back`/`insert_after`
+  respectively.
+- **`Entry::and_modify(f)`** — closure runs only when the path
+  resolves; receives a `&mut Document` for arbitrary
+  cross-path mutations. Returns `self` so the standard
+  `and_modify(...).or_insert(...)` pattern composes.
+- **`Document::rename_anchor(old, new)`** — atomic rename of
+  every `&old` declaration and every `*old` reference in one
+  operation. Returns the count of touched sites. The whole
+  rename is performed as a single `replace_span` over the
+  document so intermediate states with mismatched anchor /
+  alias names are never observed. Validates `new` against YAML
+  1.2 §6.9.2 (no flow indicators or whitespace).
+
+### Added — Style heuristics for CST inserts
+
+- **`Document::dominant_quote_style()`** returns the file's
+  preferred scalar quote style (`Plain`, `SingleQuoted`, or
+  `DoubleQuoted`) by tallying every quoted scalar in the green
+  tree and breaking ties in favour of the simpler form. Plain
+  mapping keys are deliberately ignored — the question is
+  "when the user *did* quote a value, what did they reach
+  for?".
+- **`Document::dominant_flow_style()`** returns the dominant
+  collection layout (`FlowStyle::Block` or `FlowStyle::Auto`)
+  by counting Block vs Flow mappings and sequences.
+- **`Entry::insert_value`** now consumes both heuristics: a new
+  `Value::String` value gets the file's dominant quote style
+  applied to the spliced fragment (manual quoting since the
+  serializer's `scalar_style` config does not affect top-level
+  scalars); collections continue to splice in block form for
+  multi-line emissions. The `dominant_flow_style()` accessor
+  is exposed for callers who want to wrap typed collections in
+  `fmt::FlowMap` / `fmt::FlowSeq` before serializing.
+
 ### Added — Multi-line error snippets
 
 - **`Error::format_with_source_radius(source, radius)`** —

@@ -671,6 +671,67 @@ impl Document {
         detect_indent_unit(&self.source)
     }
 
+    /// Inspect the document and return the dominant scalar quote
+    /// style — `Plain`, `SingleQuoted`, or `DoubleQuoted`. Used by
+    /// the [`crate::cst::Entry`] insert helpers to make new
+    /// scalars adopt the file's existing convention rather than
+    /// the serializer's hard-coded default.
+    ///
+    /// The detection scans every plain / single-quoted /
+    /// double-quoted scalar leaf in the green tree, picks the
+    /// majority, and breaks ties in favour of the simpler form
+    /// (`Plain` > `SingleQuoted` > `DoubleQuoted`). Empty
+    /// documents and documents with no string-shaped scalars
+    /// default to `Plain`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    /// use noyalib::ScalarStyle;
+    ///
+    /// let single = parse_document("a: 'one'\nb: 'two'\n").unwrap();
+    /// assert_eq!(single.dominant_quote_style(), ScalarStyle::SingleQuoted);
+    ///
+    /// let double = parse_document("a: \"one\"\nb: \"two\"\n").unwrap();
+    /// assert_eq!(double.dominant_quote_style(), ScalarStyle::DoubleQuoted);
+    ///
+    /// let plain = parse_document("a: one\nb: two\n").unwrap();
+    /// assert_eq!(plain.dominant_quote_style(), ScalarStyle::Plain);
+    /// ```
+    #[must_use]
+    pub fn dominant_quote_style(&self) -> crate::ScalarStyle {
+        detect_dominant_quote_style(&self.green)
+    }
+
+    /// Inspect the document and return the dominant collection
+    /// style — `FlowStyle::Block` or `FlowStyle::Auto`
+    /// (equivalent to "flow"). Used by `Entry::insert_value` to
+    /// decide whether a typed mapping / sequence emission should
+    /// use block or flow form.
+    ///
+    /// The detection counts top-level `BlockMapping` /
+    /// `BlockSequence` vs `FlowMapping` / `FlowSequence` leaves
+    /// and picks the majority. Empty / scalar-only documents
+    /// default to `Block`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    /// use noyalib::FlowStyle;
+    ///
+    /// let block = parse_document("a:\n  - 1\n  - 2\n").unwrap();
+    /// assert_eq!(block.dominant_flow_style(), FlowStyle::Block);
+    ///
+    /// let flow = parse_document("a: [1, 2, 3]\nb: [4, 5]\n").unwrap();
+    /// assert_eq!(flow.dominant_flow_style(), FlowStyle::Auto);
+    /// ```
+    #[must_use]
+    pub fn dominant_flow_style(&self) -> crate::FlowStyle {
+        detect_dominant_flow_style(&self.green)
+    }
+
     /// Insert a new `key: fragment` entry into the block mapping at
     /// `mapping_path`. The mapping-side analogue of
     /// [`Document::push_back`].
@@ -1656,6 +1717,63 @@ fn column_of_key_at(source: &str, value_start: usize) -> Option<usize> {
             return Some(value_col);
         }
         cursor = prev_start - 1;
+    }
+}
+
+/// Walk every scalar leaf in the green tree and pick the
+/// dominant *quoted* style. Plain mapping keys overwhelm any
+/// real signal from the values so we deliberately ignore them —
+/// the question we want to answer is "when the user *did* quote
+/// a value, did they reach for `'…'` or `\"…\"`?". Documents
+/// with no quoted scalars at all default to `Plain` (the
+/// simplest form, matching what most YAML files do for short
+/// values).
+fn detect_dominant_quote_style(root: &GreenNode) -> crate::ScalarStyle {
+    let mut single = 0_usize;
+    let mut double = 0_usize;
+    walk_tokens(root, 0, &mut |kind, _| match kind {
+        SyntaxKind::SingleQuotedScalar => single += 1,
+        SyntaxKind::DoubleQuotedScalar => double += 1,
+        _ => {}
+    });
+    if single == 0 && double == 0 {
+        return crate::ScalarStyle::Plain;
+    }
+    if single >= double {
+        crate::ScalarStyle::SingleQuoted
+    } else {
+        crate::ScalarStyle::DoubleQuoted
+    }
+}
+
+/// Walk every collection leaf and pick the majority shape —
+/// block (`BlockMapping` / `BlockSequence`) vs flow
+/// (`FlowMapping` / `FlowSequence`). The result drives the
+/// "block vs flow" decision in [`crate::cst::Entry::insert_value`]
+/// when emitting a typed collection.
+fn detect_dominant_flow_style(root: &GreenNode) -> crate::FlowStyle {
+    let mut block = 0_usize;
+    let mut flow = 0_usize;
+    walk_collections(root, &mut |kind| match kind {
+        SyntaxKind::BlockMapping | SyntaxKind::BlockSequence => block += 1,
+        SyntaxKind::FlowMapping | SyntaxKind::FlowSequence => flow += 1,
+        _ => {}
+    });
+    if flow > block {
+        crate::FlowStyle::Auto
+    } else {
+        crate::FlowStyle::Block
+    }
+}
+
+/// Walk every node (not token) in the green tree, calling
+/// `visit` with each composite node's `SyntaxKind`.
+fn walk_collections(node: &GreenNode, visit: &mut dyn FnMut(SyntaxKind)) {
+    visit(node.kind());
+    for child in node.children() {
+        if let GreenChild::Node(inner) = child {
+            walk_collections(inner, visit);
+        }
     }
 }
 

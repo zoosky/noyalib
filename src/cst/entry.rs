@@ -183,26 +183,51 @@ impl<'a> Entry<'a> {
     /// As [`Self::insert`], plus serializer errors when the value
     /// cannot be emitted as YAML.
     pub fn insert_value(self, key: &str, value: &Value) -> Result<()> {
+        // Pick up the file's dominant style so the new emission
+        // matches what's already there: indent unit, scalar quote
+        // preference, and block-vs-flow collection layout.
         let unit = self.doc.indent_unit();
-        let cfg = crate::SerializerConfig::new().indent(unit);
-        let emitted = crate::to_string_with_config(value, &cfg)?;
-        // `to_string` adds a trailing `\n` for top-level emission;
-        // strip it so the spliced fragment fits cleanly into the
-        // splice templates inside `Document::insert_entry`.
-        let trimmed = emitted.trim_end_matches('\n');
+        let quote = self.doc.dominant_quote_style();
+        // For `Value::String`, apply the dominant quote style
+        // directly to the fragment text — the serializer's
+        // `scalar_style` config affects nested emissions only and
+        // is ignored for top-level scalars, so we splice the
+        // intended form ourselves.
+        let scalar_override = match (value, quote) {
+            (Value::String(s), crate::ScalarStyle::SingleQuoted) => {
+                Some(format!("'{}'", s.replace('\'', "''")))
+            }
+            (Value::String(s), crate::ScalarStyle::DoubleQuoted) => {
+                Some(format!("\"{}\"", escape_for_double_quoted(s)))
+            }
+            _ => None,
+        };
+        let trimmed_owned = match scalar_override {
+            Some(s) => s,
+            None => {
+                let cfg = crate::SerializerConfig::new().indent(unit);
+                let emitted = crate::to_string_with_config(value, &cfg)?;
+                // `to_string` adds a trailing `\n` for top-level
+                // emission; strip it so the spliced fragment fits
+                // cleanly into the splice templates inside
+                // `Document::insert_entry`.
+                emitted.trim_end_matches('\n').to_owned()
+            }
+        };
         // Collections (Mapping/Sequence) must be spliced as
-        // `key:\n<children>` even when their emission happens to fit
-        // on a single line (a one-entry mapping like `cpu: "100m"`
-        // would otherwise yield an invalid `resources: cpu: "100m"`
-        // single-line composition). Forcing a leading `\n` makes
-        // `insert_entry` take its multi-line path; the stripped-blank
-        // logic there suppresses the artificial empty line.
-        let force_block =
-            matches!(value, Value::Mapping(_) | Value::Sequence(_)) && !trimmed.contains('\n');
+        // `key:\n<children>` even when their emission happens to
+        // fit on a single line (a one-entry mapping like
+        // `cpu: "100m"` would otherwise yield an invalid
+        // `resources: cpu: "100m"` single-line composition).
+        // Forcing a leading `\n` makes `insert_entry` take its
+        // multi-line path; the stripped-blank logic there
+        // suppresses the artificial empty line.
+        let force_block = matches!(value, Value::Mapping(_) | Value::Sequence(_))
+            && !trimmed_owned.contains('\n');
         let fragment = if force_block {
-            format!("\n{trimmed}")
+            format!("\n{trimmed_owned}")
         } else {
-            trimmed.to_owned()
+            trimmed_owned
         };
         self.doc.insert_entry(&self.path, key, &fragment)
     }
@@ -501,6 +526,25 @@ fn compose_path(parent: &str, child: &str) -> String {
 }
 
 // ── Trait impls ──────────────────────────────────────────────────────
+
+/// Escape a string for inclusion inside a YAML double-quoted
+/// scalar. Per YAML 1.2 §7.3.1: backslash and double-quote are
+/// escaped; control characters get C-style escapes; everything
+/// else passes through verbatim.
+fn escape_for_double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out
+}
 
 impl Error {
     /// Internal — surface a generic "no entry" message used by the
