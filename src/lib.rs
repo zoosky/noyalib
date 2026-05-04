@@ -144,6 +144,8 @@ pub(crate) mod prelude {
 }
 
 mod anchors;
+/// Internal RFC 4648 base64 codec for `!!binary` scalars.
+mod base64;
 /// Zero-copy YAML values that borrow from the input.
 pub mod borrowed;
 mod comments;

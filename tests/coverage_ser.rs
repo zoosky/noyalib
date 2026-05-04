@@ -165,9 +165,20 @@ fn serialize_u64_max() {
 
 #[test]
 fn serialize_bytes() {
+    // Phase 1.2 contract: bytes serialise as a `!!binary` tagged
+    // scalar carrying the RFC 4648 base64 encoding (YAML 1.2.2
+    // §10.4) — not a UTF-8 string. The string-encoding form was
+    // wrong both for non-UTF-8 payloads and for round-trip with
+    // `serde_bytes::ByteBuf`.
     let bytes = serde_bytes::Bytes::new(b"hello");
     let val = to_value(&bytes).unwrap();
-    assert!(val.is_string());
+    let tagged = match &val {
+        Value::Tagged(t) => t.as_ref(),
+        other => panic!("expected Tagged !!binary value, got {other:?}"),
+    };
+    assert_eq!(tagged.tag().as_str(), "!!binary");
+    // "hello" in standard base64 is "aGVsbG8=".
+    assert_eq!(tagged.value().as_str(), Some("aGVsbG8="));
 }
 
 #[test]

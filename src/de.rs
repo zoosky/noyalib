@@ -688,6 +688,24 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::String(s) => self.wrap_err(visitor.visit_bytes(s.as_bytes())),
+            // YAML 1.2.2 §10.4: `!!binary` carries an RFC 4648
+            // base64-encoded payload. Decode on demand when a serde
+            // target asks for bytes / a byte buffer (Vec<u8>,
+            // serde_bytes::ByteBuf, &[u8] via owned visit).
+            Value::Tagged(boxed) if is_binary_tag(boxed.tag().as_str()) => {
+                match boxed.value() {
+                    Value::String(s) => match crate::base64::decode(s) {
+                        Ok(bytes) => self.wrap_err(visitor.visit_byte_buf(bytes)),
+                        Err(why) => self.wrap_err(Err(Error::Deserialize(format!(
+                            "!!binary: {why}"
+                        )))),
+                    },
+                    other => self.wrap_err(Err(Error::TypeMismatch {
+                        expected: "string-shaped !!binary content",
+                        found: type_name(other),
+                    })),
+                }
+            }
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "bytes",
                 found: type_name(self.value),
@@ -1103,6 +1121,19 @@ impl<'de> MapAccess<'de> for SpannedMapAccess<'de> {
 
         seed.deserialize(val.into_deserializer())
     }
+}
+
+/// True if `tag` names the YAML 1.2 binary tag, in any of the forms
+/// the scanner / loader may produce: shorthand `!!binary`, suffix
+/// `binary` (post-handle-stripping), or the canonical full URI
+/// `tag:yaml.org,2002:binary`. Stripping the leading `!` on the
+/// shorthand keeps `Tag::new("!!binary") == Tag::new("binary")` —
+/// which noyalib's `Tag` already considers equal — both matching.
+fn is_binary_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "!!binary" | "binary" | "tag:yaml.org,2002:binary" | "!<tag:yaml.org,2002:binary>"
+    )
 }
 
 fn type_name(value: &Value) -> String {

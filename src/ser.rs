@@ -1300,12 +1300,19 @@ impl ser::Serializer for Serializer {
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Value> {
-        match String::from_utf8(v.to_vec()) {
-            Ok(s) => Ok(Value::String(s)),
-            Err(_) => Err(Error::Serialize(
-                "bytes contain invalid UTF-8; YAML strings must be valid UTF-8".into(),
-            )),
-        }
+        // YAML 1.2.2 §10.4: byte buffers serialise as a `!!binary`
+        // tagged scalar carrying the RFC 4648 base64 encoding of
+        // the payload. This is the round-trip partner of the
+        // `deserialize_bytes` path that recognises `!!binary` and
+        // base64-decodes on demand. Holds for any `serde_bytes`
+        // wrapper (`ByteBuf`, `Bytes`) and any `&[u8]` /
+        // `Vec<u8>`-shaped target the caller annotates with
+        // `#[serde(with = "serde_bytes")]`.
+        let encoded = crate::base64::encode(v);
+        Ok(Value::Tagged(Box::new(TaggedValue::new(
+            Tag::new("!!binary"),
+            Value::String(encoded),
+        ))))
     }
 
     fn serialize_none(self) -> Result<Value> {

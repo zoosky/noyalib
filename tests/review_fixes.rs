@@ -46,30 +46,52 @@ fn deserialize_char_rejects_multichar_string() {
 }
 
 // ============================================================================
-// P1-1: serialize_bytes rejects invalid UTF-8
+// Phase 1.2: serialize_bytes emits a `!!binary` tagged scalar (RFC 4648
+// base64 per YAML 1.2.2 §10.4) — supersedes the earlier P1-1 behaviour
+// of forcing bytes through UTF-8 validation. Round-trips with
+// `serde_bytes::ByteBuf` / `Bytes` over any byte payload, including
+// payloads that are not valid UTF-8.
 // ============================================================================
 
 #[test]
 fn serialize_bytes_valid_utf8() {
     let bytes = serde_bytes::Bytes::new(b"hello");
     let val = to_value(&bytes).unwrap();
-    assert_eq!(val.as_str(), Some("hello"));
+    let tagged = match &val {
+        Value::Tagged(t) => t.as_ref(),
+        other => panic!("expected !!binary Tagged, got {other:?}"),
+    };
+    assert_eq!(tagged.tag().as_str(), "!!binary");
+    assert_eq!(tagged.value().as_str(), Some("aGVsbG8="));
 }
 
 #[test]
-fn serialize_bytes_invalid_utf8_errors() {
-    let bytes = serde_bytes::Bytes::new(&[0xFF, 0xFE]);
-    let result = to_value(&bytes);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("invalid UTF-8"), "error was: {err}");
+fn serialize_bytes_invalid_utf8_succeeds_via_binary() {
+    // The whole point of `!!binary`: non-UTF-8 payloads must
+    // round-trip cleanly. The previous "errors on invalid UTF-8"
+    // contract was a workaround for not having `!!binary` at all.
+    let payload: &[u8] = &[0xFF, 0xFE];
+    let bytes = serde_bytes::Bytes::new(payload);
+    let val = to_value(&bytes).expect("non-UTF-8 bytes must serialise via !!binary");
+    let tagged = match &val {
+        Value::Tagged(t) => t.as_ref(),
+        other => panic!("expected !!binary Tagged, got {other:?}"),
+    };
+    assert_eq!(tagged.tag().as_str(), "!!binary");
+    // Base64 of [0xFF, 0xFE] is "//4=".
+    assert_eq!(tagged.value().as_str(), Some("//4="));
 }
 
 #[test]
 fn serialize_bytes_empty() {
     let bytes = serde_bytes::Bytes::new(b"");
     let val = to_value(&bytes).unwrap();
-    assert_eq!(val.as_str(), Some(""));
+    let tagged = match &val {
+        Value::Tagged(t) => t.as_ref(),
+        other => panic!("expected !!binary Tagged, got {other:?}"),
+    };
+    assert_eq!(tagged.tag().as_str(), "!!binary");
+    assert_eq!(tagged.value().as_str(), Some(""));
 }
 
 // ============================================================================
