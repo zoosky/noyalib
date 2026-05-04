@@ -585,6 +585,9 @@ impl Error {
     /// pointing at the column. Out-of-range lines fall back to plain
     /// `Display`.
     ///
+    /// For rustc-style multi-line context with surrounding lines, use
+    /// [`Self::format_with_source_radius`].
+    ///
     /// # Examples
     ///
     /// ```
@@ -613,6 +616,93 @@ impl Error {
             .chain(core::iter::once('^'))
             .collect();
         format!("error: {self}\n  --> line {line_no}:{col}\n  {line}\n  {caret}")
+    }
+
+    /// Format the error with `radius` lines of context above and
+    /// below the offending line — rustc-style. Each line gets a line
+    /// number on the left; the caret line under the offending column
+    /// is unnumbered. The output is byte-for-byte stable across
+    /// minor releases (no terminal escape codes, no
+    /// platform-conditional whitespace).
+    ///
+    /// Out-of-range locations fall back to plain `Display` (no
+    /// snippet) — same contract as [`Self::format_with_source`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// // Indentation-mismatch error — carries a concrete `(line,
+    /// // column)` location, so the snippet renderer engages.
+    /// let source = "\
+    /// header: ok
+    /// service:
+    ///    nested: x
+    ///   bad: y
+    /// trailer: ok
+    /// ";
+    /// let e = from_str::<Value>(source).unwrap_err();
+    /// let formatted = e.format_with_source_radius(source, 1);
+    /// // Output includes the offending line plus a single line
+    /// // of context above and below.
+    /// assert!(formatted.contains("|"));
+    /// assert!(formatted.contains("bad: y"));
+    /// ```
+    pub fn format_with_source_radius(&self, source: &str, radius: usize) -> String {
+        let loc = match self.location() {
+            Some(l) => l,
+            None => return format!("{self}"),
+        };
+        let line_no = loc.line();
+        let col = loc.column();
+        let line_idx = line_no.saturating_sub(1);
+
+        let lines: Vec<&str> = source.lines().collect();
+        if lines.is_empty() {
+            return format!("{self}");
+        }
+        let target = match lines.get(line_idx) {
+            Some(_) => line_idx,
+            None if line_no == 0 => 0,
+            None => return format!("{self}"),
+        };
+
+        let lo = target.saturating_sub(radius);
+        let hi = (target + radius).min(lines.len().saturating_sub(1));
+        // Width of the highest line number we'll print, for column
+        // alignment of the gutter.
+        let gutter_w = (hi + 1).to_string().len();
+        let caret_col = col.saturating_sub(1);
+
+        let mut out = format!("error: {self}\n");
+        out.push_str(&format!(
+            "  --> line {line_no}:{col}\n",
+            line_no = line_no,
+            col = col,
+        ));
+
+        // Top spacer
+        out.push_str(&format!("{:>w$} |\n", "", w = gutter_w));
+        for (i, idx) in (lo..=hi).enumerate() {
+            let n = idx + 1;
+            let line_text = lines[idx];
+            out.push_str(&format!(
+                "{n:>w$} | {line_text}\n",
+                n = n,
+                w = gutter_w,
+                line_text = line_text,
+            ));
+            if idx == target {
+                // Caret line — gutter is blank, then `|`, then
+                // spaces up to the column, then `^`.
+                let pad = " ".repeat(caret_col);
+                out.push_str(&format!("{:>w$} | {pad}^\n", "", w = gutter_w, pad = pad,));
+            }
+            let _ = i;
+        }
+        // Bottom spacer
+        out.push_str(&format!("{:>w$} |\n", "", w = gutter_w));
+        out
     }
 
     /// Convert the error into a shared Arc pointer. If the error is

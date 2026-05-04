@@ -32,6 +32,59 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   fields at the top level and at any depth are surfaced through
   the standard wrapper without noyalib-specific integration.
 
+### Added — `figment` provider
+
+- **`figment` Cargo feature** — pulls in `figment` 0.10 and
+  exposes `noyalib::figment::Yaml`, a drop-in `Format` + `Provider`
+  that plugs into `Figment::merge` / `Figment::join` chains the
+  same way `figment::providers::Toml` and
+  `figment::providers::Json` do.
+- 8 integration tests in `tests/figment_provider.rs` cover
+  string/file extraction, layered merge / join semantics, parse-
+  and missing-field error propagation, nested struct round-trip,
+  and YAML 1.2 anchor + alias resolution through the provider.
+
+### Added — `ParserConfig` knobs
+
+Four additive `ParserConfig` toggles, all defaulting to YAML 1.2
+spec behaviour (zero impact on existing callers):
+
+- **`merge_key_policy`** with [`crate::MergeKeyPolicy`] —
+  `Auto` (default) preserves YAML 1.2 §10.2 merge semantics;
+  `AsOrdinary` keeps `<<` as a literal key in the resulting
+  mapping; `Error` rejects any document containing a `<<` key.
+  When set to non-`Auto`, the deserializer routes through the
+  AST loader (the streaming path hard-wires the YAML 1.2
+  semantics).
+- **`no_schema`** — when `true`, every plain scalar surfaces as
+  a `Value::String` regardless of whether it would normally
+  resolve to `null` / `bool` / int / float. The "Norway problem"
+  fix: schema strictness is opt-in. Quoted scalars and explicit
+  tags (`!!int`, `!!bool`) are unaffected.
+- **`legacy_octal_numbers`** — when `true`, accepts YAML
+  1.1-style bare `0`-prefix octal literals (`0644` → 420) in
+  addition to the YAML 1.2 `0o644` form. Numerics with `8` or
+  `9` digits fall through to decimal even with the toggle on.
+- **`ignore_binary_tag_for_string`** — when `true`,
+  deserializing `!!binary "ABCD"` into a `String` target yields
+  the literal base64 source string rather than rejecting on tag
+  mismatch. The canonical bytes path (`Vec<u8>`,
+  `serde_bytes::ByteBuf`) is unaffected — it always decodes the
+  base64 payload. Useful for migrations from Python pyyaml-style
+  applications that treat the tag as advisory.
+
+### Added — Multi-line error snippets
+
+- **`Error::format_with_source_radius(source, radius)`** —
+  rustc-style error rendering with `radius` lines of context
+  above and below the offending line. Output uses a fixed-width
+  gutter (line numbers right-aligned to the widest), a `|` rule,
+  and a caret line under the offending column. Falls back to
+  plain `Display` when the error has no location or the location
+  is past EOF.
+- The original [`crate::Error::format_with_source`] is preserved
+  byte-for-byte; the radius variant is purely additive.
+
 ## [0.0.1] - 2026-05-04
 
 The launch release. Sections below catalogue every capability the

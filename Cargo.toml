@@ -247,6 +247,10 @@ serde_json = { version = "1.0", optional = true }
 # we don't drag in `reqwest` for HTTP `$ref` resolution; users who
 # need that can re-enable it via their own dep.
 jsonschema = { version = "0.33", optional = true, default-features = false }
+# `figment` integration — drop-in `Provider` for the popular
+# layered-configuration crate. Pulled in only when the `figment`
+# feature is on so non-figment users don't pay for it.
+figment = { version = "0.10", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -317,6 +321,11 @@ schema = ["dep:schemars", "dep:serde_json"]
 # `schema` so the codegen and validation halves of Phase 3 can be
 # enabled together with one flag.
 validate-schema = ["schema", "dep:jsonschema"]
+# `figment` provider integration. With this on, `noyalib::figment`
+# exposes a `Yaml` provider that drops into `figment::Figment`
+# layering chains the same way `figment::providers::Toml` /
+# `figment::providers::Json` do.
+figment = ["dep:figment", "std"]
 # SIMD-friendly multi-byte search primitives for parser hot paths.
 # Phase 4: ships a feature-gated `noyalib::simd` module containing
 # `find_any_of` and friends — vectorised via memchr's SSE2 / NEON

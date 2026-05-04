@@ -173,6 +173,11 @@ pub mod diagnostic;
 /// Multi-document loading and iteration.
 pub mod document;
 mod error;
+/// [`figment`] provider integration. Pulls in `figment` 0.10
+/// when the `figment` Cargo feature is enabled.
+#[cfg(feature = "figment")]
+#[cfg_attr(docsrs, doc(cfg(feature = "figment")))]
+pub mod figment;
 /// Formatting wrappers for per-value YAML output style control.
 pub mod fmt;
 mod parser;
@@ -196,6 +201,7 @@ mod schema_codegen;
 #[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
 mod schema_validate;
 mod ser;
+
 /// SIMD-friendly multi-byte search primitives.
 ///
 /// Pure-safe Rust (no `unsafe`, no platform intrinsics, no
