@@ -1357,7 +1357,7 @@ impl<'de> MapAccess<'de> for SpannedMapAccess<'de> {
 /// `tag:yaml.org,2002:binary`. Stripping the leading `!` on the
 /// shorthand keeps `Tag::new("!!binary") == Tag::new("binary")` —
 /// which noyalib's `Tag` already considers equal — both matching.
-fn is_binary_tag(tag: &str) -> bool {
+pub(crate) fn is_binary_tag(tag: &str) -> bool {
     matches!(
         tag,
         "!!binary" | "binary" | "tag:yaml.org,2002:binary" | "!<tag:yaml.org,2002:binary>"

@@ -1045,8 +1045,75 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
         self.deserialize_map(visitor)
     }
 
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.skip_to_content()?;
+        // YAML 1.2.2 §10.4: a `!!binary`-tagged scalar carries an
+        // RFC 4648 base64 payload. Recognise the tag on the current
+        // event, decode without buffering, and hand the bytes to the
+        // visitor — the AST fallback path is unnecessary here.
+        let is_binary = match self.current.as_ref() {
+            Some(Event::Scalar { tag: Some(t), .. }) => {
+                let full = format!("{}{}", t.0, t.1);
+                crate::de::is_binary_tag(&full)
+            }
+            _ => false,
+        };
+        if is_binary {
+            let _ = self.take_tag_from_current();
+            if let Event::Scalar { value, .. } = self.next_event()? {
+                return match crate::base64::decode(&value) {
+                    Ok(bytes) => visitor.visit_byte_buf(bytes),
+                    Err(why) => Err(Error::Deserialize(format!("!!binary: {why}"))),
+                };
+            }
+            return Err(Error::TypeMismatch {
+                expected: "string-shaped !!binary content",
+                found: "non-scalar".into(),
+            });
+        }
+        if let Event::Scalar { value, style, .. } = self.next_event()? {
+            // Mirror the AST path: only string-shaped scalars are
+            // accepted as bytes. A plain scalar that resolves to an
+            // int / float / bool / null is a type error — the caller
+            // wanted bytes, not a number's UTF-8 representation.
+            return match self.resolve_scalar(&value, style) {
+                Scalar::Str(s) => visitor.visit_bytes(s.as_bytes()),
+                Scalar::Null => Err(Error::TypeMismatch {
+                    expected: "bytes",
+                    found: "null".into(),
+                }),
+                Scalar::Bool(_) => Err(Error::TypeMismatch {
+                    expected: "bytes",
+                    found: "bool".into(),
+                }),
+                Scalar::Int(_) => Err(Error::TypeMismatch {
+                    expected: "bytes",
+                    found: "integer".into(),
+                }),
+                Scalar::Float(_) => Err(Error::TypeMismatch {
+                    expected: "bytes",
+                    found: "float".into(),
+                }),
+            };
+        }
+        Err(Error::TypeMismatch {
+            expected: "bytes",
+            found: "non-scalar".into(),
+        })
+    }
+
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_bytes(visitor)
+    }
+
     serde::forward_to_deserialize_any! {
-        i8 i16 i32 u8 u16 u32 f32 char bytes byte_buf
+        i8 i16 i32 u8 u16 u32 f32 char
         tuple tuple_struct
     }
 }

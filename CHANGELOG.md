@@ -7,6 +7,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Streaming `!!binary`
+
+- **`StreamingDeserializer` honours `!!binary` natively** — `serde_bytes`
+  byte targets (`Vec<u8>` with `#[serde(with = "serde_bytes")]`,
+  `serde_bytes::ByteBuf`) now decode RFC 4648 base64 directly inside
+  the streaming path without falling back to the AST. Mirrors the
+  AST-path type contract: untagged plain scalars that resolve to
+  int / float / bool / null produce a `TypeMismatch` rather than
+  silently coercing their UTF-8 representation to bytes.
+
 ## [0.0.1] - 2026-05-04
 
 The launch release. Sections below catalogue every capability the
