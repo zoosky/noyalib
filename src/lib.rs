@@ -255,7 +255,7 @@ pub use schema::{
 pub use schema_codegen::{schema_for, schema_for_yaml, JsonSchema};
 #[cfg(feature = "validate-schema")]
 #[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
-pub use schema_validate::{validate_against_schema, validate_against_schema_str};
+pub use schema_validate::{coerce_to_schema, validate_against_schema, validate_against_schema_str};
 pub use ser::{
     to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,
     to_string_multi_with_config, to_string_with_config, to_value, FlowStyle, ScalarStyle,

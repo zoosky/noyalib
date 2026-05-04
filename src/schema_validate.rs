@@ -37,7 +37,7 @@
 //! ```
 
 use crate::error::{Error, Result};
-use crate::value::Value;
+use crate::value::{Number, Value};
 
 /// Validate `value` against the JSON Schema 2020-12 document
 /// `schema`. Both inputs are [`Value`] trees — the schema is
@@ -137,6 +137,155 @@ pub fn validate_against_schema_str(yaml: &str, schema_yaml: &str) -> Result<()> 
 /// validator would reject them downstream regardless.
 fn value_to_json(v: &Value) -> core::result::Result<serde_json::Value, String> {
     serde_json::to_value(v).map_err(|e| e.to_string())
+}
+
+/// Apply schema-driven type coercions to `value` in place. Walks
+/// the validator output for type-mismatch errors, and for each
+/// case where the instance is a [`Value::String`] but the schema
+/// requires an integer / number / boolean — and the string parses
+/// cleanly into that target type — replaces the offending node
+/// with the coerced value.
+///
+/// Returns the number of coercions applied. Coercions that don't
+/// have a clean parse (e.g. `"abc"` against `type: integer`) are
+/// left in place; the caller is expected to re-run
+/// [`validate_against_schema`] afterwards and surface any
+/// remaining violations.
+///
+/// This pairs naturally with hand-written YAML where every value
+/// is a string in the typed sense (because the user did not quote
+/// vs. unquote intentionally) but the schema knows the intended
+/// types. It fits into a CI / formatter pipeline as a "fix pass"
+/// before strict validation kicks in.
+///
+/// # Errors
+///
+/// As [`validate_against_schema`].
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{coerce_to_schema, from_str, Value};
+///
+/// let schema: Value = from_str(
+///     "type: object\nproperties:\n  port:\n    type: integer\n",
+/// ).unwrap();
+/// let mut data: Value = from_str("port: \"8080\"\n").unwrap();
+/// let n = coerce_to_schema(&mut data, &schema).unwrap();
+/// assert_eq!(n, 1, "one fix expected");
+/// // The port is now an integer — re-validation succeeds.
+/// noyalib::validate_against_schema(&data, &schema).unwrap();
+/// ```
+pub fn coerce_to_schema(value: &mut Value, schema: &Value) -> Result<usize> {
+    use jsonschema::error::{TypeKind, ValidationErrorKind};
+    use jsonschema::JsonType;
+
+    let schema_json = value_to_json(schema)
+        .map_err(|e| Error::Custom(format!("coerce_to_schema: schema -> JSON: {e}")))?;
+    let validator = jsonschema::validator_for(&schema_json).map_err(|e| {
+        Error::Custom(format!(
+            "coerce_to_schema: schema is not a valid JSON Schema: {e}"
+        ))
+    })?;
+
+    let mut applied: usize = 0;
+    // Cap the fix-loop to bound total work even on adversarial
+    // schemas where each coercion exposes a fresh error elsewhere.
+    let max_iterations = 1024;
+
+    for _ in 0..max_iterations {
+        let instance_json = value_to_json(value)
+            .map_err(|e| Error::Parse(format!("coerce_to_schema: value -> JSON: {e}")))?;
+        let mut applied_this_pass = false;
+
+        // Collect path + target type pairs first so the borrow on
+        // `value` for the subsequent mutation doesn't overlap with
+        // the iterator.
+        let mut targets: Vec<(String, JsonType)> = Vec::new();
+        for err in validator.iter_errors(&instance_json) {
+            if let ValidationErrorKind::Type {
+                kind: TypeKind::Single(target),
+            } = &err.kind
+            {
+                targets.push((err.instance_path.to_string(), *target));
+            }
+        }
+
+        for (path, target) in targets {
+            let segments = parse_json_pointer(&path);
+            if let Some(node) = navigate_mut(value, &segments) {
+                if try_coerce(node, target) {
+                    applied += 1;
+                    applied_this_pass = true;
+                }
+            }
+        }
+
+        if !applied_this_pass {
+            break;
+        }
+    }
+
+    Ok(applied)
+}
+
+/// Parse an RFC 6901 JSON pointer into segment strings.
+fn parse_json_pointer(s: &str) -> Vec<String> {
+    if s.is_empty() || s == "/" {
+        return Vec::new();
+    }
+    s.trim_start_matches('/')
+        .split('/')
+        .map(|seg| seg.replace("~1", "/").replace("~0", "~"))
+        .collect()
+}
+
+/// Walk `value` along `path` and return a mutable reference to the
+/// addressed node, or `None` if the path is unreachable.
+fn navigate_mut<'a>(value: &'a mut Value, path: &[String]) -> Option<&'a mut Value> {
+    let mut cursor = value;
+    for seg in path {
+        cursor = match cursor {
+            Value::Mapping(m) => m.get_mut(seg.as_str())?,
+            Value::Sequence(s) => {
+                let idx: usize = seg.parse().ok()?;
+                s.get_mut(idx)?
+            }
+            _ => return None,
+        };
+    }
+    Some(cursor)
+}
+
+/// Try to coerce `node` into `target`. Returns `true` when the
+/// coercion was applied. Only the safe directions are honoured:
+/// string → integer / number / boolean when the parse succeeds.
+fn try_coerce(node: &mut Value, target: jsonschema::JsonType) -> bool {
+    use jsonschema::JsonType;
+    let s = match node {
+        Value::String(s) => s.clone(),
+        _ => return false,
+    };
+    let coerced = match target {
+        JsonType::Integer => s.parse::<i64>().ok().map(|n| Value::Number(Number::Integer(n))),
+        JsonType::Number => s
+            .parse::<f64>()
+            .ok()
+            .map(|f| Value::Number(Number::Float(f))),
+        JsonType::Boolean => match s.as_str() {
+            "true" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        _ => None,
+    };
+    match coerced {
+        Some(new_v) => {
+            *node = new_v;
+            true
+        }
+        None => false,
+    }
 }
 
 #[cfg(test)]

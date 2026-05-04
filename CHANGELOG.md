@@ -17,6 +17,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   int / float / bool / null produce a `TypeMismatch` rather than
   silently coercing their UTF-8 representation to bytes.
 
+### Added — Schema-driven type coercion (surgical `--fix`)
+
+- **`noyalib::coerce_to_schema(value, schema) -> Result<usize>`** —
+  walks JSON Schema 2020-12 type-mismatch errors against an
+  in-memory `Value` and coerces string-shaped values into the
+  schema's expected type when the parse succeeds. Targets the most
+  common hand-written-YAML failure mode: `port: "8080"` gets
+  rewritten to `port: 8080` automatically when the schema says
+  `port: integer`.
+- Handles three coercions: `String → Integer`, `String → Number`,
+  `String → Boolean`. Unparseable inputs are left in place so the
+  caller can surface the residue via a follow-up
+  `validate_against_schema` call.
+- Iterative fix-loop (capped at 1024 passes) re-runs validation
+  after each coercion so cascading errors converge cleanly.
+- 8 integration tests in `tests/coerce_to_schema.rs` cover the
+  three target types, nested objects, sequence items, mixed
+  valid / fixable / unfixable inputs, and the no-op case.
+
 ### Added — Portable-SIMD structural scanner
 
 - **`SimdScanner` type** in `noyalib::simd` — build-once,
