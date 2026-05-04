@@ -11,7 +11,9 @@
 
 #![allow(missing_docs)]
 
-use noyalib::policy::{DenyAnchors, DenyTags, MaxScalarLength, Policy, PolicyEvent, PolicyEventKind};
+use noyalib::policy::{
+    DenyAnchors, DenyTags, MaxScalarLength, Policy, PolicyEvent, PolicyEventKind,
+};
 use noyalib::{from_str_with_config, ParserConfig, Value};
 
 // ── DenyAnchors ─────────────────────────────────────────────────────

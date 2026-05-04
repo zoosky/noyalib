@@ -267,7 +267,10 @@ fn try_coerce(node: &mut Value, target: jsonschema::JsonType) -> bool {
         _ => return false,
     };
     let coerced = match target {
-        JsonType::Integer => s.parse::<i64>().ok().map(|n| Value::Number(Number::Integer(n))),
+        JsonType::Integer => s
+            .parse::<i64>()
+            .ok()
+            .map(|n| Value::Number(Number::Integer(n))),
         JsonType::Number => s
             .parse::<f64>()
             .ok()
