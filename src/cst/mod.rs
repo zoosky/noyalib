@@ -61,6 +61,7 @@
 //! assert_eq!(joined, src);
 //! ```
 
+mod anchor;
 mod annotated;
 mod builder;
 mod document;
@@ -69,6 +70,7 @@ mod format;
 mod green;
 mod syntax;
 
+pub use anchor::{AliasInfo, AnchorInfo};
 pub use annotated::CommentBundle;
 pub use document::{parse_document, parse_stream, Document, RepairScope};
 pub use entry::Entry;
