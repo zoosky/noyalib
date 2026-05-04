@@ -5,7 +5,6 @@
 //!
 //! Validates noyalib against the official YAML test suite.
 
-
 use noyalib::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -19,8 +18,8 @@ fn decode_test_suite_markers(input: &str) -> String {
     let mut chars = input.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '␣' => out.push(' '),         // U+2423 OPEN BOX → space
-            '⇥' => out.push('\t'),         // U+21E5 RIGHTWARDS ARROW TO BAR → tab
+            '␣' => out.push(' '),  // U+2423 OPEN BOX → space
+            '⇥' => out.push('\t'), // U+21E5 RIGHTWARDS ARROW TO BAR → tab
             '↵' => {
                 // U+21B5 DOWNWARDS ARROW WITH CORNER LEFTWARDS → newline.
                 // Test suite convention: an `↵` on its own line both
@@ -31,8 +30,8 @@ fn decode_test_suite_markers(input: &str) -> String {
                     let _ = chars.next();
                 }
             }
-            '↓' => out.push('\r'),         // U+2193 DOWNWARDS ARROW → CR
-            '⇔' => out.push('\u{feff}'),   // U+21D4 LEFT RIGHT DOUBLE ARROW → BOM
+            '↓' => out.push('\r'),       // U+2193 DOWNWARDS ARROW → CR
+            '⇔' => out.push('\u{feff}'), // U+21D4 LEFT RIGHT DOUBLE ARROW → BOM
             // U+220E END OF PROOF — sentinel that strips the *rest of
             // the current line*, including the line break that follows
             // it. Used by the test suite to anchor whether trailing
@@ -69,7 +68,7 @@ fn decode_test_suite_markers(input: &str) -> String {
                     }
                 }
             }
-            '»' => out.push('\t'),         // U+00BB RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK → tab
+            '»' => out.push('\t'), // U+00BB RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK → tab
             _ => out.push(c),
         }
     }
@@ -91,12 +90,14 @@ fn json_value_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
             // Compare as f64 — covers int↔float equivalence
             // (450.00 vs 450) without losing precision for the
             // values the YAML core schema can actually emit.
-            an.as_f64() == bn.as_f64() && an.as_f64().is_some()
-                || an == bn
+            an.as_f64() == bn.as_f64() && an.as_f64().is_some() || an == bn
         }
         (V::Array(av), V::Array(bv)) => {
             av.len() == bv.len()
-                && av.iter().zip(bv.iter()).all(|(x, y)| json_value_equal(x, y))
+                && av
+                    .iter()
+                    .zip(bv.iter())
+                    .all(|(x, y)| json_value_equal(x, y))
         }
         (V::Object(am), V::Object(bm)) => {
             am.len() == bm.len()
@@ -109,8 +110,7 @@ fn json_value_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
 }
 
 fn json_values_equal(a: &[serde_json::Value], b: &[serde_json::Value]) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b.iter()).all(|(x, y)| json_value_equal(x, y))
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| json_value_equal(x, y))
 }
 
 /// Test cases the YAML 1.2 spec exercises that this version does not yet
@@ -151,14 +151,25 @@ fn load_test_suite(dir: &Path) -> Vec<TestCase> {
 
         for doc in docs {
             let id = path.file_stem().unwrap().to_str().unwrap().to_string();
-            let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
+            let name = doc
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unnamed")
+                .to_string();
             let yaml = match doc.get("yaml").and_then(|v| v.as_str()) {
                 Some(s) => s.to_string(),
                 None => continue, // Skip cases without YAML
             };
             let fail = doc.get("fail").and_then(|v| v.as_bool()).unwrap_or(false);
-            let json = doc.get("json").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let tags = doc.get("tags").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let json = doc
+                .get("json")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let tags = doc
+                .get("tags")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
 
             cases.push(TestCase {
                 id,
@@ -201,14 +212,16 @@ fn official_suite() {
                     fail += 1;
                 } else if let Some(ref expected_json) = case.json {
                     let actual_json = serde_json::to_string(&vals).unwrap();
-                    
-                    let expected_vals: Vec<serde_json::Value> = serde_json::Deserializer::from_str(expected_json)
-                        .into_iter::<serde_json::Value>()
-                        .map(|v| v.unwrap_or(serde_json::Value::Null))
-                        .collect();
-                    
+
+                    let expected_vals: Vec<serde_json::Value> =
+                        serde_json::Deserializer::from_str(expected_json)
+                            .into_iter::<serde_json::Value>()
+                            .map(|v| v.unwrap_or(serde_json::Value::Null))
+                            .collect();
+
                     // actual_json is a JSON array because vals is a Vec<Value>
-                    let actual_vals_wrapped: serde_json::Value = serde_json::from_str(&actual_json).unwrap();
+                    let actual_vals_wrapped: serde_json::Value =
+                        serde_json::from_str(&actual_json).unwrap();
                     let actual_vals = actual_vals_wrapped.as_array().cloned().unwrap_or_default();
 
                     if !json_values_equal(&expected_vals, &actual_vals) {
@@ -235,7 +248,11 @@ fn official_suite() {
     }
 
     let total = pass + fail + skip;
-    let compliance = if total > skip { (pass as f64 / (total - skip) as f64) * 100.0 } else { 100.0 };
+    let compliance = if total > skip {
+        (pass as f64 / (total - skip) as f64) * 100.0
+    } else {
+        100.0
+    };
 
     eprintln!();
     eprintln!("═══ YAML Test Suite Compliance ═══");

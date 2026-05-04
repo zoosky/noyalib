@@ -153,7 +153,7 @@ impl Document {
             let prev_line_end = cursor - 1; // the '\n' that ended the previous line
             let prev_line_start = line_start(src, prev_line_end.saturating_sub(1));
             let line_text = &src[prev_line_start..prev_line_end];
-            let trimmed = line_text.trim_start_matches(|c: char| c == ' ' || c == '\t');
+            let trimmed = line_text.trim_start_matches([' ', '\t']);
 
             if trimmed.is_empty() {
                 // Blank line — does not break the run, does not
@@ -302,12 +302,13 @@ mod tests {
         // inline comment of its last child entry. The user's mental
         // model of `comments_at("server")` is "comments on `server`",
         // not "comments on `server.port`".
-        let doc = parse_document(
-            "server:\n  host: localhost\n  port: 8080  # main HTTP port\n",
-        )
-        .unwrap();
+        let doc =
+            parse_document("server:\n  host: localhost\n  port: 8080  # main HTTP port\n").unwrap();
         let server = doc.comments_at("server");
-        assert!(server.inline.is_none(), "block must not inherit child inline");
+        assert!(
+            server.inline.is_none(),
+            "block must not inherit child inline"
+        );
         let port = doc.comments_at("server.port");
         assert_eq!(port.inline.as_ref().unwrap().text, " main HTTP port");
     }

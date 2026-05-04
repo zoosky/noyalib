@@ -14,9 +14,9 @@
 
 use crate::error::{Error, Result};
 use crate::parser::{self};
+use crate::prelude::*;
 use crate::span_context;
 use crate::value::{Number, Value};
-use crate::prelude::*;
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 #[cfg(feature = "std")]
@@ -692,20 +692,16 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             // base64-encoded payload. Decode on demand when a serde
             // target asks for bytes / a byte buffer (Vec<u8>,
             // serde_bytes::ByteBuf, &[u8] via owned visit).
-            Value::Tagged(boxed) if is_binary_tag(boxed.tag().as_str()) => {
-                match boxed.value() {
-                    Value::String(s) => match crate::base64::decode(s) {
-                        Ok(bytes) => self.wrap_err(visitor.visit_byte_buf(bytes)),
-                        Err(why) => self.wrap_err(Err(Error::Deserialize(format!(
-                            "!!binary: {why}"
-                        )))),
-                    },
-                    other => self.wrap_err(Err(Error::TypeMismatch {
-                        expected: "string-shaped !!binary content",
-                        found: type_name(other),
-                    })),
-                }
-            }
+            Value::Tagged(boxed) if is_binary_tag(boxed.tag().as_str()) => match boxed.value() {
+                Value::String(s) => match crate::base64::decode(s) {
+                    Ok(bytes) => self.wrap_err(visitor.visit_byte_buf(bytes)),
+                    Err(why) => self.wrap_err(Err(Error::Deserialize(format!("!!binary: {why}")))),
+                },
+                other => self.wrap_err(Err(Error::TypeMismatch {
+                    expected: "string-shaped !!binary content",
+                    found: type_name(other),
+                })),
+            },
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "bytes",
                 found: type_name(self.value),

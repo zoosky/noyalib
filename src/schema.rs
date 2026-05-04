@@ -326,7 +326,9 @@ mod tests {
 
     #[test]
     fn test_is_yaml_failsafe_compatible() {
-        assert!(is_yaml_failsafe_compatible(&Value::String("test".to_string())));
+        assert!(is_yaml_failsafe_compatible(&Value::String(
+            "test".to_string()
+        )));
         assert!(!is_yaml_failsafe_compatible(&Value::from(42)));
     }
 }

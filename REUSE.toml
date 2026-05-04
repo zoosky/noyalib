@@ -1,0 +1,96 @@
+# REUSE 3.3 annotations: blanket licensing for files that don't
+# carry an inline SPDX header (config, fixtures, third-party test
+# corpora, generated artefacts). Source code files (.rs) keep their
+# inline SPDX headers — this file only fills in the gaps.
+#
+# Documented at https://reuse.software/spec-3.3/
+
+version = 1
+
+# ── Project meta / config files ───────────────────────────────────
+[[annotations]]
+path = [
+    ".editorconfig",
+    ".gitattributes",
+    ".gitignore",
+    ".rustfmt.toml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "Makefile",
+    "deny.toml",
+    "rust-toolchain.toml",
+    "REUSE.toml",
+    "supply-chain/audits.toml",
+    "supply-chain/config.toml",
+    "supply-chain/imports.lock",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── CI workflows ──────────────────────────────────────────────────
+[[annotations]]
+path = ".github/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Documentation ─────────────────────────────────────────────────
+[[annotations]]
+path = [
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "docs/**",
+    "tests/README.md",
+    "noyalib-mcp/README.md",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Test fixtures (in-repo) ───────────────────────────────────────
+[[annotations]]
+path = [
+    "benches/fixtures/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Third-party YAML test corpus ──────────────────────────────────
+# The YAML 1.2 official test suite is maintained at
+# https://github.com/yaml/yaml-test-suite under MIT. We vendor the
+# fixture files here for offline / hermetic CI.
+[[annotations]]
+path = "tests/yaml-test-suite/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "yaml-test-suite contributors"
+SPDX-License-Identifier = "MIT"
+
+# ── Fuzz corpora ──────────────────────────────────────────────────
+[[annotations]]
+path = [
+    "fuzz/.gitignore",
+    "fuzz/Cargo.toml",
+    "fuzz/Cargo.lock",
+    "fuzz/corpus/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Sub-workspaces (WASM / MCP / examples) ────────────────────────
+[[annotations]]
+path = [
+    "noyalib-wasm/Cargo.toml",
+    "noyalib-wasm/index.html",
+    "noyalib-mcp/Cargo.toml",
+    "examples/wasm/.gitignore",
+    "examples/wasm/Cargo.toml",
+    "examples/wasm/index.html",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

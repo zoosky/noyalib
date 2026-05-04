@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 //! Comprehensive integration tests for all 4 competitive features.
 //!
 //! Covers all permutations of anchor replay, AnchorRegistry,

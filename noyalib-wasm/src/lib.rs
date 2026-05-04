@@ -71,10 +71,8 @@ impl WasmDocument {
     /// Get the byte range (start, end) for the value at a dotted path.
     pub fn span_at(&self, path: &str) -> Result<JsValue, JsError> {
         match self.inner.span_at(path) {
-            Some((start, end)) => {
-                serde_wasm_bindgen::to_value(&WasmSpan { start, end })
-                    .map_err(|e| JsError::new(&e.to_string()))
-            }
+            Some((start, end)) => serde_wasm_bindgen::to_value(&WasmSpan { start, end })
+                .map_err(|e| JsError::new(&e.to_string())),
             None => Ok(JsValue::NULL),
         }
     }
@@ -118,7 +116,8 @@ impl WasmDocument {
 /// Parse a YAML string and return a JS object.
 #[wasm_bindgen]
 pub fn parse(yaml: &str) -> Result<JsValue, JsError> {
-    let value: noyalib::Value = noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
+    let value: noyalib::Value =
+        noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&value).map_err(|e| JsError::new(&e.to_string()))
 }
 
@@ -133,7 +132,8 @@ pub fn stringify(value: JsValue) -> Result<String, JsError> {
 /// Validate YAML against the JSON schema.
 #[wasm_bindgen]
 pub fn validate_json(yaml: &str) -> Result<bool, JsError> {
-    let value: noyalib::Value = noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
+    let value: noyalib::Value =
+        noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
     match noyalib::validate_yaml_json_schema(&value) {
         Ok(()) => Ok(true),
         Err(e) => Err(JsError::new(&e.to_string())),
@@ -143,7 +143,8 @@ pub fn validate_json(yaml: &str) -> Result<bool, JsError> {
 /// Get a value at a dotted path from a YAML string.
 #[wasm_bindgen]
 pub fn get_path(yaml: &str, path: &str) -> Result<JsValue, JsError> {
-    let value: noyalib::Value = noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
+    let value: noyalib::Value =
+        noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
     match value.get_path(path) {
         Some(v) => serde_wasm_bindgen::to_value(v).map_err(|e| JsError::new(&e.to_string())),
         None => Ok(JsValue::NULL),

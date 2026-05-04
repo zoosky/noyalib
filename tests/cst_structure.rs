@@ -128,7 +128,13 @@ fn flow_sequence_is_flat_in_phase_1() {
     let leaf_kinds = token_kinds_of(fs);
     assert!(leaf_kinds.contains(&SyntaxKind::OpenBracket));
     assert!(leaf_kinds.contains(&SyntaxKind::CloseBracket));
-    assert!(leaf_kinds.iter().filter(|k| **k == SyntaxKind::Comma).count() == 2);
+    assert!(
+        leaf_kinds
+            .iter()
+            .filter(|k| **k == SyntaxKind::Comma)
+            .count()
+            == 2
+    );
 }
 
 #[test]
@@ -141,8 +147,15 @@ fn comment_between_entries_attaches_to_prior() {
     // the prior entry. Verify there is at least one Comment inside
     // entry[0] and none inside entry[1].
     let has_comment = |e: &GreenNode| {
-        e.children().any(|c| matches!(c,
-            GreenChild::Token { kind: SyntaxKind::Comment, .. }))
+        e.children().any(|c| {
+            matches!(
+                c,
+                GreenChild::Token {
+                    kind: SyntaxKind::Comment,
+                    ..
+                }
+            )
+        })
     };
     assert!(has_comment(entries[0]), "expected comment in first entry");
     assert!(!has_comment(entries[1]), "second entry should be clean");

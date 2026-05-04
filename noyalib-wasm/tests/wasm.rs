@@ -4,7 +4,6 @@
 use noyalib_wasm::*;
 use wasm_bindgen_test::*;
 
-
 #[wasm_bindgen_test]
 fn test_wasm_document_parse_to_string() {
     let yaml = "name: noyalib\nversion: 1\n";

@@ -97,8 +97,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<u8>, &'static str> {
 /// pretty-printed `!!binary` scalars is the serializer's job, not
 /// the codec's.
 pub(crate) fn encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let chunks = input.chunks_exact(3);

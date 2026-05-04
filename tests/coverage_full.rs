@@ -1052,7 +1052,9 @@ fn json_schema_rejects_nan() {
 #[test]
 fn json_schema_rejects_infinity() {
     // schema.rs:133 — Infinity not allowed
-    assert!(!noyalib::is_yaml_json_compatible(&Value::from(f64::INFINITY)));
+    assert!(!noyalib::is_yaml_json_compatible(&Value::from(
+        f64::INFINITY
+    )));
 }
 
 #[test]

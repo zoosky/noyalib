@@ -243,7 +243,15 @@ impl<'a> Formatter<'a> {
             match child {
                 GreenChild::Token { kind, len } => {
                     let text = &self.source[pos..pos + *len];
-                    if saw_colon && !matches!(kind, SyntaxKind::ColonIndicator | SyntaxKind::Newline | SyntaxKind::Whitespace | SyntaxKind::Comment) {
+                    if saw_colon
+                        && !matches!(
+                            kind,
+                            SyntaxKind::ColonIndicator
+                                | SyntaxKind::Newline
+                                | SyntaxKind::Whitespace
+                                | SyntaxKind::Comment
+                        )
+                    {
                         self.ensure_space();
                     }
                     if matches!(kind, SyntaxKind::ColonIndicator) {
@@ -253,7 +261,10 @@ impl<'a> Formatter<'a> {
                 }
                 GreenChild::Node(inner) => {
                     if saw_colon {
-                        if matches!(inner.kind(), SyntaxKind::BlockMapping | SyntaxKind::BlockSequence) {
+                        if matches!(
+                            inner.kind(),
+                            SyntaxKind::BlockMapping | SyntaxKind::BlockSequence
+                        ) {
                             self.newline();
                             self.indent_level += 1;
                             self.format_node(inner, pos)?;
@@ -281,7 +292,15 @@ impl<'a> Formatter<'a> {
             match child {
                 GreenChild::Token { kind, len } => {
                     let text = &self.source[pos..pos + *len];
-                    if saw_dash && !matches!(kind, SyntaxKind::DashIndicator | SyntaxKind::Newline | SyntaxKind::Whitespace | SyntaxKind::Comment) {
+                    if saw_dash
+                        && !matches!(
+                            kind,
+                            SyntaxKind::DashIndicator
+                                | SyntaxKind::Newline
+                                | SyntaxKind::Whitespace
+                                | SyntaxKind::Comment
+                        )
+                    {
                         self.ensure_space();
                     }
                     if matches!(kind, SyntaxKind::DashIndicator) {
@@ -291,7 +310,10 @@ impl<'a> Formatter<'a> {
                 }
                 GreenChild::Node(inner) => {
                     if saw_dash {
-                        if matches!(inner.kind(), SyntaxKind::BlockMapping | SyntaxKind::BlockSequence) {
+                        if matches!(
+                            inner.kind(),
+                            SyntaxKind::BlockMapping | SyntaxKind::BlockSequence
+                        ) {
                             self.ensure_space();
                             self.indent_level += 1;
                             self.format_node(inner, pos)?;

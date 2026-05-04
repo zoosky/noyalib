@@ -11,10 +11,7 @@ use noyalib::cst::parse_document;
 fn push_back_appends_with_existing_indent() {
     let mut doc = parse_document("items:\n  - one\n  - two\n").unwrap();
     doc.push_back("items", "three").unwrap();
-    assert_eq!(
-        doc.to_string(),
-        "items:\n  - one\n  - two\n  - three\n"
-    );
+    assert_eq!(doc.to_string(), "items:\n  - one\n  - two\n  - three\n");
     assert_eq!(doc.as_value()["items"][2].as_str(), Some("three"));
 }
 
@@ -27,10 +24,7 @@ fn push_back_at_top_level_zero_indent() {
 
 #[test]
 fn push_back_into_nested_sequence() {
-    let mut doc = parse_document(
-        "matrix:\n  inner:\n    - a\n    - b\n",
-    )
-    .unwrap();
+    let mut doc = parse_document("matrix:\n  inner:\n    - a\n    - b\n").unwrap();
     doc.push_back("matrix.inner", "c").unwrap();
     assert_eq!(
         doc.to_string(),
@@ -40,10 +34,7 @@ fn push_back_into_nested_sequence() {
 
 #[test]
 fn push_back_preserves_following_siblings() {
-    let mut doc = parse_document(
-        "items:\n  - one\n  - two\nnext: 1\n",
-    )
-    .unwrap();
+    let mut doc = parse_document("items:\n  - one\n  - two\nnext: 1\n").unwrap();
     doc.push_back("items", "three").unwrap();
     assert_eq!(
         doc.to_string(),
@@ -56,10 +47,7 @@ fn push_back_preserves_following_siblings() {
 fn push_back_quoted_value_stays_quoted() {
     let mut doc = parse_document("items:\n  - one\n").unwrap();
     doc.push_back("items", "\"two\"").unwrap();
-    assert_eq!(
-        doc.to_string(),
-        "items:\n  - one\n  - \"two\"\n"
-    );
+    assert_eq!(doc.to_string(), "items:\n  - one\n  - \"two\"\n");
     assert_eq!(doc.as_value()["items"][1].as_str(), Some("two"));
 }
 
@@ -79,15 +67,9 @@ fn push_back_rejects_empty_sequence() {
 
 #[test]
 fn insert_after_inserts_in_the_middle() {
-    let mut doc = parse_document(
-        "items:\n  - one\n  - three\n",
-    )
-    .unwrap();
+    let mut doc = parse_document("items:\n  - one\n  - three\n").unwrap();
     doc.insert_after("items[0]", "two").unwrap();
-    assert_eq!(
-        doc.to_string(),
-        "items:\n  - one\n  - two\n  - three\n"
-    );
+    assert_eq!(doc.to_string(), "items:\n  - one\n  - two\n  - three\n");
 }
 
 #[test]

@@ -42,10 +42,7 @@ fn scalar_bump_value_matches_full_reparse() {
 
 #[test]
 fn nested_mapping_edit_matches_full_reparse() {
-    let mut doc = parse_document(
-        "outer:\n  inner: 1\n  next: 2\nother: 3\n",
-    )
-    .unwrap();
+    let mut doc = parse_document("outer:\n  inner: 1\n  next: 2\nother: 3\n").unwrap();
     doc.set("outer.inner", "11").unwrap();
     assert_eq!(
         doc.to_string(),
@@ -107,7 +104,10 @@ fn push_back_lands_at_collection_scope_or_higher() {
     doc.push_back("items", "c").unwrap();
     let scope = doc.last_repair_scope().unwrap();
     assert!(
-        matches!(scope, RepairScope::Collection | RepairScope::Entry | RepairScope::Document),
+        matches!(
+            scope,
+            RepairScope::Collection | RepairScope::Entry | RepairScope::Document
+        ),
         "unexpected scope: {scope:?}",
     );
 }

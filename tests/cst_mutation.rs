@@ -86,7 +86,9 @@ fn set_with_invalid_replacement_surfaces_error_on_read() {
     assert_eq!(doc.to_string(), "name: [\n");
     // Eager check: `validate()` surfaces the document-level parse
     // error as a regular `Result` — no panic.
-    let err = doc.validate().expect_err("validate must reject broken source");
+    let err = doc
+        .validate()
+        .expect_err("validate must reject broken source");
     let msg = err.to_string();
     assert!(
         msg.contains("flow") || msg.contains("expected") || msg.contains("end"),
@@ -104,7 +106,8 @@ fn set_with_invalid_replacement_surfaces_error_on_read() {
 #[test]
 fn validate_succeeds_on_freshly_parsed_document() {
     let doc = parse_document("a: 1\nb: 2\n").unwrap();
-    doc.validate().expect("freshly-parsed document must validate");
+    doc.validate()
+        .expect("freshly-parsed document must validate");
 }
 
 #[test]
@@ -121,7 +124,8 @@ fn validate_is_idempotent() {
     // calls are cheap and still succeed — they early-return.
     let doc = parse_document("k: v\n").unwrap();
     for _ in 0..3 {
-        doc.validate().expect("repeated validate calls must succeed");
+        doc.validate()
+            .expect("repeated validate calls must succeed");
     }
 }
 

@@ -166,10 +166,7 @@ fn dispatch(method: &str, params: JsonValue) -> Result<JsonValue, (i32, String)>
         })),
         "tools/call" => tools::call(params),
         "ping" => Ok(JsonValue::Object(serde_json::Map::new())),
-        other => Err((
-            -32601,
-            format!("method not found: {other}"),
-        )),
+        other => Err((-32601, format!("method not found: {other}"))),
     }
 }
 

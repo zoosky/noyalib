@@ -74,9 +74,9 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Args, ArgError> 
             "--write" => a.write = true,
             "--stdin" => a.stdin = true,
             "--indent" => {
-                let v = it.next().ok_or_else(|| {
-                    ArgError::Bad("--indent requires a value".to_string())
-                })?;
+                let v = it
+                    .next()
+                    .ok_or_else(|| ArgError::Bad("--indent requires a value".to_string()))?;
                 let n: usize = v.parse().map_err(|_| {
                     ArgError::Bad(format!("--indent: not a non-negative integer: {v}"))
                 })?;

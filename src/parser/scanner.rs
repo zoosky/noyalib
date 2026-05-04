@@ -598,11 +598,10 @@ impl<'a> Scanner<'a> {
         // content). Cleared on actual content emission so siblings on
         // future entries don't see stale state.
         match &kind {
-            TokenKind::Anchor(_) | TokenKind::Tag(_, _) => {
-                if self.pending_property_col.is_none() {
-                    self.pending_property_col = Some(self.column() as i32);
-                }
+            TokenKind::Anchor(_) | TokenKind::Tag(_, _) if self.pending_property_col.is_none() => {
+                self.pending_property_col = Some(self.column() as i32);
             }
+            TokenKind::Anchor(_) | TokenKind::Tag(_, _) => {}
             TokenKind::Scalar(_, _)
             | TokenKind::FlowSequenceStart
             | TokenKind::FlowMappingStart
@@ -702,7 +701,11 @@ impl<'a> Scanner<'a> {
         if !saw_tab {
             return Ok(());
         }
-        let next = if p < self.input.len() { self.input[p] } else { 0 };
+        let next = if p < self.input.len() {
+            self.input[p]
+        } else {
+            0
+        };
         let next_after = if p + 1 < self.input.len() {
             self.input[p + 1]
         } else {
@@ -1683,8 +1686,13 @@ impl<'a> Scanner<'a> {
                             return Err(self.error("implicit mapping key in flow sequence must be on the same line as the colon"));
                         }
 
-                        if key_has_newline && (self.pos == 0 || (self.input[self.pos - 1] != b' ' && self.input[self.pos - 1] != b'\t')) {
-                             return Err(self.error("implicit mapping key cannot span multiple lines (flow)"));
+                        if key_has_newline
+                            && (self.pos == 0
+                                || (self.input[self.pos - 1] != b' '
+                                    && self.input[self.pos - 1] != b'\t'))
+                        {
+                            return Err(self
+                                .error("implicit mapping key cannot span multiple lines (flow)"));
                         }
                     }
                 }
@@ -2541,10 +2549,7 @@ impl<'a> Scanner<'a> {
                         self.advance();
                     }
 
-                    self.require_quoted_continuation_indent_spaces(
-                        "double-quoted",
-                        space_indent,
-                    )?;
+                    self.require_quoted_continuation_indent_spaces("double-quoted", space_indent)?;
                 }
                 _ => {
                     if leading_break {
@@ -2774,9 +2779,9 @@ impl<'a> Scanner<'a> {
             // attempting to use the tab as further indentation —
             // reject (Y79Y sub-case 1).
             if spaces < block_indent && self.peek() == b'\t' {
-                return Err(self.error(
-                    "tab characters are not allowed as block-scalar indentation",
-                ));
+                return Err(
+                    self.error("tab characters are not allowed as block-scalar indentation")
+                );
             }
 
             if spaces < block_indent && !Self::is_break(self.peek()) && !self.is_eof() {

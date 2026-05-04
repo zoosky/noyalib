@@ -42,8 +42,8 @@
 //! ```
 
 use crate::error::{Error, Result};
-use crate::prelude::*;
 use crate::parser::Parser;
+use crate::prelude::*;
 
 /// Classification of a scanned comment.
 ///

@@ -348,15 +348,12 @@ fn directive_without_doc_end_marker_rejected() {
     let r: Result<Value, _> = from_str("---\nkey: value\n%YAML 1.2\n---\n");
     assert!(r.is_err());
     // 9HCY — implicit doc + `%TAG` without `...`.
-    let r: Result<Value, _> = from_str(
-        "!foo \"bar\"\n%TAG ! tag:example.com,2000:app/\n---\n!foo \"bar\"\n",
-    );
+    let r: Result<Value, _> =
+        from_str("!foo \"bar\"\n%TAG ! tag:example.com,2000:app/\n---\n!foo \"bar\"\n");
     assert!(r.is_err());
     // Counter-example: directive after `...` is fine.
-    let _: Vec<Value> = noyalib::load_all_as(
-        "---\nfoo: bar\n...\n%YAML 1.2\n---\nbaz: qux\n",
-    )
-    .unwrap();
+    let _: Vec<Value> =
+        noyalib::load_all_as("---\nfoo: bar\n...\n%YAML 1.2\n---\nbaz: qux\n").unwrap();
 }
 
 // yaml-test-suite MUS6:0 — `%YAML 1.1#...` packs a comment indicator

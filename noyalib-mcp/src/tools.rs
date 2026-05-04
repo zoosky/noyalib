@@ -99,16 +99,11 @@ fn ok_text(text: String) -> JsonValue {
 fn tool_get(args: &JsonValue) -> Result<JsonValue, (i32, String)> {
     let file = arg_str(args, "file")?;
     let path = arg_str(args, "path")?;
-    let src = fs::read_to_string(file)
-        .map_err(|e| (-32000, format!("read {file}: {e}")))?;
-    let doc =
-        parse_document(&src).map_err(|e| (-32001, format!("parse {file}: {e}")))?;
+    let src = fs::read_to_string(file).map_err(|e| (-32000, format!("read {file}: {e}")))?;
+    let doc = parse_document(&src).map_err(|e| (-32001, format!("parse {file}: {e}")))?;
     match doc.get(path) {
         Some(value) => Ok(ok_text(value.to_string())),
-        None => Err((
-            -32002,
-            format!("path not found in {file}: {path}"),
-        )),
+        None => Err((-32002, format!("path not found in {file}: {path}"))),
     }
 }
 
@@ -116,10 +111,8 @@ fn tool_set(args: &JsonValue) -> Result<JsonValue, (i32, String)> {
     let file = arg_str(args, "file")?;
     let path = arg_str(args, "path")?;
     let value = arg_str(args, "value")?;
-    let src = fs::read_to_string(file)
-        .map_err(|e| (-32000, format!("read {file}: {e}")))?;
-    let mut doc =
-        parse_document(&src).map_err(|e| (-32001, format!("parse {file}: {e}")))?;
+    let src = fs::read_to_string(file).map_err(|e| (-32000, format!("read {file}: {e}")))?;
+    let mut doc = parse_document(&src).map_err(|e| (-32001, format!("parse {file}: {e}")))?;
     doc.set(path, value)
         .map_err(|e| (-32003, format!("set {path} = {value}: {e}")))?;
     fs::write(file, doc.to_string().as_bytes())

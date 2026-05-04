@@ -98,9 +98,7 @@ fn bench_value_bump_at(c: &mut Criterion, target: &str, n_entries_list: &[usize]
 }
 
 fn bench_batch_edits(c: &mut Criterion, n_entries: usize, n_edits: usize) {
-    let mut group = c.benchmark_group(format!(
-        "batch_{n_edits}_edits_in_{n_entries}_entry_doc"
-    ));
+    let mut group = c.benchmark_group(format!("batch_{n_edits}_edits_in_{n_entries}_entry_doc"));
     let src = synth_doc(n_entries);
     group.throughput(Throughput::Elements(n_edits as u64));
 

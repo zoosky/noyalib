@@ -157,11 +157,8 @@ fn parse_block_entry(
         GreenChild::Node(n) if n.kind() == expected => Some(n.clone()),
         _ => None,
     });
-    extracted.ok_or_else(|| {
-        Error::Parse(format!(
-            "parse_subtree: extraction failed for {expected:?}"
-        ))
-    })
+    extracted
+        .ok_or_else(|| Error::Parse(format!("parse_subtree: extraction failed for {expected:?}")))
 }
 
 /// Prepend `indent` spaces to the first line of `s` if and only if
@@ -552,22 +549,14 @@ fn splice_recursive(
             let s = spliced_opt.take().expect("checked Some above");
             new_children.push(GreenChild::Node(s));
             consumed = true;
-        } else if !consumed
-            && child_start <= splice_old_start
-            && child_end >= splice_old_end
-        {
+        } else if !consumed && child_start <= splice_old_start && child_end >= splice_old_end {
             // Recurse into the only child that contains the
             // splice target.
             match child {
                 GreenChild::Node(inner) => {
                     let s = spliced_opt.take().expect("path-unique splice target");
-                    let new_inner = splice_recursive(
-                        inner,
-                        splice_old_start,
-                        splice_old_end,
-                        s,
-                        child_start,
-                    );
+                    let new_inner =
+                        splice_recursive(inner, splice_old_start, splice_old_end, s, child_start);
                     new_children.push(GreenChild::Node(new_inner));
                     consumed = true;
                 }
