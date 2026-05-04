@@ -258,6 +258,11 @@ yaml-rust2 = "0.9"
 serde-saphyr = "0.0.24"
 yaml_lib = "0.2"
 rust-yaml = "0.0.5"
+# Ecosystem interop verification — proves noyalib's
+# `Deserializer<'de>` works with the standard serde wrappers
+# without any custom integration code.
+serde_path_to_error = "0.1"
+serde_ignored = "0.1"
 
 [[bench]]
 name = "benchmarks"

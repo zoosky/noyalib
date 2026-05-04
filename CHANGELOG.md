@@ -7,6 +7,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Property interpolation
+
+- **`Value::interpolate_properties(&map)`** — substitute `${name}`
+  references inside string scalars from a property map. Walks
+  recursively into sequences, mappings, and tagged values; map
+  keys are left unchanged so the schema stays stable. `${{` and
+  `}}` escapes preserve literal `${` / `}`. Returns
+  `Error::Custom` on unknown placeholders.
+- **`Value::interpolate_properties_lossy(&map)`** — same walk,
+  but unknown placeholders substitute the empty string instead of
+  erroring. Suitable for env-var expansion where missing
+  variables should silently degrade.
+- Placeholder names match `[A-Za-z_][A-Za-z0-9_.]*` so dotted
+  hierarchies like `${db.host}` work.
+
+### Added — serde-ecosystem interop
+
+- **`serde_path_to_error` interop** — verified by
+  `tests/serde_ecosystem.rs`; the path through nested structures
+  and sequences is reported correctly when wrapping noyalib's
+  `Deserializer`.
+- **`serde_ignored` interop** — same test file confirms unknown
+  fields at the top level and at any depth are surfaced through
+  the standard wrapper without noyalib-specific integration.
+
 ## [0.0.1] - 2026-05-04
 
 The launch release. Sections below catalogue every capability the

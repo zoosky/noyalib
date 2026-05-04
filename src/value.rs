@@ -2269,6 +2269,135 @@ impl Value {
         Ok(())
     }
 
+    /// Substitute every `${name}` reference inside string scalars
+    /// with the corresponding entry from `properties`. The walk is
+    /// recursive — strings nested inside sequences, mappings, and
+    /// tagged values are all visited.
+    ///
+    /// String keys in mappings are treated as opaque and never
+    /// interpolated; only string *values* are touched. This avoids
+    /// surprising key-rename interactions and keeps the schema
+    /// stable.
+    ///
+    /// `${{` and `}}` escape sequences let users include literal
+    /// `${` and `}` in a scalar that should not be interpreted as
+    /// an interpolation site.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Custom` with the offending placeholder name
+    /// when a `${name}` reference is not present in `properties`.
+    /// Use [`Value::interpolate_properties_lossy`] to substitute an
+    /// empty string for unknown placeholders without erroring.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// use std::collections::HashMap;
+    ///
+    /// let mut value: Value = from_str("\
+    /// service:
+    ///   name: ${APP_NAME}
+    ///   port: ${BIND_PORT}
+    /// ").unwrap();
+    ///
+    /// let mut props = HashMap::new();
+    /// props.insert("APP_NAME".to_string(), "noyalib".to_string());
+    /// props.insert("BIND_PORT".to_string(), "8080".to_string());
+    ///
+    /// value.interpolate_properties(&props).unwrap();
+    /// assert_eq!(value["service"]["name"].as_str(), Some("noyalib"));
+    /// // The numeric value stays as a string — re-deserialize the
+    /// // tree if you need typed coercion.
+    /// assert_eq!(value["service"]["port"].as_str(), Some("8080"));
+    /// ```
+    pub fn interpolate_properties<S>(
+        &mut self,
+        properties: &std::collections::HashMap<String, S>,
+    ) -> crate::Result<()>
+    where
+        S: AsRef<str>,
+    {
+        self.interpolate_inner(&|name| {
+            properties
+                .get(name)
+                .map(|s| s.as_ref().to_owned())
+                .ok_or_else(|| {
+                    crate::Error::Custom(format!(
+                        "interpolate_properties: unknown placeholder `${{{name}}}`"
+                    ))
+                })
+        })
+    }
+
+    /// Like [`Value::interpolate_properties`] but never errors —
+    /// unknown placeholders are replaced with an empty string. The
+    /// motivating use case is environment-variable expansion where
+    /// missing variables should silently degrade rather than abort
+    /// the load.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// use std::collections::HashMap;
+    ///
+    /// let mut value: Value = from_str("greeting: hello ${WHO}, hello ${MISSING}").unwrap();
+    /// let mut props: HashMap<String, String> = HashMap::new();
+    /// props.insert("WHO".into(), "world".into());
+    ///
+    /// value.interpolate_properties_lossy(&props);
+    /// assert_eq!(value["greeting"].as_str(), Some("hello world, hello "));
+    /// ```
+    pub fn interpolate_properties_lossy<S>(
+        &mut self,
+        properties: &std::collections::HashMap<String, S>,
+    ) where
+        S: AsRef<str>,
+    {
+        // Resolver returns Ok("") for missing entries — never
+        // errors, so the outer call is total.
+        let _ = self.interpolate_inner(&|name| {
+            Ok(properties
+                .get(name)
+                .map(|s| s.as_ref().to_owned())
+                .unwrap_or_default())
+        });
+    }
+
+    /// Internal interpolation driver — `resolve` returns the
+    /// substitution for a placeholder name or an error to abort
+    /// the walk.
+    fn interpolate_inner(
+        &mut self,
+        resolve: &dyn Fn(&str) -> crate::Result<String>,
+    ) -> crate::Result<()> {
+        match self {
+            Value::String(s) => {
+                if let Some(updated) = expand_placeholders(s, resolve)? {
+                    *s = updated;
+                }
+            }
+            Value::Sequence(seq) => {
+                for v in seq {
+                    v.interpolate_inner(resolve)?;
+                }
+            }
+            Value::Mapping(map) => {
+                for v in map.values_mut() {
+                    v.interpolate_inner(resolve)?;
+                }
+            }
+            Value::Tagged(tagged) => {
+                tagged.value_mut().interpolate_inner(resolve)?;
+            }
+            // Null / Bool / Number have no string content; nothing to do.
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        }
+        Ok(())
+    }
+
     /// Recursively strips tags from this value, returning the untagged value.
     ///
     /// If the value is `Value::Tagged`, the inner value is returned
@@ -2747,6 +2876,99 @@ impl ValueIndex for &Value {
             }
             _ => panic!("cannot index with {:?}", self),
         }
+    }
+}
+
+/// Expand `${name}` placeholders in `s` using the supplied
+/// resolver. Returns:
+///
+/// - `Ok(None)` when no placeholders are present (caller can avoid
+///   allocating a fresh `String`),
+/// - `Ok(Some(expanded))` when at least one placeholder was found,
+/// - `Err(_)` when the resolver returned an error for a
+///   placeholder.
+///
+/// Escape sequences:
+/// - `${{` produces a literal `${` (placeholder NOT recognised),
+/// - `}}` produces a literal `}`.
+///
+/// Placeholder names match `[A-Za-z_][A-Za-z0-9_.]*` — letters,
+/// digits, underscore, dot. The dot allows hierarchical names like
+/// `${db.host}` for users who want to namespace their property
+/// maps. Anything that does not match is a parse error.
+fn expand_placeholders(
+    s: &str,
+    resolve: &dyn Fn(&str) -> crate::Result<String>,
+) -> crate::Result<Option<String>> {
+    let bytes = s.as_bytes();
+    // Fast path: no `$` at all → no allocation, no walk.
+    if !bytes.contains(&b'$') && !bytes.contains(&b'}') {
+        return Ok(None);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let mut touched = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            // Escape: `${{` → literal `${`.
+            if i + 2 < bytes.len() && bytes[i + 2] == b'{' {
+                out.push_str("${");
+                i += 3;
+                touched = true;
+                continue;
+            }
+            // Find the closing `}`.
+            let name_start = i + 2;
+            let mut j = name_start;
+            while j < bytes.len() && bytes[j] != b'}' {
+                let c = bytes[j];
+                let ok = c.is_ascii_alphanumeric() || c == b'_' || c == b'.';
+                if !ok {
+                    return Err(crate::Error::Custom(format!(
+                        "interpolate_properties: invalid character {:?} in placeholder",
+                        c as char
+                    )));
+                }
+                j += 1;
+            }
+            if j >= bytes.len() {
+                return Err(crate::Error::Custom(
+                    "interpolate_properties: unterminated `${...}` placeholder".into(),
+                ));
+            }
+            if name_start == j {
+                return Err(crate::Error::Custom(
+                    "interpolate_properties: empty placeholder `${}`".into(),
+                ));
+            }
+            let name = &s[name_start..j];
+            let value = resolve(name)?;
+            out.push_str(&value);
+            i = j + 1;
+            touched = true;
+            continue;
+        }
+        if b == b'}' && i + 1 < bytes.len() && bytes[i + 1] == b'}' {
+            // Escape: `}}` → literal `}`.
+            out.push('}');
+            i += 2;
+            touched = true;
+            continue;
+        }
+        // Multi-byte UTF-8 — push the leading byte's char in one go.
+        // SAFETY-equivalent: `s` is a valid &str so byte boundaries
+        // align with char boundaries; we walk byte-by-byte but only
+        // act on ASCII bytes that we know cannot be inside a
+        // multi-byte sequence.
+        let c = s[i..].chars().next().expect("char at boundary");
+        out.push(c);
+        i += c.len_utf8();
+    }
+    if touched {
+        Ok(Some(out))
+    } else {
+        Ok(None)
     }
 }
 
