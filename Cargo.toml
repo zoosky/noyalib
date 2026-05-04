@@ -236,6 +236,12 @@ validator = { version = "0.19", optional = true, features = ["derive"] }
 # `Value` types and matching `Mapping` / `Number` shapes during
 # migration. Drop this dep once the migration window closes.
 serde_yaml = { version = "0.9", optional = true }
+# JSON Schema codegen — derive `JsonSchema` for a Rust type and emit
+# the schema as YAML for sharing / contract enforcement. Pulled in
+# only when the `schema` feature is on so users who don't need
+# codegen don't pay for the dep.
+schemars = { version = "1.2", optional = true, default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -284,6 +290,12 @@ noyavalidate = ["std", "miette", "miette/fancy"]
 # default so users who do not need migration help do not pay for
 # the upstream `serde_yaml` dep.
 compat-serde-yaml = ["dep:serde_yaml"]
+# JSON Schema codegen via `schemars`. With this on you can
+# `#[derive(noyalib::JsonSchema)]` for a Rust type and call
+# `noyalib::schema_for::<T>()` / `schema_for_yaml::<T>()` to obtain
+# the schema as a `Value` or as YAML text. Schema *validation* of
+# YAML against the schema is covered by Phase 3.2 (CLI surface).
+schema = ["dep:schemars", "dep:serde_json"]
 
 [package.metadata.docs.rs]
 all-features = true
