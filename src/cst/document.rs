@@ -211,6 +211,63 @@ impl Document {
         *self.cache.borrow_mut() = Some(parsed);
     }
 
+    /// Verify that the current source re-parses cleanly.
+    ///
+    /// `Document::set` (and the rest of the path-shaped edit API)
+    /// uses a localised-repair fast path that gates each splice on
+    /// the fragment's own scanner-level validation but commits
+    /// *optimistically*: a structurally invalid splice across the
+    /// whole document — for example, a value like `[` that opens a
+    /// flow collection never closed at end-of-input — passes the
+    /// fragment check and only surfaces when the typed view is
+    /// next read. `as_value`, `span_at`, `get`, and any path-shaped
+    /// API panic on first access in that state.
+    ///
+    /// `validate` is the non-panicking eager check: call it after
+    /// an edit (or before handing the document to a downstream
+    /// consumer) to surface any document-level parse error as a
+    /// regular `Result`. On success, the typed cache is populated
+    /// as a side-effect so a subsequent `as_value` call is free.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying parse error if the source no longer
+    /// parses as a single YAML document.
+    ///
+    /// # Examples
+    ///
+    /// Eagerly validate after an edit that may not be safe:
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("name: foo\n").unwrap();
+    /// // `[` opens a flow seq that is never closed — the local
+    /// // repair commits optimistically, but the document is now
+    /// // structurally broken. `validate` surfaces that as an
+    /// // error rather than waiting for the next typed-view read.
+    /// doc.set("name", "[").unwrap();
+    /// assert!(doc.validate().is_err());
+    /// ```
+    ///
+    /// Validate a freshly-parsed document — always succeeds:
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let doc = parse_document("name: foo\n").unwrap();
+    /// assert!(doc.validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<()> {
+        if self.cache.borrow().is_some() {
+            return Ok(());
+        }
+        let cfg = crate::parser::ParseConfig::default();
+        let parsed = crate::parser::parse_one(&self.source, &cfg)?;
+        *self.cache.borrow_mut() = Some(parsed);
+        Ok(())
+    }
+
     /// Return the source slice of the value at `path`.
     ///
     /// # Examples

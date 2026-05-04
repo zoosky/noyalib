@@ -230,6 +230,12 @@ smallvec = { version = "1.13", default-features = false }
 miette = { version = "7", optional = true }
 garde = { version = "0.22", optional = true, default-features = false, features = ["derive"] }
 validator = { version = "0.19", optional = true, features = ["derive"] }
+# `serde_yaml` 0.9 itself — only pulled when `compat-serde-yaml` is on.
+# The upstream crate is unmaintained; we bring it in solely so the
+# compat shim can offer `From` / `TryFrom` conversions between the two
+# `Value` types and matching `Mapping` / `Number` shapes during
+# migration. Drop this dep once the migration window closes.
+serde_yaml = { version = "0.9", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -272,10 +278,12 @@ validator = ["dep:validator"]
 wasm-opt = []
 noyavalidate = ["std", "miette", "miette/fancy"]
 # Drop-in surface compatible with `serde_yaml` 0.9. Adds the
-# `noyalib::compat::serde_yaml` module without enabling any extra
-# runtime features; off by default so users who do not need
-# migration help do not pay for the re-exports.
-compat-serde-yaml = []
+# `noyalib::compat::serde_yaml` module with name-for-name re-exports,
+# `From` / `TryFrom` conversions between the two `Value` types, and
+# the `Error` parity needed for logic-transparent migration. Off by
+# default so users who do not need migration help do not pay for
+# the upstream `serde_yaml` dep.
+compat-serde-yaml = ["dep:serde_yaml"]
 
 [package.metadata.docs.rs]
 all-features = true

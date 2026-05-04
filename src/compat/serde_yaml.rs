@@ -36,6 +36,36 @@
 //!   [`crate::MappingAny`] directly — the shim does not re-export
 //!   it under the `Mapping` name to keep type errors localised.
 //!
+//! # `Value` conversions during migration
+//!
+//! Codebases mid-migration sometimes hold a `serde_yaml::Value` in
+//! flight (e.g. as a function parameter on the boundary between
+//! migrated and un-migrated modules). The shim provides
+//! `From<noyalib::Value> for serde_yaml::Value` and
+//! `TryFrom<serde_yaml::Value> for noyalib::Value` so those values
+//! flow across the boundary without re-parsing through a string.
+//!
+//! ```rust,ignore
+//! use noyalib::compat::serde_yaml as syml;
+//!
+//! // Lift a noyalib::Value into the upstream serde_yaml::Value.
+//! // Total — never fails.
+//! let upstream: ::serde_yaml::Value = my_noyalib_value.into();
+//!
+//! // Lower an upstream serde_yaml::Value into noyalib::Value.
+//! // Fallible: a non-string mapping key returns
+//! // `SerdeYamlConversionError::NonStringKey`.
+//! let lowered: syml::Value = upstream.try_into()?;
+//! ```
+//!
+//! # `Error` parity
+//!
+//! The `Error::location() -> Option<Location>` /
+//! `Location::line()` / `Location::column()` / `Location::index()`
+//! chain matches `serde_yaml`'s shape byte-for-byte (1-indexed line
+//! and column, 0-indexed byte offset), so existing diagnostic-emitting
+//! code that destructures these compiles unchanged.
+//!
 //! # Migration cookbook
 //!
 //! ```rust
@@ -59,8 +89,152 @@ use serde::Serialize;
 
 // ── Types — re-exported under the serde_yaml names ───────────────────
 
-pub use crate::error::{Error, Result};
+pub use crate::error::{Error, Location, Result};
 pub use crate::value::{Mapping, Number, Sequence, Tag, TaggedValue, Value};
+
+// ── Conversions between noyalib::Value and ::serde_yaml::Value ───────
+//
+// The two `Value` types are structurally compatible *almost*
+// everywhere. The one asymmetry is in `Mapping`:
+//
+//   - noyalib's `Mapping` is `String → Value` (the 99 % case for
+//     real-world configuration / RPC payloads).
+//   - `serde_yaml`'s `Mapping` is `Value → Value` — keys can be any
+//     YAML node, including sequences and other mappings.
+//
+// That means `noyalib::Value → serde_yaml::Value` is *total* (a
+// `String` key trivially fits where any `Value` is allowed) — `From`
+// is the right trait. The reverse direction is *fallible* — a
+// `serde_yaml` value with non-string keys cannot be lowered into
+// noyalib's `Value` without information loss — so it goes through
+// `TryFrom`. Both shapes match the standard Rust idiom: `From` for
+// rich-from-simple, `TryFrom` for simple-from-rich.
+
+/// Errors produced when converting a `serde_yaml::Value` into a
+/// `noyalib::Value`. Both variants are rare in practice — most
+/// real-world YAML uses string-keyed mappings and `i64`/`f64`-shaped
+/// numbers — but they are real spec corners that the type system
+/// makes explicit rather than papering over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerdeYamlConversionError {
+    /// The source `serde_yaml::Value::Mapping` contained a non-string
+    /// key. noyalib's `Mapping` is string-keyed by design (see
+    /// `noyalib::MappingAny` for the value-keyed alternative).
+    NonStringKey,
+    /// The source `serde_yaml::Number` was a `u64` whose value does
+    /// not fit in noyalib's `i64` integer representation.
+    UnrepresentableNumber,
+}
+
+impl core::fmt::Display for SerdeYamlConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonStringKey => f.write_str(
+                "serde_yaml::Value: mapping with non-string key cannot lower into \
+                 noyalib::Value (use noyalib::MappingAny for value-keyed maps)",
+            ),
+            Self::UnrepresentableNumber => f.write_str(
+                "serde_yaml::Number: value out of range for noyalib::Number (i64/f64)",
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SerdeYamlConversionError {}
+
+impl From<Number> for ::serde_yaml::Number {
+    fn from(n: Number) -> Self {
+        match n {
+            Number::Integer(i) => i.into(),
+            Number::Float(f) => f.into(),
+        }
+    }
+}
+
+impl From<Value> for ::serde_yaml::Value {
+    fn from(v: Value) -> Self {
+        match v {
+            Value::Null => ::serde_yaml::Value::Null,
+            Value::Bool(b) => ::serde_yaml::Value::Bool(b),
+            Value::Number(n) => ::serde_yaml::Value::Number(n.into()),
+            Value::String(s) => ::serde_yaml::Value::String(s),
+            Value::Sequence(seq) => {
+                ::serde_yaml::Value::Sequence(seq.into_iter().map(Into::into).collect())
+            }
+            Value::Mapping(m) => {
+                let mut out = ::serde_yaml::Mapping::with_capacity(m.len());
+                for (k, v) in m {
+                    let _ = out.insert(::serde_yaml::Value::String(k), v.into());
+                }
+                ::serde_yaml::Value::Mapping(out)
+            }
+            Value::Tagged(boxed) => {
+                let tagged: TaggedValue = *boxed;
+                ::serde_yaml::Value::Tagged(Box::new(::serde_yaml::value::TaggedValue {
+                    tag: ::serde_yaml::value::Tag::new(tagged.tag().as_str()),
+                    value: tagged.value().clone().into(),
+                }))
+            }
+        }
+    }
+}
+
+impl TryFrom<::serde_yaml::Number> for Number {
+    type Error = SerdeYamlConversionError;
+
+    fn try_from(n: ::serde_yaml::Number) -> core::result::Result<Self, Self::Error> {
+        if let Some(i) = n.as_i64() {
+            Ok(Number::Integer(i))
+        } else if let Some(f) = n.as_f64() {
+            Ok(Number::Float(f))
+        } else {
+            Err(SerdeYamlConversionError::UnrepresentableNumber)
+        }
+    }
+}
+
+impl TryFrom<::serde_yaml::Value> for Value {
+    type Error = SerdeYamlConversionError;
+
+    fn try_from(v: ::serde_yaml::Value) -> core::result::Result<Self, Self::Error> {
+        match v {
+            ::serde_yaml::Value::Null => Ok(Value::Null),
+            ::serde_yaml::Value::Bool(b) => Ok(Value::Bool(b)),
+            ::serde_yaml::Value::Number(n) => Ok(Value::Number(n.try_into()?)),
+            ::serde_yaml::Value::String(s) => Ok(Value::String(s)),
+            ::serde_yaml::Value::Sequence(seq) => {
+                let mut out = Vec::with_capacity(seq.len());
+                for item in seq {
+                    out.push(Value::try_from(item)?);
+                }
+                Ok(Value::Sequence(out))
+            }
+            ::serde_yaml::Value::Mapping(m) => {
+                let mut out = Mapping::with_capacity(m.len());
+                for (k, val) in m {
+                    let key = match k {
+                        ::serde_yaml::Value::String(s) => s,
+                        _ => return Err(SerdeYamlConversionError::NonStringKey),
+                    };
+                    let _ = out.insert(key, Value::try_from(val)?);
+                }
+                Ok(Value::Mapping(out))
+            }
+            ::serde_yaml::Value::Tagged(boxed) => {
+                // serde_yaml::Tag stringifies to `!Thing` (with the
+                // leading `!`); noyalib::Tag::new tolerates either
+                // form (`!foo` and `foo` produce equal tags).
+                let tag_str = boxed.tag.to_string();
+                let inner = Value::try_from(boxed.value)?;
+                Ok(Value::Tagged(Box::new(TaggedValue::new(
+                    Tag::new(tag_str),
+                    inner,
+                ))))
+            }
+        }
+    }
+}
 
 // ── Deserialization ──────────────────────────────────────────────────
 
@@ -243,5 +417,142 @@ mod tests {
         fn _identity(e: super::Error) -> crate::error::Error {
             e
         }
+    }
+
+    // ── Error parity: location() / line() / column() ─────────────
+
+    #[test]
+    fn error_exposes_location_line_column() {
+        // The `serde_yaml::Error::location()` → `Location::line()`
+        // / `Location::column()` chain is the contract that any
+        // diagnostic-emitting migrant relies on. noyalib's `Error`
+        // exposes the exact same shape, 1-indexed.
+        let err = from_str::<Value>("a: [unclosed").unwrap_err();
+        let loc = err
+            .location()
+            .expect("parse error must carry a location");
+        assert!(loc.line() >= 1);
+        assert!(loc.column() >= 1);
+        // Index is the 0-based byte offset, matching serde_yaml.
+        let _: usize = loc.index();
+    }
+
+    // ── Value conversions ────────────────────────────────────────
+
+    #[test]
+    fn noyalib_to_serde_yaml_roundtrip_via_string() {
+        // Build a noyalib::Value, lift to serde_yaml, emit, re-parse
+        // through noyalib — the JSON-equivalent shape must survive.
+        let mut m = Mapping::new();
+        let _ = m.insert("name", Value::String("noyalib".into()));
+        let _ = m.insert("port", Value::Number(Number::Integer(8080)));
+        let _ = m.insert(
+            "features",
+            Value::Sequence(vec![
+                Value::String("auth".into()),
+                Value::String("api".into()),
+            ]),
+        );
+        let original = Value::Mapping(m);
+
+        let lifted: ::serde_yaml::Value = original.clone().into();
+        let yaml = ::serde_yaml::to_string(&lifted).unwrap();
+        let reparsed: Value = from_str(&yaml).unwrap();
+        assert_eq!(original, reparsed);
+    }
+
+    #[test]
+    fn serde_yaml_to_noyalib_simple_mapping() {
+        // The 99 % case: string-keyed mapping. Conversion must succeed.
+        let yaml = "name: noyalib\nport: 8080\nflags:\n  - a\n  - b\n";
+        let upstream: ::serde_yaml::Value =
+            ::serde_yaml::from_str(yaml).unwrap();
+        let lowered: Value = upstream.try_into().unwrap();
+        match lowered {
+            Value::Mapping(m) => {
+                assert_eq!(m.get("name"), Some(&Value::String("noyalib".into())));
+                assert_eq!(
+                    m.get("port"),
+                    Some(&Value::Number(Number::Integer(8080)))
+                );
+            }
+            _ => panic!("expected Mapping"),
+        }
+    }
+
+    #[test]
+    fn serde_yaml_to_noyalib_rejects_non_string_keys() {
+        // YAML allows any node as a key. noyalib's `Mapping` is
+        // string-keyed by design — `TryFrom` surfaces the mismatch
+        // as a typed error rather than papering over it.
+        let yaml = "[1, 2]: nested-key\nstring-key: value\n";
+        let upstream: ::serde_yaml::Value =
+            ::serde_yaml::from_str(yaml).unwrap();
+        let result: core::result::Result<Value, _> = upstream.try_into();
+        match result {
+            Err(SerdeYamlConversionError::NonStringKey) => (),
+            other => panic!("expected NonStringKey error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serde_yaml_to_noyalib_preserves_tagged() {
+        let yaml = "!Custom value\n";
+        let upstream: ::serde_yaml::Value =
+            ::serde_yaml::from_str(yaml).unwrap();
+        let lowered: Value = upstream.try_into().unwrap();
+        match lowered {
+            Value::Tagged(boxed) => {
+                // serde_yaml normalises to a leading `!`; noyalib's
+                // Tag::new tolerates either form, so equality is
+                // by content.
+                assert!(boxed.tag().as_str().contains("Custom"));
+                assert_eq!(*boxed.value(), Value::String("value".into()));
+            }
+            other => panic!("expected Tagged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn number_conversions_are_lossless_for_i64_and_f64() {
+        // i64 round-trip
+        let n_in = Number::Integer(-42);
+        let lifted: ::serde_yaml::Number = n_in.into();
+        let lowered: Number = lifted.try_into().unwrap();
+        assert!(matches!(lowered, Number::Integer(-42)));
+
+        // f64 round-trip
+        let n_in = Number::Float(3.125);
+        let lifted: ::serde_yaml::Number = n_in.into();
+        let lowered: Number = lifted.try_into().unwrap();
+        assert!(matches!(lowered, Number::Float(f) if (f - 3.125).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn full_serde_yaml_to_noyalib_roundtrip_via_actual_files() {
+        // Migration scenario: a downstream codebase still has an
+        // upstream `serde_yaml::Value` in flight. They convert it
+        // into `noyalib::Value` to take advantage of noyalib's
+        // streaming, querying, or CST APIs without re-parsing.
+        let yaml = r#"
+server:
+  host: localhost
+  port: 8080
+  ssl: true
+features:
+  - auth
+  - api
+limits:
+  rps: 1000
+  burst: 50
+"#;
+        let upstream: ::serde_yaml::Value =
+            ::serde_yaml::from_str(yaml).unwrap();
+        let lowered: Value = upstream.clone().try_into().unwrap();
+        let direct: Value = from_str(yaml).unwrap();
+        assert_eq!(
+            lowered, direct,
+            "serde_yaml→noyalib conversion must agree with direct noyalib parse"
+        );
     }
 }

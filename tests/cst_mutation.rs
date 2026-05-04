@@ -76,8 +76,7 @@ fn set_with_invalid_replacement_surfaces_error_on_read() {
     // (scanner-level) validation. Cross-document structural errors
     // — like an unclosed flow indicator at end-of-input — only
     // surface on the next typed-view read. Callers that need an
-    // eager check can call `Document::validate` (TODO: surface a
-    // public API for this in a follow-up).
+    // eager check call [`Document::validate`].
     let mut doc = parse_document("name: foo\n").unwrap();
     // The bare `[` opens a flow sequence that is never closed —
     // structurally broken at the document level.
@@ -85,12 +84,45 @@ fn set_with_invalid_replacement_surfaces_error_on_read() {
     // Source reflects the optimistic splice; round-trip via the
     // green tree still works.
     assert_eq!(doc.to_string(), "name: [\n");
-    // The typed view, however, refuses to materialise: panic on
-    // first read. We catch the panic to assert it.
+    // Eager check: `validate()` surfaces the document-level parse
+    // error as a regular `Result` — no panic.
+    let err = doc.validate().expect_err("validate must reject broken source");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("flow") || msg.contains("expected") || msg.contains("end"),
+        "validate error should reference the parse failure; got {msg:?}",
+    );
+    // The typed view also refuses to materialise (it panics on
+    // first read), but `validate` is the supported way to detect
+    // this without unwinding.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = doc.as_value();
     }));
     assert!(result.is_err(), "as_value() must panic on invalid source");
+}
+
+#[test]
+fn validate_succeeds_on_freshly_parsed_document() {
+    let doc = parse_document("a: 1\nb: 2\n").unwrap();
+    doc.validate().expect("freshly-parsed document must validate");
+}
+
+#[test]
+fn validate_succeeds_after_safe_edit() {
+    let mut doc = parse_document("version: 0.0.1\n").unwrap();
+    doc.set("version", "0.0.2").unwrap();
+    doc.validate()
+        .expect("safe edit must leave document in valid state");
+}
+
+#[test]
+fn validate_is_idempotent() {
+    // Once validation has populated the typed cache, repeated
+    // calls are cheap and still succeed — they early-return.
+    let doc = parse_document("k: v\n").unwrap();
+    for _ in 0..3 {
+        doc.validate().expect("repeated validate calls must succeed");
+    }
 }
 
 #[test]
