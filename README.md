@@ -133,7 +133,7 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 - **`#![no_std]`** -- core parsing/serialization runs `alloc`-only; I/O and `Spanned<T>` require `std`
 - **`miette` diagnostics** -- rich terminal errors with source spans
 - **100% YAML Test Suite** -- 406/406 official test cases pass, no skips
-- **201 KB WASM binary** -- runs in browsers via wasm-bindgen
+- **338 KB WASM binary** -- runs in browsers via wasm-bindgen
 - **6 runtime dependencies** -- serde, indexmap, thiserror, itoa, ryu, memchr
 - **2,566 tests** -- unit, integration, doc-tests, property-based, official suite
 - **45 branded examples** with animated spinner UI
@@ -156,7 +156,7 @@ noyalib competes across four categories of Rust YAML libraries:
 | **SIMD scanning** | Yes (memchr) | No | No | No | No | No |
 | **DoS hardened** | 7 limits | Basic | Basic | Yes | No | Yes |
 | **`miette` diagnostics** | Yes | No | No | No | No | No |
-| **WASM** | 201 KB | No | No | No | No | No |
+| **WASM** | 338 KB | No | No | No | No | No |
 | **Source spans** | Yes | No | No | Yes | No | No |
 | **YAML 1.1 compat** | Yes | Yes | Yes | No | Yes | No |
 | **Serialization** | Yes | Yes | Yes | Yes | No | No |
@@ -225,7 +225,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Examples** | 45 branded examples + WASM demo |
 | **Coverage** | 95.7% line coverage |
 | **Dependencies** | 6 runtime + 1 optional (miette) |
-| **WASM binary** | 201 KB (release, LTO) |
+| **WASM binary** | 338 KB (release, LTO) |
 | **MSRV** | Rust 1.75.0 |
 
 ---

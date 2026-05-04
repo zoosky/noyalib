@@ -94,6 +94,23 @@ impl WasmDocument {
             .set(path, fragment)
             .map_err(|e| JsError::new(&e.to_string()))
     }
+
+    /// Read the YAML comments associated with the node at `path`.
+    /// Returns `{ before: string[], inline: string | null }` so the
+    /// caller can surface human-authored doc-comments alongside
+    /// values — the demo that motivates the entire CST architecture.
+    pub fn comments_at(&self, path: &str) -> Result<JsValue, JsError> {
+        let bundle = self.inner.comments_at(path);
+        let before: Vec<String> = bundle.before.iter().map(|c| c.text.clone()).collect();
+        let inline: Option<String> = bundle.inline.map(|c| c.text);
+        #[derive(Serialize)]
+        struct Bundle {
+            before: Vec<String>,
+            inline: Option<String>,
+        }
+        serde_wasm_bindgen::to_value(&Bundle { before, inline })
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
 }
 
 // ── Legacy / Simple API ──────────────────────────────────────────────────────

@@ -1,0 +1,328 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
+//! Comment-aware read view over a [`crate::cst::Document`].
+//!
+//! The CST already round-trips comments byte-for-byte through
+//! [`Document::set`] and friends — touched spans are rewritten,
+//! everything else (indentation, comments, blank lines) is left alone.
+//! What this module adds is the *read* side: given a path-shaped
+//! query, return the human-authored YAML comments that decorate the
+//! node at that path. Tools (linters, AI agents reading config files,
+//! IDE plugins) need that to understand what each field *means*.
+//!
+//! # Definitions
+//!
+//! - **Inline comment**: a `#`-introduced comment on the *same* line
+//!   as the node's content, after that content. `key: val # inline`.
+//! - **Leading comments**: a contiguous run of comment-only or blank
+//!   lines immediately above the node's first byte. `# pre\nkey: val`
+//!   yields one leading comment.
+//!
+//! # Examples
+//!
+//! ```
+//! use noyalib::cst::parse_document;
+//!
+//! let src = "# top of file\nname: noyalib  # the project\n# next field\nversion: 0.0.1\n";
+//! let doc = parse_document(src).unwrap();
+//!
+//! let name = doc.comments_at("name");
+//! assert_eq!(name.before.len(), 1);
+//! assert_eq!(name.before[0].text, " top of file");
+//! assert_eq!(name.inline.as_ref().unwrap().text, " the project");
+//!
+//! let version = doc.comments_at("version");
+//! assert_eq!(version.before.len(), 1);
+//! assert_eq!(version.before[0].text, " next field");
+//! assert!(version.inline.is_none());
+//! ```
+
+use crate::comments::Comment;
+use crate::cst::Document;
+use crate::prelude::*;
+
+/// Comments that decorate a single node, organised by their position
+/// relative to the node.
+///
+/// Returned by [`Document::comments_at`]. Both fields are empty /
+/// `None` when no comments decorate the queried path or when the path
+/// does not resolve to a node in the document.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::cst::parse_document;
+///
+/// let doc = parse_document("port: 8080  # the listen port\n").unwrap();
+/// let bundle = doc.comments_at("port");
+/// assert!(bundle.before.is_empty());
+/// assert_eq!(bundle.inline.unwrap().text, " the listen port");
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommentBundle {
+    /// Contiguous run of comment lines that appear immediately above
+    /// the node, in source order. An interleaved blank line does not
+    /// break the run — only another content node does. Empty when
+    /// the node has no leading comments.
+    pub before: Vec<Comment>,
+    /// The trailing comment on the node's own line, if any. `None`
+    /// when no `#`-introduced comment follows the node's content on
+    /// the same source line. Multi-line nodes (block mappings,
+    /// block sequences) do not have an inline comment in this sense
+    /// — query individual entries instead.
+    pub inline: Option<Comment>,
+}
+
+impl CommentBundle {
+    /// `true` when the bundle has neither a leading nor an inline
+    /// comment. Convenience for the common "decide whether to render"
+    /// branch in tooling.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.inline.is_none()
+    }
+}
+
+impl Document {
+    /// Comments decorating the node at `path`, classified by position.
+    ///
+    /// Returns an empty [`CommentBundle`] when `path` does not
+    /// resolve. Path syntax matches [`Document::span_at`] —
+    /// `foo.bar`, `items[0]`, `items[0].name`. Wildcard /
+    /// recursive-descent segments are not supported (a non-singular
+    /// span has no canonical "above" line).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let src = "# A multi-line\n# leading block\nport: 8080  # inline\n";
+    /// let doc = parse_document(src).unwrap();
+    ///
+    /// let b = doc.comments_at("port");
+    /// assert_eq!(b.before.len(), 2);
+    /// assert_eq!(b.inline.as_ref().unwrap().text, " inline");
+    /// ```
+    #[must_use]
+    pub fn comments_at(&self, path: &str) -> CommentBundle {
+        let Some((start, end)) = self.span_at(path) else {
+            return CommentBundle::default();
+        };
+
+        // Comment scanning is independent of edits — always run on the
+        // current source. The comment count is small (one per line at
+        // most), so per-call scanning is cheaper than caching.
+        let comments = match crate::comments::load_comments(self.source()) {
+            Ok(c) => c,
+            // A document that successfully parsed cannot fail comment
+            // scan — but if it does, treat as no comments rather than
+            // bubbling up: this is a read-only convenience API.
+            Err(_) => return CommentBundle::default(),
+        };
+
+        let src = self.source();
+        let line_start_idx = line_start(src, start);
+        let line_end_idx = line_end(src, end.saturating_sub(1).max(start));
+
+        let mut bundle = CommentBundle::default();
+
+        // Inline only applies to single-line nodes — a multi-line
+        // block (mapping, sequence) does not have a single inline
+        // comment of its own; query individual entries instead.
+        let is_single_line = !src[start..end].contains('\n');
+        if is_single_line {
+            for c in &comments {
+                if c.start >= end && c.start <= line_end_idx {
+                    bundle.inline = Some(c.clone());
+                    break;
+                }
+            }
+        }
+
+        // Leading: walk *upwards* from the line containing `start`,
+        // collecting comment-only lines and skipping pure-blank lines.
+        // Stop at the first line containing non-comment content (or at
+        // the start of input).
+        let mut cursor = line_start_idx;
+        let mut acc: Vec<Comment> = Vec::new();
+        while cursor > 0 {
+            // `cursor` points at the first byte of a line; step back
+            // to the previous line's start.
+            let prev_line_end = cursor - 1; // the '\n' that ended the previous line
+            let prev_line_start = line_start(src, prev_line_end.saturating_sub(1));
+            let line_text = &src[prev_line_start..prev_line_end];
+            let trimmed = line_text.trim_start_matches(|c: char| c == ' ' || c == '\t');
+
+            if trimmed.is_empty() {
+                // Blank line — does not break the run, does not
+                // contribute a comment.
+                cursor = prev_line_start;
+                continue;
+            }
+            if trimmed.starts_with('#') {
+                // Comment-only line. Find the matching scanned comment
+                // (we already have spans for all of them).
+                if let Some(c) = comments
+                    .iter()
+                    .find(|c| c.start >= prev_line_start && c.start < prev_line_end)
+                {
+                    acc.push(c.clone());
+                }
+                cursor = prev_line_start;
+                continue;
+            }
+            // Content line — stop walking up.
+            break;
+        }
+
+        // Walked upward, so the natural order is bottom-up; reverse to
+        // restore source order.
+        acc.reverse();
+        bundle.before = acc;
+
+        bundle
+    }
+}
+
+#[inline]
+fn line_start(src: &str, byte: usize) -> usize {
+    let bytes = src.as_bytes();
+    let mut i = byte.min(bytes.len());
+    while i > 0 && bytes[i - 1] != b'\n' {
+        i -= 1;
+    }
+    i
+}
+
+#[inline]
+fn line_end(src: &str, byte: usize) -> usize {
+    let bytes = src.as_bytes();
+    let mut i = byte.min(bytes.len().saturating_sub(1));
+    while i < bytes.len() && bytes[i] != b'\n' {
+        i += 1;
+    }
+    i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cst::parse_document;
+
+    #[test]
+    fn inline_comment_on_simple_value() {
+        let doc = parse_document("port: 8080  # the listen port\n").unwrap();
+        let b = doc.comments_at("port");
+        assert!(b.before.is_empty());
+        assert_eq!(b.inline.as_ref().unwrap().text, " the listen port");
+    }
+
+    #[test]
+    fn leading_single_comment() {
+        let doc = parse_document("# pre\nkey: val\n").unwrap();
+        let b = doc.comments_at("key");
+        assert_eq!(b.before.len(), 1);
+        assert_eq!(b.before[0].text, " pre");
+        assert!(b.inline.is_none());
+    }
+
+    #[test]
+    fn leading_multi_with_blank_lines_preserves_run() {
+        let doc = parse_document(
+            "# first\n\
+             \n\
+             # second\n\
+             key: val\n",
+        )
+        .unwrap();
+        let b = doc.comments_at("key");
+        assert_eq!(b.before.len(), 2);
+        assert_eq!(b.before[0].text, " first");
+        assert_eq!(b.before[1].text, " second");
+    }
+
+    #[test]
+    fn content_line_breaks_leading_run() {
+        let doc = parse_document(
+            "name: noyalib\n\
+             # this comment belongs to version, not name\n\
+             version: 0.0.1\n",
+        )
+        .unwrap();
+        let name = doc.comments_at("name");
+        assert!(name.before.is_empty());
+        let version = doc.comments_at("version");
+        assert_eq!(version.before.len(), 1);
+        assert!(version.before[0].text.contains("belongs to version"));
+    }
+
+    #[test]
+    fn nested_path_inline_comment() {
+        let doc = parse_document(
+            "server:\n\
+             \x20 host: localhost  # bind address\n\
+             \x20 port: 8080\n",
+        )
+        .unwrap();
+        let host = doc.comments_at("server.host");
+        assert_eq!(host.inline.as_ref().unwrap().text, " bind address");
+        let port = doc.comments_at("server.port");
+        assert!(port.inline.is_none());
+    }
+
+    #[test]
+    fn unknown_path_returns_empty_bundle() {
+        let doc = parse_document("a: 1\n").unwrap();
+        let b = doc.comments_at("nonexistent");
+        assert!(b.is_empty());
+    }
+
+    #[test]
+    fn comments_survive_lossless_edit() {
+        let mut doc = parse_document(
+            "# version is bumped by Renovate\n\
+             version: 0.0.1  # do not edit by hand\n",
+        )
+        .unwrap();
+        doc.set("version", "0.0.2").unwrap();
+        let b = doc.comments_at("version");
+        assert_eq!(b.before.len(), 1);
+        assert_eq!(b.before[0].text, " version is bumped by Renovate");
+        assert_eq!(b.inline.as_ref().unwrap().text, " do not edit by hand");
+        assert!(doc.to_string().contains("version: 0.0.2"));
+        assert!(doc.to_string().contains("# version is bumped by Renovate"));
+        assert!(doc.to_string().contains("# do not edit by hand"));
+    }
+
+    #[test]
+    fn multiline_block_does_not_inherit_child_inline() {
+        // Bug guard: querying a multi-line block must not return the
+        // inline comment of its last child entry. The user's mental
+        // model of `comments_at("server")` is "comments on `server`",
+        // not "comments on `server.port`".
+        let doc = parse_document(
+            "server:\n  host: localhost\n  port: 8080  # main HTTP port\n",
+        )
+        .unwrap();
+        let server = doc.comments_at("server");
+        assert!(server.inline.is_none(), "block must not inherit child inline");
+        let port = doc.comments_at("server.port");
+        assert_eq!(port.inline.as_ref().unwrap().text, " main HTTP port");
+    }
+
+    #[test]
+    fn sequence_item_inline_comment() {
+        let doc = parse_document(
+            "items:\n\
+             \x20 - one  # the first\n\
+             \x20 - two  # the second\n",
+        )
+        .unwrap();
+        let first = doc.comments_at("items[0]");
+        assert_eq!(first.inline.as_ref().unwrap().text, " the first");
+        let second = doc.comments_at("items[1]");
+        assert_eq!(second.inline.as_ref().unwrap().text, " the second");
+    }
+}

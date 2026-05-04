@@ -147,6 +147,11 @@ mod anchors;
 /// Zero-copy YAML values that borrow from the input.
 pub mod borrowed;
 mod comments;
+/// Drop-in compatibility shims for upstream YAML crates. Each shim
+/// is gated behind its own feature flag so unused migration paths
+/// add zero compile cost. See [`compat::serde_yaml`] for the
+/// `serde_yaml` 0.9 surface.
+pub mod compat;
 /// Side-table CST for byte-faithful round-tripping with typed
 /// path-targeted edits.
 ///

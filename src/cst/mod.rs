@@ -61,12 +61,14 @@
 //! assert_eq!(joined, src);
 //! ```
 
+mod annotated;
 mod builder;
 mod document;
 mod format;
 mod green;
 mod syntax;
 
+pub use annotated::CommentBundle;
 pub use document::{parse_document, parse_stream, Document, RepairScope};
 pub use format::{format, format_with_config, FormatConfig};
 pub use green::{GreenChild, GreenNode};

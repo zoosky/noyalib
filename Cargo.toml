@@ -1,5 +1,5 @@
 [workspace]
-members = ["noyalib-wasm"]
+members = ["noyalib-wasm", "noyalib-mcp"]
 exclude = ["examples/wasm", "fuzz"]
 
 [package]
@@ -214,6 +214,10 @@ path = "examples/all.rs"
 name = "lossless_edit"
 path = "examples/lossless_edit.rs"
 
+[[example]]
+name = "comments_at"
+path = "examples/comments_at.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 indexmap = { version = "2.14", features = ["serde"] }
@@ -267,6 +271,11 @@ garde = ["dep:garde"]
 validator = ["dep:validator"]
 wasm-opt = []
 noyavalidate = ["std", "miette", "miette/fancy"]
+# Drop-in surface compatible with `serde_yaml` 0.9. Adds the
+# `noyalib::compat::serde_yaml` module without enabling any extra
+# runtime features; off by default so users who do not need
+# migration help do not pay for the re-exports.
+compat-serde-yaml = []
 
 [package.metadata.docs.rs]
 all-features = true
