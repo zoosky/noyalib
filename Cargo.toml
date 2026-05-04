@@ -327,7 +327,7 @@ validate-schema = ["schema", "dep:jsonschema"]
 # `figment::providers::Json` do.
 figment = ["dep:figment", "std"]
 # SIMD-friendly multi-byte search primitives for parser hot paths.
-# Phase 4: ships a feature-gated `noyalib::simd` module containing
+# Ships a feature-gated `noyalib::simd` module containing
 # `find_any_of` and friends — vectorised via memchr's SSE2 / NEON
 # arity-1/2/3 primitives where applicable, SWAR (8-byte-stride
 # u64 packing) for needle sets of 4+ bytes, and a scalar fallback.
@@ -336,6 +336,14 @@ figment = ["dep:figment", "std"]
 # conservative environments stay on the byte-by-byte baseline; on
 # by callers who want the throughput uplift on supported targets.
 simd = []
+# Portable-SIMD (`std::simd`) structural scanner. Builds a 16/32/
+# 64-byte-wide `SimdScanner` that finds any byte in a needle set
+# in a single SIMD pass. Requires the nightly toolchain because
+# `core::simd` is unstable (`#![feature(portable_simd)]`). On by
+# default for nightly users who want maximum throughput; the
+# stable `simd` feature still ships the memchr / SWAR fall-back so
+# stable builds are not regressed.
+nightly-simd = ["simd"]
 
 [package.metadata.docs.rs]
 all-features = true

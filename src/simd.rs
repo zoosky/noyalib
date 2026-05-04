@@ -253,6 +253,164 @@ fn find_any_of_many(haystack: &[u8], needles: &[u8]) -> Option<usize> {
     None
 }
 
+/// Build-once, scan-many structural scanner.
+///
+/// Caches the needle set as a [`ByteBitmap`] (and, on nightly with
+/// `nightly-simd`, broadcast SIMD vectors) so each call to
+/// [`SimdScanner::find_any`] does no per-call setup work — the
+/// classic shape for a scanner used inside a parser hot loop.
+///
+/// On stable Rust this is a thin wrapper around the existing
+/// [`find_any_of`] / SWAR machinery. On nightly with the
+/// `nightly-simd` Cargo feature it widens to a 32-byte
+/// `Simd<u8, N>` chunk loop using portable SIMD, eliminating the
+/// per-byte branch and producing a tight `or` / `to_bitmask` /
+/// `trailing_zeros` inner loop. Both paths are bit-for-bit
+/// equivalent — exhaustively cross-checked by
+/// `tests/simd_equivalence.rs`.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::SimdScanner;
+///
+/// let scanner = SimdScanner::new(b":-[]{}#\n");
+/// assert_eq!(scanner.find_any(b"name: value"), Some(4));
+/// assert_eq!(scanner.find_any(b"all-clean-text"), Some(3));
+/// assert_eq!(scanner.find_any(b"abcdef"), None);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct SimdScanner {
+    bitmap: ByteBitmap,
+    /// Snapshot of the needles for the SIMD broadcast path. Bounded
+    /// at 16 entries — beyond that the bitmap test is cheaper than
+    /// 16+ broadcast comparisons. Shared between stable and nightly
+    /// to keep the type layout stable across feature builds.
+    #[cfg_attr(not(all(feature = "nightly-simd", noyalib_nightly)), allow(dead_code))]
+    needles: [u8; 16],
+    #[cfg_attr(not(all(feature = "nightly-simd", noyalib_nightly)), allow(dead_code))]
+    needle_count: u8,
+}
+
+impl SimdScanner {
+    /// Build a scanner from a needle byte set. Duplicate needles
+    /// are coalesced (set semantics). Needle count beyond 16 falls
+    /// through to the bitmap-only path on every chunk.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::simd::SimdScanner;
+    /// let s = SimdScanner::new(b":-{}");
+    /// assert_eq!(s.find_any(b"a-b"), Some(1));
+    /// ```
+    #[must_use]
+    pub fn new(needles: &[u8]) -> Self {
+        let bitmap = bitmap_for(needles);
+        let mut compact = [0u8; 16];
+        let mut count: u8 = 0;
+        let mut seen = [false; 256];
+        for &b in needles {
+            if seen[b as usize] {
+                continue;
+            }
+            seen[b as usize] = true;
+            if (count as usize) < compact.len() {
+                compact[count as usize] = b;
+                count += 1;
+            }
+        }
+        SimdScanner {
+            bitmap,
+            needles: compact,
+            needle_count: count,
+        }
+    }
+
+    /// Index of the first byte in `haystack` that matches any needle.
+    ///
+    /// Returns `None` when the haystack contains no needle byte.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::simd::SimdScanner;
+    /// let s = SimdScanner::new(b":\n#");
+    /// assert_eq!(s.find_any(b"a comment # here"), Some(10));
+    /// assert_eq!(s.find_any(b"plain"), None);
+    /// ```
+    #[must_use]
+    pub fn find_any(&self, haystack: &[u8]) -> Option<usize> {
+        #[cfg(all(feature = "nightly-simd", noyalib_nightly))]
+        {
+            self.find_any_simd(haystack)
+        }
+        #[cfg(not(all(feature = "nightly-simd", noyalib_nightly)))]
+        {
+            self.find_any_scalar(haystack)
+        }
+    }
+
+    /// Stable, bitmap-driven scan. The auto-vectoriser handles the
+    /// inner loop on most LLVM targets; `nightly-simd` upgrades to
+    /// an explicit `Simd<u8, N>` chunk loop.
+    fn find_any_scalar(&self, haystack: &[u8]) -> Option<usize> {
+        for (i, &b) in haystack.iter().enumerate() {
+            if self.bitmap.contains(b) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Portable-SIMD scan. Walks `haystack` in 32-byte strides,
+    /// broadcasting each needle and OR-ing the equality masks. The
+    /// first set bit in the combined mask gives the byte offset
+    /// inside the chunk; the scalar tail handles `< 32` leftovers.
+    ///
+    /// Falls back to the bitmap loop when the needle set has more
+    /// than 8 distinct bytes (each broadcast costs a vector
+    /// register, and the bitmap test wins beyond that point).
+    #[cfg(all(feature = "nightly-simd", noyalib_nightly))]
+    fn find_any_simd(&self, haystack: &[u8]) -> Option<usize> {
+        use core::simd::cmp::SimdPartialEq;
+        use core::simd::{Mask, Simd};
+
+        const LANES: usize = 32;
+        // Beyond 8 needles the broadcast path costs more than the
+        // bitmap test — fall through to the scalar path which uses
+        // a single `bitmap.contains` per byte and is itself
+        // auto-vectorised by LLVM for the contains side.
+        let needle_count = self.needle_count as usize;
+        if needle_count > 8 {
+            return self.find_any_scalar(haystack);
+        }
+        let active = &self.needles[..needle_count];
+
+        let mut i = 0;
+        while i + LANES <= haystack.len() {
+            let chunk: Simd<u8, LANES> = Simd::from_slice(&haystack[i..i + LANES]);
+            let mut combined: Mask<i8, LANES> = Mask::splat(false);
+            for &n in active {
+                let needle: Simd<u8, LANES> = Simd::splat(n);
+                combined |= chunk.simd_eq(needle);
+            }
+            let bits = combined.to_bitmask();
+            if bits != 0 {
+                return Some(i + bits.trailing_zeros() as usize);
+            }
+            i += LANES;
+        }
+        // Scalar tail.
+        for (offset, &b) in haystack[i..].iter().enumerate() {
+            if self.bitmap.contains(b) {
+                return Some(i + offset);
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::byte_char_slices)]
 mod tests {
@@ -400,6 +558,66 @@ mod tests {
                         scalar(&buf, needles),
                         "mismatch needles={:?} length={length} pos={pos}",
                         needles,
+                    );
+                    buf[pos] = saved;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scanner_basic_finds_first_needle() {
+        let s = SimdScanner::new(b":-{}");
+        assert_eq!(s.find_any(b"a-b"), Some(1));
+        assert_eq!(s.find_any(b"abc"), None);
+    }
+
+    #[test]
+    fn scanner_long_input_match_at_far_position() {
+        let s = SimdScanner::new(b":,#\n[]{}");
+        let mut buf = vec![b'.'; 4096];
+        buf[3000] = b'#';
+        assert_eq!(s.find_any(&buf), Some(3000));
+    }
+
+    #[test]
+    fn scanner_matches_baseline_across_needle_sets() {
+        let baseline = |haystack: &[u8], needles: &[u8]| -> Option<usize> {
+            for (i, &b) in haystack.iter().enumerate() {
+                if needles.contains(&b) {
+                    return Some(i);
+                }
+            }
+            None
+        };
+        let needle_sets: &[&[u8]] = &[
+            b":\n",
+            b":,#\n",
+            b"[]{}:,#\n",
+            b"abcdefghij", // 10 needles — exercises the >8 fall-through
+        ];
+        for &needles in needle_sets {
+            let s = SimdScanner::new(needles);
+            for length in [0usize, 1, 31, 32, 33, 64, 127, 128, 1024] {
+                let mut buf = vec![0u8; length];
+                for (i, slot) in buf.iter_mut().enumerate() {
+                    *slot = (i as u8).wrapping_add(33);
+                    while needles.contains(slot) {
+                        *slot = slot.wrapping_add(1);
+                    }
+                }
+                assert_eq!(
+                    s.find_any(&buf),
+                    baseline(&buf, needles),
+                    "no-needle: needles={needles:?} len={length}"
+                );
+                for pos in 0..length {
+                    let saved = buf[pos];
+                    buf[pos] = needles[pos % needles.len()];
+                    assert_eq!(
+                        s.find_any(&buf),
+                        baseline(&buf, needles),
+                        "needles={needles:?} len={length} pos={pos}",
                     );
                     buf[pos] = saved;
                 }

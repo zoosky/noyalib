@@ -115,6 +115,11 @@
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(
+    all(feature = "nightly-simd", noyalib_nightly),
+    allow(unstable_features),
+    feature(portable_simd)
+)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;

@@ -17,6 +17,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   int / float / bool / null produce a `TypeMismatch` rather than
   silently coercing their UTF-8 representation to bytes.
 
+### Added — Portable-SIMD structural scanner
+
+- **`SimdScanner` type** in `noyalib::simd` — build-once,
+  scan-many byte-set finder optimised for parser inner loops.
+  Stable Rust uses the existing memchr / SWAR / bitmap path; the
+  new `nightly-simd` Cargo feature widens the inner loop to a
+  32-byte `Simd<u8, 32>` chunk via `core::simd` portable SIMD,
+  broadcasting each needle and OR-ing equality masks for
+  branch-free structural detection.
+- **`build.rs` toolchain probe** — emits `cfg(noyalib_nightly)`
+  when `rustc --version` reports a nightly channel, so the
+  `feature(portable_simd)` attribute is gated on both the user's
+  feature flag and the actual compiler — `--all-features` on
+  stable continues to compile cleanly.
+- Both code paths are exhaustively cross-checked against a scalar
+  baseline across needle widths 2 / 4 / 8 / 10 and haystack lengths
+  spanning the SIMD chunk boundary (31 / 32 / 33 / 64 / 128 / 1024).
+
 ### Added — Pluggable parser policies
 
 - **`noyalib::policy` module** — `Policy` trait with
