@@ -193,3 +193,58 @@ fn flattened_clone_eq() {
     let clone = cfg.inner.clone();
     assert_eq!(clone, cfg.inner);
 }
+
+#[test]
+fn flattened_as_value_and_as_raw_borrows() {
+    let f = Flattened::new(42_u16, Value::from(42_i64));
+    // The borrow accessors round-trip the typed and raw views
+    // without consuming the wrapper.
+    assert_eq!(f.as_value(), &42);
+    assert_eq!(f.as_raw().as_i64(), Some(42));
+    // Wrapper still usable after the borrows.
+    assert_eq!(f.value, 42);
+}
+
+#[test]
+fn flattened_into_value_consumes_to_typed() {
+    let f = Flattened::new("hello".to_string(), Value::from("hello"));
+    let typed: String = f.into_value();
+    assert_eq!(typed, "hello");
+}
+
+#[test]
+fn flattened_serializes_as_typed_view_only() {
+    // Round-trip transparency contract: a `Flattened<T>` serializes
+    // equivalently to its inner `T` — the raw view is an
+    // ingest-side capture, not a serializable side-channel.
+    #[derive(serde::Serialize, serde::Deserialize, Debug)]
+    struct Inner {
+        port: u16,
+    }
+    let raw: Value = from_str("port: 8080\n").unwrap();
+    let f = Flattened::new(Inner { port: 8080 }, raw);
+    let yaml = to_string(&f).unwrap();
+    assert_eq!(yaml.trim(), "port: 8080");
+}
+
+#[test]
+fn flattened_deserialize_error_propagates_from_inner_type() {
+    // The two-phase deserialize first captures the Value tree,
+    // then re-runs T::deserialize. When T can't accept the raw
+    // shape (e.g. negative number into u16) the second phase
+    // surfaces the error through `serde::de::Error::custom`.
+    let res: Result<Flattened<u16>, _> = from_str("-1");
+    assert!(
+        res.is_err(),
+        "negative integer must not coerce into u16 via Flattened",
+    );
+}
+
+#[test]
+fn flattened_deref_resolves_through_to_inner() {
+    // Methods on T are reachable through the Deref impl.
+    let raw: Value = from_str("[1, 2, 3]").unwrap();
+    let f = Flattened::new(vec![1_i32, 2, 3], raw);
+    assert_eq!(f.len(), 3);
+    assert_eq!(f.first(), Some(&1));
+}
