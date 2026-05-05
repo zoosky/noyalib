@@ -13,6 +13,10 @@ keywords = ["yaml", "mcp", "ai", "claude", "tooling"]
 categories = ["command-line-utilities", "encoding"]
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
 
+[lib]
+name = "noyalib_mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "noyalib-mcp"
 path = "src/main.rs"

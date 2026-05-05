@@ -14,7 +14,7 @@ use serde_json::{json, Value as JsonValue};
 use std::fs;
 
 /// Descriptors returned to MCP clients via `tools/list`.
-pub(crate) fn descriptors() -> Vec<JsonValue> {
+pub fn descriptors() -> Vec<JsonValue> {
     vec![
         json!({
             "name": "noyalib_get",
@@ -73,7 +73,7 @@ pub(crate) fn descriptors() -> Vec<JsonValue> {
 
 /// `tools/call` dispatcher. Returns the JSON-RPC `result` payload on
 /// success, or `(code, message)` for an error envelope.
-pub(crate) fn call(params: JsonValue) -> Result<JsonValue, (i32, String)> {
+pub fn call(params: JsonValue) -> Result<JsonValue, (i32, String)> {
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
@@ -126,4 +126,188 @@ fn arg_str<'a>(args: &'a JsonValue, key: &str) -> Result<&'a str, (i32, String)>
     args.get(key)
         .and_then(|v| v.as_str())
         .ok_or_else(|| (-32602, format!("missing string argument: {key}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Allocate a unique scratch path under the system temp dir so
+    /// parallel test runs don't collide.
+    fn temp_path(label: &str) -> PathBuf {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("noyalib-mcp-{label}-{pid}-{id}.yml"))
+    }
+
+    fn write_temp(label: &str, contents: &str) -> PathBuf {
+        let p = temp_path(label);
+        fs::write(&p, contents).unwrap();
+        p
+    }
+
+    // ── descriptors ────────────────────────────────────────────────
+
+    #[test]
+    fn descriptors_lists_both_tools_with_input_schemas() {
+        let d = descriptors();
+        assert_eq!(d.len(), 2);
+        let names: Vec<&str> = d
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"noyalib_get"));
+        assert!(names.contains(&"noyalib_set"));
+        for tool in &d {
+            assert!(tool["description"].is_string());
+            assert_eq!(tool["inputSchema"]["type"].as_str(), Some("object"));
+            assert!(tool["inputSchema"]["required"].is_array());
+        }
+    }
+
+    // ── call dispatcher ────────────────────────────────────────────
+
+    #[test]
+    fn call_rejects_missing_name() {
+        let err = call(json!({})).unwrap_err();
+        assert_eq!(err.0, -32602);
+        assert!(err.1.contains("name"));
+    }
+
+    #[test]
+    fn call_rejects_unknown_tool() {
+        let err = call(json!({"name": "frobnicate", "arguments": {}})).unwrap_err();
+        assert_eq!(err.0, -32601);
+        assert!(err.1.contains("frobnicate"));
+    }
+
+    #[test]
+    fn call_routes_to_get() {
+        let p = write_temp("call-get", "name: noyalib\n");
+        let v = call(json!({
+            "name": "noyalib_get",
+            "arguments": { "file": p.to_str().unwrap(), "path": "name" }
+        }))
+        .unwrap();
+        let text = v["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "noyalib");
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn call_routes_to_set() {
+        let p = write_temp("call-set", "version: 1\n");
+        let v = call(json!({
+            "name": "noyalib_set",
+            "arguments": {
+                "file": p.to_str().unwrap(),
+                "path": "version",
+                "value": "2"
+            }
+        }))
+        .unwrap();
+        assert!(v["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("set version"));
+        let updated = fs::read_to_string(&p).unwrap();
+        assert_eq!(updated, "version: 2\n");
+        let _ = fs::remove_file(&p);
+    }
+
+    // ── tool_get error paths ───────────────────────────────────────
+
+    #[test]
+    fn tool_get_missing_file_arg_errors() {
+        let err = tool_get(&json!({"path": "k"})).unwrap_err();
+        assert_eq!(err.0, -32602);
+    }
+
+    #[test]
+    fn tool_get_missing_path_arg_errors() {
+        let err = tool_get(&json!({"file": "/tmp/x.yml"})).unwrap_err();
+        assert_eq!(err.0, -32602);
+    }
+
+    #[test]
+    fn tool_get_unreadable_file_errors() {
+        let err = tool_get(&json!({
+            "file": "/this/path/definitely/does/not/exist.yml",
+            "path": "k"
+        }))
+        .unwrap_err();
+        assert_eq!(err.0, -32000);
+    }
+
+    #[test]
+    fn tool_get_unparseable_yaml_errors() {
+        let p = write_temp("get-parse", "key: [\n");
+        let err = tool_get(&json!({
+            "file": p.to_str().unwrap(),
+            "path": "key"
+        }))
+        .unwrap_err();
+        assert_eq!(err.0, -32001);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn tool_get_path_not_found_errors() {
+        let p = write_temp("get-missing", "a: 1\n");
+        let err = tool_get(&json!({
+            "file": p.to_str().unwrap(),
+            "path": "missing"
+        }))
+        .unwrap_err();
+        assert_eq!(err.0, -32002);
+        let _ = fs::remove_file(&p);
+    }
+
+    // ── tool_set error paths ───────────────────────────────────────
+
+    #[test]
+    fn tool_set_missing_args_errors() {
+        let err = tool_set(&json!({})).unwrap_err();
+        assert_eq!(err.0, -32602);
+    }
+
+    #[test]
+    fn tool_set_unreadable_file_errors() {
+        let err = tool_set(&json!({
+            "file": "/this/path/does/not/exist.yml",
+            "path": "k",
+            "value": "v"
+        }))
+        .unwrap_err();
+        assert_eq!(err.0, -32000);
+    }
+
+    #[test]
+    fn tool_set_unparseable_source_errors() {
+        let p = write_temp("set-parse", "k: [\n");
+        let err = tool_set(&json!({
+            "file": p.to_str().unwrap(),
+            "path": "k",
+            "value": "v"
+        }))
+        .unwrap_err();
+        assert_eq!(err.0, -32001);
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn tool_set_unknown_path_errors() {
+        let p = write_temp("set-bad-path", "a: 1\n");
+        let err = tool_set(&json!({
+            "file": p.to_str().unwrap(),
+            "path": "missing.path",
+            "value": "v"
+        }))
+        .unwrap_err();
+        assert_eq!(err.0, -32003);
+        let _ = fs::remove_file(&p);
+    }
 }
