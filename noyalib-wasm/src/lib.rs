@@ -5,8 +5,14 @@
 //!
 //! Exposes YAML parse/serialize and the lossless Document API to JavaScript
 //! via wasm-bindgen.
+//!
+//! The pure-Rust logic lives in [`core`] so it is reachable from
+//! `cargo test` on the rlib side; the bindings in this module are
+//! the thin JsValue conversion shells.
 
 #![forbid(unsafe_code)]
+
+pub mod core;
 
 use noyalib::cst::{parse_document, Document};
 use serde::Serialize;
@@ -53,16 +59,15 @@ impl WasmDocument {
 
     /// Get the parsed value at a dotted path.
     pub fn get(&self, path: &str) -> Result<JsValue, JsError> {
-        let val = self.inner.as_value();
-        match val.get_path(path) {
-            Some(v) => serde_wasm_bindgen::to_value(v).map_err(|e| JsError::new(&e.to_string())),
+        match core::document_get_value(&self.inner, path) {
+            Some(v) => serde_wasm_bindgen::to_value(&v).map_err(|e| JsError::new(&e.to_string())),
             None => Ok(JsValue::NULL),
         }
     }
 
     /// Get the raw source fragment at a dotted path.
     pub fn get_source(&self, path: &str) -> JsValue {
-        match self.inner.get(path) {
+        match core::document_get_source(&self.inner, path) {
             Some(s) => JsValue::from_str(s),
             None => JsValue::NULL,
         }
@@ -70,7 +75,7 @@ impl WasmDocument {
 
     /// Get the byte range (start, end) for the value at a dotted path.
     pub fn span_at(&self, path: &str) -> Result<JsValue, JsError> {
-        match self.inner.span_at(path) {
+        match core::document_span_at(&self.inner, path) {
             Some((start, end)) => serde_wasm_bindgen::to_value(&WasmSpan { start, end })
                 .map_err(|e| JsError::new(&e.to_string())),
             None => Ok(JsValue::NULL),
@@ -98,9 +103,7 @@ impl WasmDocument {
     /// caller can surface human-authored doc-comments alongside
     /// values — the demo that motivates the entire CST architecture.
     pub fn comments_at(&self, path: &str) -> Result<JsValue, JsError> {
-        let bundle = self.inner.comments_at(path);
-        let before: Vec<String> = bundle.before.iter().map(|c| c.text.clone()).collect();
-        let inline: Option<String> = bundle.inline.map(|c| c.text);
+        let (before, inline) = core::document_comments_at(&self.inner, path);
         #[derive(Serialize)]
         struct Bundle {
             before: Vec<String>,
@@ -111,13 +114,21 @@ impl WasmDocument {
     }
 }
 
+impl WasmDocument {
+    /// Native (rlib) accessor for the inner [`Document`]. Lets
+    /// `cargo test` exercise the underlying state transitions
+    /// without going through a JS shell.
+    pub fn as_document(&self) -> &Document {
+        &self.inner
+    }
+}
+
 // ── Legacy / Simple API ──────────────────────────────────────────────────────
 
 /// Parse a YAML string and return a JS object.
 #[wasm_bindgen]
 pub fn parse(yaml: &str) -> Result<JsValue, JsError> {
-    let value: noyalib::Value =
-        noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
+    let value = core::parse_yaml_to_value(yaml).map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&value).map_err(|e| JsError::new(&e.to_string()))
 }
 
@@ -126,27 +137,20 @@ pub fn parse(yaml: &str) -> Result<JsValue, JsError> {
 pub fn stringify(value: JsValue) -> Result<String, JsError> {
     let v: noyalib::Value =
         serde_wasm_bindgen::from_value(value).map_err(|e| JsError::new(&e.to_string()))?;
-    noyalib::to_string(&v).map_err(|e| JsError::new(&e.to_string()))
+    core::value_to_yaml(&v).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Validate YAML against the JSON schema.
 #[wasm_bindgen]
 pub fn validate_json(yaml: &str) -> Result<bool, JsError> {
-    let value: noyalib::Value =
-        noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
-    match noyalib::validate_yaml_json_schema(&value) {
-        Ok(()) => Ok(true),
-        Err(e) => Err(JsError::new(&e.to_string())),
-    }
+    core::validate_yaml_json(yaml).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Get a value at a dotted path from a YAML string.
 #[wasm_bindgen]
 pub fn get_path(yaml: &str, path: &str) -> Result<JsValue, JsError> {
-    let value: noyalib::Value =
-        noyalib::from_str(yaml).map_err(|e| JsError::new(&e.to_string()))?;
-    match value.get_path(path) {
-        Some(v) => serde_wasm_bindgen::to_value(v).map_err(|e| JsError::new(&e.to_string())),
+    match core::yaml_get_path(yaml, path).map_err(|e| JsError::new(&e.to_string()))? {
+        Some(v) => serde_wasm_bindgen::to_value(&v).map_err(|e| JsError::new(&e.to_string())),
         None => Ok(JsValue::NULL),
     }
 }
@@ -154,10 +158,5 @@ pub fn get_path(yaml: &str, path: &str) -> Result<JsValue, JsError> {
 /// Merge two YAML documents.
 #[wasm_bindgen]
 pub fn merge(base_yaml: &str, override_yaml: &str) -> Result<String, JsError> {
-    let mut base: noyalib::Value =
-        noyalib::from_str(base_yaml).map_err(|e| JsError::new(&e.to_string()))?;
-    let overrides: noyalib::Value =
-        noyalib::from_str(override_yaml).map_err(|e| JsError::new(&e.to_string()))?;
-    base.merge(overrides);
-    noyalib::to_string(&base).map_err(|e| JsError::new(&e.to_string()))
+    core::merge_yaml(base_yaml, override_yaml).map_err(|e| JsError::new(&e.to_string()))
 }
