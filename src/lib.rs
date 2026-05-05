@@ -120,6 +120,15 @@
     allow(unstable_features),
     feature(portable_simd)
 )]
+// Opt-in coverage annotations. `noyalib_coverage` is set by the
+// build script when `NOYALIB_COVERAGE=1` is exported (typically by
+// the CI coverage job running on nightly). When active, items
+// annotated with `#[cfg_attr(noyalib_coverage, coverage(off))]`
+// are excluded from coverage instrumentation. Stable builds and
+// regular nightly builds never see the `coverage_attribute`
+// feature flag, so the annotations are no-ops there.
+#![cfg_attr(noyalib_coverage, allow(unstable_features))]
+#![cfg_attr(noyalib_coverage, feature(coverage_attribute))]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;

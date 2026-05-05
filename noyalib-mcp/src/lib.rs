@@ -11,6 +11,11 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Opt-in coverage exclusion (`NOYALIB_COVERAGE=1`) — see
+// `build.rs` for the flag, individual `coverage(off)` annotations
+// are below.
+#![cfg_attr(noyalib_coverage, allow(unstable_features))]
+#![cfg_attr(noyalib_coverage, feature(coverage_attribute))]
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};

@@ -33,10 +33,19 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Opt-in coverage exclusion: when `NOYALIB_COVERAGE=1`, the main
+// stdio loop is excluded from instrumentation. The loop is the
+// integration shim around `noyalib_mcp::handle_message`; its logic
+// is covered end-to-end by `tests/protocol.rs` (subprocess-driven
+// JSON-RPC) and the I/O failure paths on stdin/stdout require
+// broken pipes that pure-Rust unit tests cannot reproduce.
+#![cfg_attr(noyalib_coverage, allow(unstable_features))]
+#![cfg_attr(noyalib_coverage, feature(coverage_attribute))]
 
 use noyalib_mcp::{handle_message, HandleOutcome};
 use std::io::{self, BufRead, Write};
 
+#[cfg_attr(noyalib_coverage, coverage(off))]
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();

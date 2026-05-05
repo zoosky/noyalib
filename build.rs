@@ -8,9 +8,10 @@
 //! from the unstable `feature(portable_simd)` attribute.
 
 fn main() {
-    // Inform Cargo that `cfg(noyalib_nightly)` is a known cfg name —
+    // Inform Cargo that the cfg names below are known —
     // suppresses the `unexpected_cfgs` lint introduced by Cargo 1.79.
     println!("cargo:rustc-check-cfg=cfg(noyalib_nightly)");
+    println!("cargo:rustc-check-cfg=cfg(noyalib_coverage)");
 
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     if let Ok(output) = std::process::Command::new(rustc).arg("--version").output() {
@@ -21,4 +22,16 @@ fn main() {
             println!("cargo:rustc-cfg=noyalib_nightly");
         }
     }
+
+    // Opt-in coverage annotations: when `NOYALIB_COVERAGE` is set
+    // (typically by `cargo +nightly llvm-cov --cfg=noyalib_coverage`),
+    // items annotated with `#[cfg_attr(noyalib_coverage,
+    // coverage(off))]` are excluded from coverage instrumentation.
+    // The flag is opt-in so non-coverage builds (which compile on
+    // stable rustc) never see the unstable `coverage_attribute`
+    // feature flag.
+    if std::env::var_os("NOYALIB_COVERAGE").is_some() {
+        println!("cargo:rustc-cfg=noyalib_coverage");
+    }
+    println!("cargo:rerun-if-env-changed=NOYALIB_COVERAGE");
 }
