@@ -987,6 +987,7 @@ dependencies = [
  "memchr",
  "miette",
  "proptest",
+ "rayon",
  "rust-yaml",
  "rustc-hash",
  "ryu",

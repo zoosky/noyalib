@@ -481,7 +481,10 @@ impl TreeBuilder {
 }
 
 fn leaf_token(kind: SyntaxKind, len: usize) -> GreenChild {
-    GreenChild::Token { kind, len }
+    GreenChild::Token {
+        kind,
+        len: u32::try_from(len).expect("token length exceeds 4 GiB cap"),
+    }
 }
 
 fn child_from_trivia(t: Trivia) -> GreenChild {
@@ -493,14 +496,14 @@ fn child_from_trivia(t: Trivia) -> GreenChild {
     };
     GreenChild::Token {
         kind,
-        len: t.end - t.start,
+        len: u32::try_from(t.end - t.start).expect("trivia length exceeds 4 GiB cap"),
     }
 }
 
 fn child_from_comment(c: ScannedComment) -> GreenChild {
     GreenChild::Token {
         kind: SyntaxKind::Comment,
-        len: c.end - c.start,
+        len: u32::try_from(c.end - c.start).expect("comment length exceeds 4 GiB cap"),
     }
 }
 

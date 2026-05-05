@@ -274,6 +274,11 @@ figment = { version = "0.10", optional = true }
 # MSRV-1.75 build path clean (saphyr's lineage adopted Rust 2024
 # edition, which Cargo 1.75 cannot parse).
 serde-saphyr = { version = ">=0.0.10, <0.0.25", optional = true }
+# Parallel multi-document parsing — pulled in only when the
+# `parallel` feature is on. Rayon is the de-facto safe data-parallel
+# Rust crate and itself uses well-vetted unsafe internally; the
+# `noyalib` runtime call sites stay `#![forbid(unsafe_code)]`.
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -382,6 +387,13 @@ simd = []
 # 2024 edition (Cargo 1.85+). Enabling this feature pulls saphyr in
 # as a dev-dep and gates the comparison bench arms on its presence.
 compare-saphyr = ["dep:serde-saphyr"]
+# Parallel multi-document deserialisation via Rayon. Adds
+# `noyalib::load_all_as_parallel<T>` and
+# `noyalib::load_all_parallel`, which pre-scan `---` document
+# boundaries on a single thread then deserialise each document
+# in parallel. Off by default to keep the runtime dep list lean
+# for users that only parse single-document inputs.
+parallel = ["dep:rayon", "std"]
 # Portable-SIMD (`std::simd`) structural scanner. Builds a 16/32/
 # 64-byte-wide `SimdScanner` that finds any byte in a needle set
 # in a single SIMD pass. Requires the nightly toolchain because

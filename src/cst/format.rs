@@ -147,7 +147,7 @@ impl<'a> Formatter<'a> {
                     self.format_node(inner, pos)?;
                 }
                 GreenChild::Token { kind, len } => {
-                    self.handle_token(*kind, &self.source[pos..pos + *len]);
+                    self.handle_token(*kind, &self.source[pos..pos + *len as usize]);
                 }
             }
             pos += child.text_len();
@@ -205,7 +205,7 @@ impl<'a> Formatter<'a> {
                     self.format_mapping_entry(inner, pos)?;
                 }
                 GreenChild::Token { kind, len } => {
-                    self.handle_token(*kind, &self.source[pos..pos + *len]);
+                    self.handle_token(*kind, &self.source[pos..pos + *len as usize]);
                 }
                 GreenChild::Node(inner) => {
                     self.format_node(inner, pos)?;
@@ -224,7 +224,7 @@ impl<'a> Formatter<'a> {
                     self.format_sequence_item(inner, pos)?;
                 }
                 GreenChild::Token { kind, len } => {
-                    self.handle_token(*kind, &self.source[pos..pos + *len]);
+                    self.handle_token(*kind, &self.source[pos..pos + *len as usize]);
                 }
                 GreenChild::Node(inner) => {
                     self.format_node(inner, pos)?;
@@ -242,7 +242,7 @@ impl<'a> Formatter<'a> {
         for child in node.children() {
             match child {
                 GreenChild::Token { kind, len } => {
-                    let text = &self.source[pos..pos + *len];
+                    let text = &self.source[pos..pos + *len as usize];
                     if saw_colon
                         && !matches!(
                             kind,
@@ -291,7 +291,7 @@ impl<'a> Formatter<'a> {
         for child in node.children() {
             match child {
                 GreenChild::Token { kind, len } => {
-                    let text = &self.source[pos..pos + *len];
+                    let text = &self.source[pos..pos + *len as usize];
                     if saw_dash
                         && !matches!(
                             kind,

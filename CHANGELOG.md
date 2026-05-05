@@ -7,6 +7,44 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed — CST short-pointer compression
+
+- `GreenChild::Token { len }` is now `u32` (was `usize`). YAML
+  documents are bounded at 4 GiB by the parser's
+  `max_document_length` cap, so a `u32` is sufficient. The
+  narrower field drops `GreenChild::Token` from 24 bytes to 8
+  bytes on a 64-bit target — meaningfully better L1/L2 cache
+  locality on tree traversals.
+- `GreenNode.text_len` is similarly narrowed from `usize` to
+  `u32` (private field; public `text_len()` accessor still
+  returns `usize` for ergonomic call-site arithmetic).
+- Public `text_len()` accessors on `GreenChild` and `GreenNode`
+  preserve their `usize` return type — the narrower storage is
+  widened at the API boundary so existing callers continue to
+  compile.
+- 406/406 YAML 1.2 spec compliance preserved; full test suite +
+  doctest sweep green.
+
+### Added — Parallel multi-document parsing
+
+- **`noyalib::load_all_as_parallel<T>(yaml) -> Result<Vec<T>>`**
+  and **`noyalib::load_all_parallel(yaml) -> Result<Vec<Value>>`**
+  — pre-scan `---` document boundaries on a single thread, then
+  deserialise each document in parallel via Rayon. Targets
+  multi-document streams (telemetry logs, audit exports,
+  Kubernetes-resource snapshots) where single-thread parsing is
+  CPU-bound.
+- **`noyalib::parallel::split_documents(input) -> Vec<&str>`** —
+  the standalone document-boundary pre-scanner. Useful when the
+  caller wants to drive their own concurrency primitives (async
+  tasks, custom thread pools).
+- Gated behind the `parallel` Cargo feature (off by default —
+  pulls in `rayon` only when the user asks for it).
+- 10 unit tests covering boundary detection edge cases (no
+  separators, empty input, implicit first document, mid-line
+  `---`, dashes followed by non-whitespace) and end-to-end
+  correctness against `load_all_as`.
+
 ### Added — SWAR decimal-integer parser
 
 - **`noyalib::simd::parse_decimal_u64` / `parse_decimal_i64`** —

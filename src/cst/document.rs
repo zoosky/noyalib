@@ -1245,7 +1245,7 @@ fn entry_key_text<'s>(entry: &GreenNode, source: &'s str, base: usize) -> Option
         match child {
             GreenChild::Token { kind, len } => {
                 let start = pos;
-                let end = pos + len;
+                let end = pos + *len as usize;
                 match kind {
                     SyntaxKind::QuestionIndicator
                     | SyntaxKind::Whitespace
