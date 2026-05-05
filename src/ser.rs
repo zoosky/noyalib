@@ -962,7 +962,21 @@ fn write_mapping(
             ) {
                 output.push(' ');
             }
-            write_value(output, value, indent + 1, false, config, depth + 1)?;
+            // `compact_list_indent`: when on, sequence values
+            // under a mapping key align with the key column
+            // instead of being bumped one indent level deeper.
+            // This is the visual style preferred by some style
+            // guides (Kubernetes manifests, GitHub Actions
+            // workflows). Mappings and other non-sequence block
+            // values keep the standard indent.
+            let next_indent = if config.compact_list_indent
+                && matches!(value, Value::Sequence(_))
+            {
+                indent
+            } else {
+                indent + 1
+            };
+            write_value(output, value, next_indent, false, config, depth + 1)?;
         } else {
             output.push_str(": ");
             write_value(output, value, indent, false, config, depth + 1)?;

@@ -498,6 +498,71 @@ where
     from_str_with_config(s, &ParserConfig::default())
 }
 
+/// Strict deserialise: like [`from_str`] but errors if `s`
+/// contains any keys that the target type `T` does not declare.
+///
+/// Solves the typo-in-config-key problem — by default, both
+/// `serde_yaml` and noyalib silently ignore keys the struct
+/// does not know about, so a misspelled `replicass: 3` (with
+/// the typo) deserialises into a struct whose `replicas` field
+/// stays at its `Default`. `from_str_strict` surfaces those
+/// extra keys as a typed `Error::UnknownField` listing every
+/// offending path.
+///
+/// # Errors
+///
+/// - Any key in the YAML document is not declared on `T`.
+/// - Any of the regular [`from_str`] error paths.
+///
+/// # Examples
+///
+/// ```
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Config {
+///     port: u16,
+/// }
+///
+/// // The typo "porrt" is silently ignored by `from_str`. With
+/// // `from_str_strict` it surfaces as a typed error.
+/// let yaml = "port: 8080\nporrt: 9090\n";
+/// assert!(noyalib::from_str::<Config>(yaml).is_ok());
+/// assert!(noyalib::from_str_strict::<Config>(yaml).is_err());
+/// ```
+#[cfg(feature = "std")]
+pub fn from_str_strict<T>(s: &str) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let unknown = std::sync::Mutex::new(Vec::<String>::new());
+    let value: Value = from_str_with_config(s, &ParserConfig::default())?;
+    let result: Result<T> = serde_ignored::deserialize(&value, |path| {
+        unknown
+            .lock()
+            .expect("from_str_strict: ignored-paths lock poisoned")
+            .push(path.to_string());
+    });
+    let extras = unknown
+        .into_inner()
+        .expect("from_str_strict: ignored-paths lock poisoned");
+    let typed = result?;
+    if !extras.is_empty() {
+        let msg = if extras.len() == 1 {
+            format!("unknown field at `{}`", extras[0])
+        } else {
+            let joined = extras
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("unknown fields: {joined}")
+        };
+        return Err(Error::UnknownField(msg));
+    }
+    Ok(typed)
+}
+
 /// Deserialize YAML from a string with custom security limits.
 ///
 /// # Examples

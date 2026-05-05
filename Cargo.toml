@@ -280,6 +280,11 @@ serde-saphyr = { version = "0.0", optional = true }
 # Rust crate and itself uses well-vetted unsafe internally; the
 # `noyalib` runtime call sites stay `#![forbid(unsafe_code)]`.
 rayon = { version = "1.10", optional = true }
+# `serde_ignored` powers `from_str_strict<T>` — surfaces any keys
+# in the input that `T` does not declare. Tiny (no transitive
+# deps) and used unconditionally by the strict-deserialise helper,
+# so kept as a regular dep rather than feature-gated.
+serde_ignored = "0.1"
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -293,7 +298,6 @@ rust-yaml = "0.0.5"
 # `Deserializer<'de>` works with the standard serde wrappers
 # without any custom integration code.
 serde_path_to_error = "0.1"
-serde_ignored = "0.1"
 
 [[bench]]
 name = "benchmarks"

@@ -2333,6 +2333,57 @@ impl Value {
         })
     }
 
+    /// Like [`Value::interpolate_properties`] but redacts the
+    /// placeholder name from any error surfaced when an unknown
+    /// `${name}` is encountered — useful when the placeholder
+    /// name itself is sensitive (e.g. it carries an audit-trail
+    /// secret identifier, or it's used in a context where logs
+    /// are externally indexed).
+    ///
+    /// On success this method is identical to
+    /// `interpolate_properties`. On failure the error reads
+    /// `interpolate_properties: unknown placeholder
+    /// `${<redacted>}`` instead of including the original name.
+    /// Substituted *values* (the contents of the property map)
+    /// are never echoed to errors — that's the responsibility of
+    /// the caller's downstream validators.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// use std::collections::HashMap;
+    ///
+    /// let mut value: Value = from_str("token: ${SECRET_TOKEN_NAME}").unwrap();
+    /// // Empty property map — substitution fails. With the
+    /// // redacting variant the placeholder name does not leak.
+    /// let props: HashMap<String, String> = HashMap::new();
+    /// let err = value.interpolate_properties_redacted(&props).unwrap_err();
+    /// let msg = err.to_string();
+    /// assert!(msg.contains("<redacted>"));
+    /// assert!(!msg.contains("SECRET_TOKEN_NAME"));
+    /// ```
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    pub fn interpolate_properties_redacted<S>(
+        &mut self,
+        properties: &std::collections::HashMap<String, S>,
+    ) -> crate::Result<()>
+    where
+        S: AsRef<str>,
+    {
+        self.interpolate_inner(&|name| {
+            properties
+                .get(name)
+                .map(|s| s.as_ref().to_owned())
+                .ok_or_else(|| {
+                    crate::Error::Custom(
+                        "interpolate_properties: unknown placeholder `${<redacted>}`".into(),
+                    )
+                })
+        })
+    }
+
     /// Like [`Value::interpolate_properties`] but never errors —
     /// unknown placeholders are replaced with an empty string. The
     /// motivating use case is environment-variable expansion where
