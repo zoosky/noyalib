@@ -103,6 +103,7 @@ fn bench_deserialize(c: &mut Criterion) {
             });
         });
 
+        #[cfg(feature = "compare-saphyr")]
         group.bench_with_input(BenchmarkId::new("serde-saphyr", name), yaml, |b, input| {
             b.iter(|| {
                 let _: serde_json::Value = serde_saphyr::from_str(black_box(input)).unwrap();

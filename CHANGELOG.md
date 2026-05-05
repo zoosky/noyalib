@@ -7,6 +7,60 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Removed — `serde_yaml` 0.9 upstream dependency
+
+- The `compat-serde-yaml` shim **no longer pulls in the
+  unmaintained `serde_yaml` 0.9 crate**. Every type the shim
+  exposes (`Value`, `Mapping`, `Number`, `Sequence`, `Tag`,
+  `TaggedValue`, `Error`, `Location`) is a noyalib-native type
+  re-exported under the `serde_yaml` name; downstream
+  `cargo audit` / `cargo deny` runs no longer pick up the
+  archived advisory chain.
+- The previous direct `From<noyalib::Value> for ::serde_yaml::Value`
+  / `TryFrom<::serde_yaml::Value> for noyalib::Value` impls are
+  removed. Mid-migration codebases route in-flight upstream values
+  through the Serde data model instead — the universal-translator
+  path the Serde ecosystem already provides for every JSON-shaped
+  AST pair: `noyalib::to_value(&upstream_serde_yaml_value)?`.
+
+### Added — Release-candidate examples and benches
+
+- **`examples/entry_api.rs`** — surgical Kubernetes manifest
+  patching via the `Document::entry` proxy API. Demonstrates
+  `or_insert` / `insert_value` / `set` chained edits with every
+  comment, indent, and sibling preserved byte-for-byte.
+- **`examples/flattened.rs`** — `Flattened<T>` capture pattern:
+  typed view + raw metadata view from one parse pass.
+- **`examples/schema_validation.rs`** — library-level
+  `schema_for` + `validate_against_schema` + `coerce_to_schema`
+  pipeline. Mirrors what `noyavalidate --fix` does on the CLI.
+- **`benches/streaming_vs_value.rs`** — head-to-head throughput
+  comparison between `StreamingDeserializer` and
+  `from_str::<Value>` across small / medium / large workloads,
+  plus a dedicated `BTreeMap` MapAccess scenario.
+- **`benches/large_doc_soak.rs`** — 1 MiB / 10 MiB / 50 MiB soak
+  benchmark catching quadratic regressions and SIMD hot-path
+  regressions on long-input workloads.
+
+### Changed — MSRV-1.75 hardening
+
+- Pinned `indexmap` to `2.10.0` and `rustc-hash` to `2.0.0` so the
+  resolver does not pull manifests requiring Rust 2024 edition
+  (Cargo 1.85+) and breaking the MSRV-1.75 check.
+- Removed unused `yaml_lib` dev-dependency (its manifest also
+  required edition 2024).
+- Promoted `serde-saphyr` (optional `compare-saphyr` feature):
+  the saphyr lineage adopted edition 2024 across all available
+  versions; gating it lets the comparison benchmarks still run on
+  newer toolchains while keeping the default 1.75 build path
+  clean.
+- Demoted `pub` → `pub(crate)` on internal `Span`, `Token`,
+  `ScanError`, `ParsedDocument`, `SubtreeContext` fields to
+  satisfy the workspace `unreachable_pub = "forbid"` lint on
+  Rust 1.75 (the lint behaviour tightened between 1.75 and the
+  current stable, so the existing `pub` declarations on
+  `pub(crate)` parents only failed under the older toolchain).
+
 ### Added — Streaming `!!binary`
 
 - **`StreamingDeserializer` honours `!!binary` natively** — `serde_bytes`

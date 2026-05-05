@@ -26,10 +26,10 @@ use crate::value::Value;
 /// Outcome of a green-tree-aware parse.
 #[cfg(feature = "std")]
 pub(crate) struct ParsedDocument {
-    pub green: GreenNode,
-    pub value: Value,
-    pub span_tree: SpanTree,
-    pub source: Arc<str>,
+    pub(crate) green: GreenNode,
+    pub(crate) value: Value,
+    pub(crate) span_tree: SpanTree,
+    pub(crate) source: Arc<str>,
 }
 
 /// Parse `input` once for `Value` + `SpanTree` and once for the green
@@ -53,12 +53,12 @@ pub(crate) fn parse_full(input: &str) -> Result<ParsedDocument> {
 pub(crate) struct SubtreeContext {
     /// Column at which the sub-tree begins. Block-collection
     /// content must indent strictly past this column.
-    pub indent: usize,
+    pub(crate) indent: usize,
     /// `0` for block context, non-zero when nested inside flow
     /// brackets. Sub-tree wrapping applies only in block context;
     /// flow contexts pass through verbatim.
     #[allow(dead_code)]
-    pub flow_level: u32,
+    pub(crate) flow_level: u32,
 }
 
 impl SubtreeContext {

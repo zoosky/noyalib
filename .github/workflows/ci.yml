@@ -218,7 +218,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Coverage report (gates: 95% fn / 90% region)
+      - name: "Coverage report (gates: 95% fn / 90% region)"
         env:
           NOYALIB_COVERAGE: '1'
         # Two thresholds:

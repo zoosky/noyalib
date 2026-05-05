@@ -12,8 +12,8 @@ use crate::prelude::*;
 /// Byte-offset span in the source input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Span {
-    pub start: usize,
-    pub end: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 /// The style of a scalar token.
@@ -58,15 +58,15 @@ pub(crate) enum TokenKind<'a> {
 /// A token with its source span.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Token<'a> {
-    pub kind: TokenKind<'a>,
-    pub span: Span,
+    pub(crate) kind: TokenKind<'a>,
+    pub(crate) span: Span,
 }
 
 /// Error from the scanner.
 #[derive(Debug, Clone)]
 pub(crate) struct ScanError {
-    pub message: Cow<'static, str>,
-    pub index: usize,
+    pub(crate) message: Cow<'static, str>,
+    pub(crate) index: usize,
 }
 
 impl fmt::Display for ScanError {

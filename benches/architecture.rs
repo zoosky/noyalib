@@ -309,6 +309,7 @@ fn bench_competitors(c: &mut Criterion) {
         });
     });
 
+    #[cfg(feature = "compare-saphyr")]
     group.bench_function("serde_saphyr/k8s", |b| {
         b.iter(|| {
             let _: serde_json::Value = serde_saphyr::from_str(black_box(K8S_DEPLOYMENT)).unwrap();
@@ -334,6 +335,7 @@ fn bench_competitors(c: &mut Criterion) {
         });
     });
 
+    #[cfg(feature = "compare-saphyr")]
     group.bench_function("serde_saphyr/zero_copy", |b| {
         b.iter(|| {
             let _: serde_json::Value = serde_saphyr::from_str(black_box(ZERO_COPY)).unwrap();

@@ -218,10 +218,23 @@ path = "examples/lossless_edit.rs"
 name = "comments_at"
 path = "examples/comments_at.rs"
 
+[[example]]
+name = "entry_api"
+path = "examples/entry_api.rs"
+
+[[example]]
+name = "flattened"
+path = "examples/flattened.rs"
+
+[[example]]
+name = "schema_validation"
+path = "examples/schema_validation.rs"
+required-features = ["validate-schema"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-indexmap = { version = "2.14", features = ["serde"] }
-rustc-hash = "2.1"
+indexmap = { version = "2.10", features = ["serde"] }
+rustc-hash = "2.0"
 thiserror = "2.0"
 itoa = "1"
 ryu = "1"
@@ -230,12 +243,15 @@ smallvec = { version = "1.13", default-features = false }
 miette = { version = "7", optional = true }
 garde = { version = "0.22", optional = true, default-features = false, features = ["derive"] }
 validator = { version = "0.19", optional = true, features = ["derive"] }
-# `serde_yaml` 0.9 itself — only pulled when `compat-serde-yaml` is on.
-# The upstream crate is unmaintained; we bring it in solely so the
-# compat shim can offer `From` / `TryFrom` conversions between the two
-# `Value` types and matching `Mapping` / `Number` shapes during
-# migration. Drop this dep once the migration window closes.
-serde_yaml = { version = "0.9", optional = true }
+# NOTE: `serde_yaml` 0.9 is intentionally NOT a noyalib dependency.
+# The upstream crate is unmaintained; the `compat-serde-yaml` shim
+# exposes a name-for-name surface backed entirely by noyalib's own
+# types so downstream `cargo audit` / `cargo deny` runs do not pick
+# up the archived advisory chain. Migrating an in-flight
+# `::serde_yaml::Value` from an un-migrated module flows through
+# the Serde data model — `noyalib::to_value(&upstream_value)?` —
+# the same universal-translator path Serde provides for every
+# JSON-shaped library pair.
 # JSON Schema codegen — derive `JsonSchema` for a Rust type and emit
 # the schema as YAML for sharing / contract enforcement. Pulled in
 # only when the `schema` feature is on so users who don't need
@@ -251,6 +267,14 @@ jsonschema = { version = "0.33", optional = true, default-features = false }
 # layered-configuration crate. Pulled in only when the `figment`
 # feature is on so non-figment users don't pay for it.
 figment = { version = "0.10", optional = true }
+# NOTE: `serde-saphyr` lives under `[dependencies]` (not
+# `[dev-dependencies]`) because Cargo doesn't allow optional
+# dev-deps. It's gated behind the `compare-saphyr` feature and
+# only used inside `#[cfg(feature = "compare-saphyr")]` bench
+# arms; nothing in the runtime crate references it. Keeps the
+# MSRV-1.75 build path clean (saphyr's lineage adopted Rust 2024
+# edition, which Cargo 1.75 cannot parse).
+serde-saphyr = { version = ">=0.0.10, <0.0.25", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -259,8 +283,6 @@ criterion = "0.5"
 proptest = "1.11"
 serde_yaml_ng = "0.10"
 yaml-rust2 = "0.9"
-serde-saphyr = "0.0.24"
-yaml_lib = "0.2"
 rust-yaml = "0.0.5"
 # Ecosystem interop verification — proves noyalib's
 # `Deserializer<'de>` works with the standard serde wrappers
@@ -293,6 +315,14 @@ name = "simd"
 harness = false
 required-features = ["simd"]
 
+[[bench]]
+name = "streaming_vs_value"
+harness = false
+
+[[bench]]
+name = "large_doc_soak"
+harness = false
+
 [features]
 default = ["std"]
 std = []
@@ -303,12 +333,12 @@ validator = ["dep:validator"]
 wasm-opt = []
 noyavalidate = ["std", "miette", "miette/fancy", "validate-schema"]
 # Drop-in surface compatible with `serde_yaml` 0.9. Adds the
-# `noyalib::compat::serde_yaml` module with name-for-name re-exports,
-# `From` / `TryFrom` conversions between the two `Value` types, and
-# the `Error` parity needed for logic-transparent migration. Off by
-# default so users who do not need migration help do not pay for
-# the upstream `serde_yaml` dep.
-compat-serde-yaml = ["dep:serde_yaml"]
+# `noyalib::compat::serde_yaml` module with name-for-name re-exports
+# and the `Error` parity needed for logic-transparent migration —
+# every type the shim exposes is a noyalib-native type, not a
+# re-export of the archived upstream crate. Off by default so users
+# who do not need migration help do not see the extra surface.
+compat-serde-yaml = []
 # JSON Schema codegen via `schemars`. With this on you can
 # `#[derive(noyalib::JsonSchema)]` for a Rust type and call
 # `noyalib::schema_for::<T>()` / `schema_for_yaml::<T>()` to obtain
@@ -336,6 +366,11 @@ figment = ["dep:figment", "std"]
 # conservative environments stay on the byte-by-byte baseline; on
 # by callers who want the throughput uplift on supported targets.
 simd = []
+# Opt-in cross-library benchmark comparison against `serde-saphyr`.
+# Off by default because the saphyr crate's manifest requires Rust
+# 2024 edition (Cargo 1.85+). Enabling this feature pulls saphyr in
+# as a dev-dep and gates the comparison bench arms on its presence.
+compare-saphyr = ["dep:serde-saphyr"]
 # Portable-SIMD (`std::simd`) structural scanner. Builds a 16/32/
 # 64-byte-wide `SimdScanner` that finds any byte in a needle set
 # in a single SIMD pass. Requires the nightly toolchain because
