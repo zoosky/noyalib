@@ -392,7 +392,9 @@ impl<'a> Parser<'a> {
                         span: scalar_span,
                     })
                 } else {
-                    unreachable!()
+                    crate::error::invariant_violated(
+                        "outer match guarded TokenKind::Scalar; take() must return the same",
+                    )
                 }
             }
             TokenKind::FlowSequenceStart => {

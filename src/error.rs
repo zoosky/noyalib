@@ -977,3 +977,22 @@ fn edit_distance(a: &str, b: &str) -> usize {
     }
     row[b_len]
 }
+
+/// Panic helper for invariants the type system cannot express but
+/// which the implementation has proved hold. Intended to replace
+/// inline `unreachable!()` arms so the panic site is a single
+/// `coverage(off)`-annotated function rather than an
+/// arm-by-arm region in the coverage report.
+///
+/// `msg` is the human-readable invariant statement — quoted
+/// verbatim into the panic message when the impossible happens
+/// (e.g. when a future refactor accidentally breaks the
+/// invariant). The tail-call shape lets call sites use it in any
+/// position that expects a divergent expression.
+#[track_caller]
+#[cold]
+#[inline(never)]
+#[cfg_attr(noyalib_coverage, coverage(off))]
+pub(crate) fn invariant_violated(msg: &'static str) -> ! {
+    unreachable!("invariant violated: {msg}")
+}

@@ -313,7 +313,9 @@ fn assemble(
                 let cmt = comment_iter.next().expect("peeked Some");
                 builder.push_leaf(child_from_comment(cmt));
             }
-            _ => unreachable!(),
+            _ => crate::error::invariant_violated(
+                "trivia/comment merge: at least one peek was Some by guard",
+            ),
         }
     }
 

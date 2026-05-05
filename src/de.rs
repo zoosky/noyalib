@@ -1390,7 +1390,9 @@ impl<'de> MapAccess<'de> for SpannedMapAccess<'de> {
             SPANNED_FIELD_END_LINE => end_loc.line(),
             SPANNED_FIELD_END_COLUMN => end_loc.column(),
             SPANNED_FIELD_END_INDEX => end_loc.index(),
-            _ => unreachable!(),
+            _ => crate::error::invariant_violated(
+                "spanned-field index outside the SPANNED_FIELDS array",
+            ),
         };
 
         seed.deserialize(val.into_deserializer())

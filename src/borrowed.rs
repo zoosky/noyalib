@@ -582,7 +582,9 @@ impl<'a> BorrowedBuilder<'a> {
                 // Transition back to key state
                 let map = match self.stack.pop() {
                     Some(Frame::MappingValue(m, _)) => m,
-                    _ => unreachable!(),
+                    _ => crate::error::invariant_violated(
+                        "stack frame must be MappingValue immediately after value emit",
+                    ),
                 };
                 self.stack.push(Frame::MappingKey(map));
             }
@@ -613,7 +615,9 @@ impl<'a> BorrowedBuilder<'a> {
                     let key = value;
                     let map = match self.stack.pop() {
                         Some(Frame::MappingKey(m)) => m,
-                        _ => unreachable!(),
+                        _ => crate::error::invariant_violated(
+                            "stack frame must be MappingKey when consuming a mapping key",
+                        ),
                     };
                     self.stack.push(Frame::MappingValue(map, key));
                     return Ok(BuilderState::Continue);

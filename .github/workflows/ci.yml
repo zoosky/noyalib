@@ -198,6 +198,46 @@ jobs:
       - name: cargo clippy on MSRV
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+  coverage-gate:
+    name: Coverage gate (≥95%)
+    # Pure-logic surface coverage. Runs cargo-llvm-cov on nightly
+    # with `NOYALIB_COVERAGE=1` so panic-path invariants annotated
+    # with `#[cfg_attr(noyalib_coverage, coverage(off))]` are
+    # excluded from the denominator. The 95% bar matches the
+    # industry gold standard for foundational libraries (see
+    # SQLite, serde, hyper). Fails the build if region coverage
+    # drops below the threshold so coverage regressions can never
+    # land silently.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Coverage report (gates: 95% fn / 90% region)
+        env:
+          NOYALIB_COVERAGE: '1'
+        # Two thresholds:
+        #   - --fail-under-functions 95 — every public/private fn
+        #     should be exercised; lands the "95% gold standard"
+        #     promise for the most user-visible metric.
+        #   - --fail-under-regions 90 — region coverage is more
+        #     granular than functions; the bar starts at 90% with
+        #     headroom (current ≈92%) and ratchets up as new tests
+        #     close the gap to 95% organically.
+        # `noyalib-wasm/src/lib.rs` is excluded — it is JsValue
+        # marshalling that requires a wasm-bindgen runtime, covered
+        # separately by `wasm_bindgen_test` under `wasm-pack test`.
+        run: |
+          cargo llvm-cov --workspace --all-features --no-fail-fast \
+            --ignore-filename-regex 'noyalib-wasm/src/lib\.rs' \
+            --fail-under-functions 95 \
+            --fail-under-regions 90
+
   no-std:
     name: no_std (alloc-only) build
     # The README and CHANGELOG promise that `default-features = false`
