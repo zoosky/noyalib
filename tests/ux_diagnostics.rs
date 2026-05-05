@@ -165,7 +165,7 @@ fn strict_from_reader_surfaces_io_error() {
     struct FailingReader;
     impl std::io::Read for FailingReader {
         fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "boom"))
+            Err(std::io::Error::other("boom"))
         }
     }
     let res: Result<ServerConfig, _> = from_reader_strict(FailingReader);

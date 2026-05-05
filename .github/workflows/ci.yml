@@ -290,8 +290,13 @@ jobs:
         #     end-to-end tests that don't run cleanly under
         #     llvm-cov instrumentation. The same logic is covered
         #     by per-module unit tests in those crates.
+        # `cargo +nightly` is required because `rust-toolchain.toml`
+        # pins stable; without `+nightly` the project default wins
+        # and `feature(coverage_attribute)` (activated when
+        # `NOYALIB_COVERAGE=1` triggers `--cfg noyalib_coverage` via
+        # build.rs) fails to compile on stable.
         run: |
-          cargo llvm-cov --workspace --all-features --no-fail-fast \
+          cargo +nightly llvm-cov --workspace --all-features --no-fail-fast \
             --ignore-filename-regex 'noyalib-wasm/src/lib\.rs|noyalib-(mcp|lsp)/tests/protocol' \
             --fail-under-functions 95 \
             --fail-under-lines 93 \
