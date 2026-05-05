@@ -768,10 +768,11 @@ impl<'a> Scanner<'a> {
                 }
                 let comment_start = self.pos;
                 let remaining = &self.input[self.pos..];
-                let end = remaining
-                    .iter()
-                    .position(|&b| b == b'\n' || b == b'\r')
-                    .unwrap_or(remaining.len());
+                // SIMD: comment text runs to the next line break.
+                // memchr2 dispatches to SSE2 / NEON for the bulk-scan
+                // and is materially faster than a byte-by-byte
+                // `iter().position` on long comments.
+                let end = memchr::memchr2(b'\n', b'\r', remaining).unwrap_or(remaining.len());
                 let comment_end = comment_start + end;
                 // `#` itself is at `comment_start`; the text starts
                 // one byte later. Skip the `#` but keep any following
