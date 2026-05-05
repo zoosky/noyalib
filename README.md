@@ -4,10 +4,11 @@
   <img src="https://cloudcdn.pro/noyalib/v1/logos/noyalib.svg" alt="Noyalib logo" width="128" />
 </p>
 
-<h1 align="center">Native Optimized YAML (noyalib)</h1>
+<h1 align="center">noyalib</h1>
 
 <p align="center">
-  <strong>A Library In Bytes. Pure Rust YAML 1.2. Zero unsafe code.</strong>
+  A YAML 1.2 parser and serialiser for Rust, with full
+  <code>serde</code> integration and zero <code>unsafe</code> code.
 </p>
 
 <p align="center">
@@ -22,16 +23,21 @@
 
 ## Contents
 
-- [Install](#install) -- Cargo, source
-- [Quick Start](#quick-start) -- parse and serialize in 10 lines
-- [Overview](#overview) -- what noyalib does
-- [Benchmarks](#benchmarks) -- performance vs competitors
-- [Features](#features) -- capability matrix
-- [Library Usage](#library-usage) -- deserialization, serialization, values, spans
-- [Configuration](#configuration) -- parser and serializer options
-- [Examples](#examples) -- 45 branded examples
-- [Development](#development) -- make targets, fuzzing, CI
-- [Security](#security) -- safety guarantees and compliance
+- [Install](#install) — Cargo, source
+- [Quick Start](#quick-start) — parse and serialise in ten lines
+- [Why this approach?](#why-this-approach) — design rationale
+- [Capabilities in 0.0.1](#capabilities-in-001) — release inventory
+- [Two APIs, one parser](#two-apis-one-parser) — data binding vs. tooling
+- [Tooling](#tooling) — `noyafmt`, `noyavalidate`, MCP, WASM
+- [Ecosystem comparison](#ecosystem-comparison) — feature matrix
+- [Benchmarks](#benchmarks) — measurements vs. other libraries
+- [Features](#features) — module-level capability list
+- [Library Usage](#library-usage) — deserialise, serialise, values, spans
+- [Configuration](#configuration) — parser and serialiser options
+- [Examples](#examples) — runnable example index
+- [When not to use noyalib](#when-not-to-use-noyalib) — limitations
+- [Development](#development) — make targets, fuzzing, CI
+- [Security](#security) — guarantees and compliance
 - [License](#license)
 
 ---
@@ -112,73 +118,62 @@ features:
 
 ---
 
-## Why noyalib?
+## Why this approach?
 
-A safe, modern replacement for `serde_yaml`, `serde_yml`, `libyml`,
-and the `libyaml`-FFI ecosystem. **Not a fork — a clean-room
-implementation of the YAML 1.2 spec** built around three architectural
-choices the legacy crates can't make.
+noyalib targets the niche `serde_yaml` / `serde_yml` / `libyml`
+occupy — read YAML into typed Rust structs, write Rust structs back
+as YAML — and is written from scratch against the YAML 1.2 spec.
+The implementation passes the official YAML test suite at 406/406
+with zero skips. It is not a fork of `serde_yaml`; the parser,
+scanner, serialiser, and CST are independent code.
 
-### The C-legacy bottleneck
+Two architectural choices motivate the rewrite:
 
-Most popular Rust YAML crates wrap `libyaml` (via C-FFI) or are
-forks of forks of `serde_yaml`. They inherit two structural costs:
+1. **Streaming-first deserialise.** The default `from_str<T>` path
+   walks parser events directly into the typed target. The
+   `serde_yaml`-shaped pattern is `parse → Value →
+   T::deserialize(&Value)`, which allocates every key, scalar, and
+   nested mapping into an intermediate AST that the typed target
+   then throws away. noyalib bypasses that AST when the caller
+   asked for a typed `T`. The dynamic `Value` tree is still
+   available when callers want it, but it is no longer in the hot
+   path.
 
-1. **`unsafe` everywhere.** FFI-wrapping crates need `unsafe` to cross
-   the C boundary. The `unsafe` blocks are usually well-vetted, but
-   their existence makes a security-conscious downstream audit
-   meaningfully harder.
-2. **AST-as-intermediate.** The legacy pattern is `parse → Value →
-   T::deserialize(&Value)`. The intermediate `Value` tree allocates
-   every key, every scalar, every nested mapping — even for typed
-   targets that throw the AST away one line later.
+2. **`#![forbid(unsafe_code)]` at the workspace root.** There is no
+   FFI to a C library, no raw-pointer dereferences, and no
+   `unsafe` blocks in the parser, scanner, formatter, or CST. CI
+   enforces the attribute on every push. Most popular Rust YAML
+   crates wrap `libyaml` via C-FFI; the `unsafe` blocks involved
+   are usually well-vetted, but their existence makes a
+   security-conscious downstream audit meaningfully harder.
 
-### The pure-Rust future
+A few features built on top of those choices:
 
-noyalib starts from a different premise: **streaming-first
-architecture**. The default deserialise path is
-`StreamingDeserializer` — it walks parser events directly into the
-typed target without materialising a `Value` AST. The dynamic
-`Value` tree is still available when the caller wants it, but it's
-no longer in the critical path.
-
-Layered on top:
-
-- **`#![forbid(unsafe_code)]`** at the workspace root — no FFI, no
-  raw-pointer dereferences, no `unsafe` blocks anywhere in the
-  parser, scanner, formatter, or CST. Verified by CI on every
-  push.
 - **SIMD-accelerated structural discovery.** Stable Rust dispatches
-  to `memchr` (SSE2 / NEON) for the arity-1/2/3 hot paths and SWAR
-  for arity-4+. With `nightly-simd` on, the structural-bitmask
-  scanner widens to a 32-byte `Simd<u8, 32>` chunk and walks
-  delimiters via `mask.trailing_zeros()` — the same shape that
-  powers `simdjson`.
-- **SWAR decimal parsing.** The plain-scalar integer resolver
-  parses 8 ASCII digits per `u64` cycle via three pair-wise
-  multiply-add phases. ~2× faster than the stdlib `<i64 as
-  FromStr>::from_str` on big numbers.
-- **Lossless CST.** A side-table green tree (the
-  `noyalib::cst::Document` type) reproduces the source byte-for-byte
-  and supports surgical edits — `doc.set("version", "0.0.2")`
-  rewrites only the touched span; every comment, indent, and
-  sibling entry survives.
+  to `memchr` (SSE2 / NEON) for arity-1/2/3 needles and SWAR for
+  arity-4+. With `nightly-simd` on, the structural-bitmask scanner
+  widens to a 32-byte `Simd<u8, 32>` chunk and walks delimiters via
+  `mask.trailing_zeros()` — the same shape that powers `simdjson`.
+- **SWAR decimal parsing.** The plain-scalar integer resolver folds
+  8 ASCII digits per `u64` cycle via three pair-wise multiply-add
+  phases. ~2× faster than `<i64 as FromStr>::from_str` on big
+  numbers.
+- **Lossless CST.** A side-table green tree (`noyalib::cst::Document`)
+  reproduces the source byte-for-byte and supports surgical edits.
+  `doc.set("version", "0.0.2")` rewrites only the touched span;
+  comments, indentation, and sibling entries are left alone.
 
-### Lineage statement
-
-> **noyalib is a safe, modern replacement for `serde_yaml`,
-> `serde_yml`, and `libyml`. It is not a fork — every line is a
-> clean-room implementation of the YAML 1.2 spec, validated against
-> 406/406 cases of the official YAML test suite.**
+The dependency tree is eight required crates: `serde`, `indexmap`,
+`rustc-hash`, `itoa`, `ryu`, `memchr`, `smallvec`, `serde_ignored`.
+None are archived; `serde_yaml` 0.9 is not in the graph.
 
 ---
 
-## What's in 0.0.1
+## Capabilities in 0.0.1
 
-The launch release ships a complete YAML 1.2 stack. See
+The 0.0.1 release covers a complete YAML 1.2 stack. See
 [`CHANGELOG.md`](CHANGELOG.md) for the detailed inventory; the
-table below summarises the headline deliverables grouped by
-capability theme.
+table below groups the inventory by capability theme.
 
 | Theme | Headline deliverables |
 | :--- | :--- |
@@ -205,43 +200,34 @@ noyalib exposes two complementary surfaces over the same scanner and strictness 
 
 ---
 
-## Ecosystem Tools
+## Tooling
 
-noyalib ships with first-class tools built on top of its blazing-fast CST:
+Built on top of the lossless CST:
 
-- **`noyafmt` (Formatter / Linter)**: A built-in CLI tool (and API `noyalib::cst::format`) that auto-formats messy YAML files into a canonical style based on the CST while preserving comments and directives. Run `cargo run --bin noyafmt -- <file>`.
-- **`noyavalidate` (Validator)**: Validate YAML syntax and (optionally) a JSON Schema 2020-12 contract. `--schema PATH` enforces the contract; `--fix` rewrites the input through the lossless CST formatter; both flags compose. Build with `cargo build --features noyavalidate`.
-- **`noyalib-mcp` (Model Context Protocol server)**: A separate workspace member exposing `parse`, `format`, `get`, `set`, `validate` tools so any LLM agent can manipulate YAML through a typed MCP interface.
-- **`noyalib-wasm` (WASM First-Class Support)**: A dedicated wrapper exposing the `Document` API to JavaScript/TypeScript. It enables browser-based YAML IDEs to use the noyalib engine for lossless edits via `wasm-bindgen`.
-
----
-
-## Overview
-
-noyalib is designed to be the **no-compromise** YAML library for Rust: fast, safe, and hardened — simultaneously. Most libraries trade one for the other (fast but unsafe, or safe but slow). noyalib achieves all three.
-
-- **Pure Rust** -- no C bindings, no FFI, no `unsafe` blocks
-- **Streaming deserializer** -- bypasses the Value AST for typed targets
-- **Zero-copy** -- `BorrowedValue<'a>` borrows strings from input (18% faster)
-- **Path queries** -- `value.query("items[*].name")` with wildcards and recursive descent
-- **Lossless editing CST** -- `Document::set` / `entry()` rewrite only the touched bytes; comments and indentation survive
-- **Schema codegen + validation** -- derive `JsonSchema`, emit YAML, validate against it (`schema` / `validate-schema` features)
-- **`!!binary` first-class** -- RFC 4648 base64 round-trip with `serde_bytes`
-- **`compat-serde-yaml`** -- drop-in shim for the unmaintained `serde_yaml` 0.9
-- **DoS hardened** -- 7 configurable limits, billion-laughs safe
-- **`#![no_std]`** -- core parsing/serialization runs `alloc`-only; I/O and `Spanned<T>` require `std`
-- **`miette` diagnostics** -- rich terminal errors with source spans
-- **100% YAML Test Suite** -- 406/406 official test cases pass, no skips
-- **338 KB WASM binary** -- runs in browsers via wasm-bindgen
-- **7 runtime dependencies** -- serde, indexmap, rustc-hash, itoa, ryu, memchr, smallvec (zero archived deps; `thiserror` removed in favour of hand-written `Display` / `Error` impls)
-- **3,600+ tests** -- unit, integration, doc-tests, property-based, official suite, CLI smoke
-- **45 branded examples** with animated spinner UI
+- **`noyafmt`** — CLI formatter (and `noyalib::cst::format` API)
+  that rewrites YAML into a canonical style while preserving
+  comments and directives. Run `cargo run --bin noyafmt -- <file>`.
+- **`noyavalidate`** — validates YAML syntax and, optionally, a
+  JSON Schema 2020-12 contract. `--schema PATH` enforces the
+  contract; `--fix` rewrites the input through the lossless CST
+  formatter; both flags compose. Build with `cargo build
+  --features noyavalidate`.
+- **`noyalib-mcp`** — Model Context Protocol server (separate
+  workspace member) exposing `parse`, `format`, `get`, `set`, and
+  `validate` tools so an MCP-aware agent can manipulate YAML
+  through a typed interface.
+- **`noyalib-wasm`** — `wasm-bindgen` wrapper exposing the
+  `Document` API to JavaScript / TypeScript. Lets browser-based
+  YAML editors run the lossless edit path without leaving the
+  browser.
 
 ---
 
-## Ecosystem Comparison
+## Ecosystem comparison
 
-noyalib competes across four categories of Rust YAML libraries:
+How noyalib lines up against the other Rust YAML libraries it is
+likely to be evaluated alongside. Cells reflect the published
+state at the time of writing; corrections welcome via PR.
 
 | | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -359,7 +345,7 @@ let docs: Vec<MyType> = noyalib::load_all_as(yaml)?;
 let docs: Vec<MyType> = noyalib::parallel::parse(yaml)?;
 ```
 
-This is a **unique advantage** — every other Rust YAML library is
+Other Rust YAML libraries the comparison table below covers run
 single-threaded.
 
 ### Architecture validation
@@ -385,9 +371,9 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Source** | 26,000+ lines across 25 modules |
 | **Test suite** | 3,600+ tests + doc-tests + CLI smoke |
 | **YAML Test Suite** | 100% literal compliance: 406/406 cases pass with zero skips |
-| **Examples** | 45 branded examples + WASM demo |
+| **Examples** | 50+ runnable examples + WASM demo |
 | **Coverage** | 95%+ line coverage |
-| **Dependencies** | 8 runtime + 7 optional (miette, garde, validator, serde_yaml, schemars, serde_json, jsonschema) |
+| **Dependencies** | 8 runtime + 7 optional (miette, garde, validator, schemars, serde_json, jsonschema, figment) |
 | **WASM binary** | 338 KB (release, LTO) |
 | **MSRV** | Rust 1.75.0 (core); newer for optional features |
 
@@ -957,6 +943,42 @@ cargo run --example all
 | | `robotics_polymorphism` | Tagged-enum dispatch with `Degrees` / `Radians` / `StrictFloat` |
 
 </details>
+
+---
+
+## When not to use noyalib
+
+A few cases where another tool fits better, listed because the
+short answer is "we don't do that yet" rather than because of a
+disagreement on priorities.
+
+- **You need to round-trip comments through the data-binding API.**
+  The YAML data model excludes comments by spec. The lossless CST
+  (`noyalib::cst::Document`) preserves them byte-for-byte for the
+  tooling path, but `from_str::<T>` → `to_string(&T)` does not.
+  No Rust YAML library currently round-trips comments through a
+  typed deserialise / serialise pair.
+- **You need YAML 1.1-only behaviour, top to bottom.** noyalib
+  defaults to YAML 1.2 strict semantics. The `legacy_booleans`
+  opt-in covers the most common 1.1 idiom (`yes` / `no` / `on` /
+  `off`), but a document that depends on the 1.1 type-resolution
+  rules in deeper ways may not parse identically to a 1.1
+  implementation. Use a 1.1 parser if that matches your contract.
+- **You need a dependency-free YAML parser.** noyalib has eight
+  required dependencies. `yaml-rust2` is a smaller surface if you
+  do not need serde integration.
+- **You need flow-style aliases on the borrowed path.**
+  `BorrowedValue<'a>` borrows scalar bytes from the input but does
+  not resolve YAML aliases (`*name`). Use the owned `Value` path
+  when the document uses anchors.
+- **You're paste-replacing `serde_yaml` 0.9 today and cannot edit
+  any types.** The `compat-serde-yaml` shim covers the common
+  surface, but a few rarely-used items (e.g. full coverage parity
+  on `with::*`) may still need a small migration. See
+  `examples/bridge.rs`.
+
+If you hit a case that should be on this list, please open an
+issue — that's how it gets fixed or moved into the supported set.
 
 ---
 
