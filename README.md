@@ -83,6 +83,34 @@ development; the 1.75.0 floor on the core surface is enforced by
 the dedicated `msrv-1-75-core` CI job (Ubuntu, no-default-features
 + default-features build paths).
 
+### Cargo features
+
+All optional integrations are off by default. Enable only what
+the application needs.
+
+| Feature | Pulls in | Adds | Documented in |
+| :--- | :--- | :--- | :--- |
+| `std` *(default)* | — | `from_reader`, `to_writer`, `Spanned<T>`, CST module | [Install](#install) |
+| `miette` | `miette` 7 | Rich terminal diagnostics with source spans | [Library Usage](#library-usage), `examples/diagnostic.rs` |
+| `schema` | `schemars`, `serde_json` | `JsonSchema` derive + `schema_for::<T>()` | [Capabilities in 0.0.1](#capabilities-in-001) |
+| `validate-schema` | `schema` + `jsonschema` | `validate_against_schema`, `coerce_to_schema` | [Governance: schema-driven autofix](#governance-schema-driven-autofix) |
+| `figment` | `figment` 0.10 | `noyalib::figment::Yaml` provider | `examples/figment.rs` |
+| `garde` | `garde` 0.22 | `Validated<T>` wrapper | `examples/validation_garde.rs` |
+| `validator` | `validator` 0.19 | `ValidatedValidator<T>` wrapper | `examples/validation_validator.rs` |
+| `robotics` | — | `Degrees`, `Radians`, `StrictFloat` newtypes | `examples/robotics_polymorphism.rs` |
+| `parallel` | `rayon` 1.10 | `noyalib::parallel::parse<T>` for `---`-separated streams | [Benchmarks](#benchmarks) |
+| `simd` | — | `noyalib::simd::*` primitives + parser hot path | [Benchmarks](#benchmarks) |
+| `nightly-simd` | `simd` (nightly toolchain) | `core::simd`-backed `StructuralIter` (32-byte chunks) | [Benchmarks](#benchmarks) |
+| `compat-serde-yaml` | — | `noyalib::compat::serde_yaml` shim for migration | [When not to use noyalib](#when-not-to-use-noyalib) |
+| `compare-saphyr` | `serde-saphyr` *(dev only)* | Cross-library bench comparison arms | `benches/comparison.rs` |
+| `noyavalidate` | `std` + `miette` + `validate-schema` | The `noyavalidate` CLI binary | [Tooling](#tooling) |
+
+```toml
+# Example: rich diagnostics + schema validation
+[dependencies]
+noyalib = { version = "0.0.1", features = ["miette", "validate-schema"] }
+```
+
 ---
 
 ## Quick Start
@@ -165,7 +193,10 @@ A few features built on top of those choices:
 
 The dependency tree is eight required crates: `serde`, `indexmap`,
 `rustc-hash`, `itoa`, `ryu`, `memchr`, `smallvec`, `serde_ignored`.
-None are archived; `serde_yaml` 0.9 is not in the graph.
+**No archived or unmaintained crates appear in the graph** —
+`serde_yaml` 0.9 (archived), `libyaml` (C-FFI), and `thiserror` are
+all absent. `cargo audit`, `cargo deny`, and `cargo vet` are CI
+gates on every push.
 
 ---
 
@@ -198,6 +229,27 @@ noyalib exposes two complementary surfaces over the same scanner and strictness 
 - **Data binding** — `from_str`, `to_string`, `Value`, `StreamingDeserializer`, `BorrowedValue`. Read YAML into typed Rust data, write Rust data back out. The round-trip travels through a `Value`/struct, so comments and exact whitespace are not preserved. Use this for config loaders, RPC payloads, and the 95% of YAML workloads that just want data.
 - **Tooling / automation** — `noyalib::cst::parse_document`, `parse_stream`, and the `Document` handle. Read YAML into a side-table CST that reproduces the source byte-for-byte, then run targeted edits like `doc.set("version", "0.0.2")` — only the touched span is rewritten, every comment and the original indentation is left alone. Use this for Renovate-style version bumps, manifest patchers, formatters, and schema-driven linters. See `examples/lossless_edit.rs`.
 
+The CST also lets a tool break aliases by inlining the anchored
+content at every reference site — useful when a manifest needs to
+become self-contained before being shipped to a system that does
+not resolve YAML aliases:
+
+```rust
+use noyalib::cst::parse_document;
+
+let yaml = "a: &shared 7\nb: *shared\nc: *shared\n";
+let mut doc = parse_document(yaml).unwrap();
+
+// Replace every `*shared` reference with the bytes of the
+// anchored value. The `&shared` declaration stays in place.
+let n = doc.materialise_aliases_of("shared").unwrap();
+assert_eq!(n, 2);
+assert!(!doc.to_string().contains('*'));
+```
+
+`Document::materialise_alias_at(byte_pos)` is the single-site
+variant for callers that already know the alias's source position.
+
 ---
 
 ## Tooling
@@ -220,6 +272,35 @@ Built on top of the lossless CST:
   `Document` API to JavaScript / TypeScript. Lets browser-based
   YAML editors run the lossless edit path without leaving the
   browser.
+- **`noyalib-lsp`** — Language Server Protocol implementation
+  built on the lossless CST. Speaks the standard LSP wire format
+  over stdio so any conforming editor can use it directly:
+
+  ```bash
+  # Build the server binary.
+  cargo build -p noyalib-lsp --release
+  # → target/release/noyalib-lsp
+  ```
+
+  - **Neovim** (`lspconfig`):
+
+    ```lua
+    require("lspconfig.configs").noyalib = {
+      default_config = {
+        cmd = { "noyalib-lsp" },
+        filetypes = { "yaml" },
+        root_dir = require("lspconfig.util").find_git_ancestor,
+      },
+    }
+    require("lspconfig").noyalib.setup {}
+    ```
+
+  - **Zed** — add `"noyalib"` to the YAML `language_servers` list
+    in `~/.config/zed/settings.json` and point the binary path at
+    the build above.
+  - **VS Code** — a published extension is on the roadmap; in the
+    interim, any `vscode-languageclient`-shaped extension can spawn
+    `noyalib-lsp` over stdio.
 
 ---
 
@@ -519,6 +600,19 @@ assert!(err.to_string().contains("porrt"));
 The strict path walks nested structs — a typo at `server.unknown`
 is reported with its parent path so the user sees exactly where
 the bad key lives.
+
+The same check is available on every input shape:
+
+| Input shape | Lenient | Strict |
+| :--- | :--- | :--- |
+| `&str` | `from_str` | `from_str_strict` |
+| `&[u8]` | `from_slice` | `from_slice_strict` |
+| `impl io::Read` | `from_reader` | `from_reader_strict` |
+
+The slice and reader variants share `from_str_strict`'s semantics —
+they exist so callers that already hold bytes (a buffer, a
+network frame, a `bytes::Bytes`) don't have to round-trip through
+`String` to opt in.
 
 ---
 

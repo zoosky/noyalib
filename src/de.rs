@@ -563,6 +563,82 @@ where
     Ok(typed)
 }
 
+/// Strict deserialise from a byte slice — like [`from_slice`] but
+/// errors if the input contains keys the target type `T` does not
+/// declare.
+///
+/// Same semantics as [`from_str_strict`]. Use this when the caller
+/// already holds a `&[u8]` (e.g. data read from a buffer or returned
+/// by a `bytes` framework) and would otherwise pay the UTF-8
+/// validation cost of converting to `&str` twice.
+///
+/// # Errors
+///
+/// - The byte slice is not valid UTF-8.
+/// - Any key in the YAML document is not declared on `T`.
+/// - Any of the regular [`from_slice`] error paths.
+///
+/// # Examples
+///
+/// ```
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Config {
+///     port: u16,
+/// }
+///
+/// let yaml: &[u8] = b"port: 8080\nporrt: 9090\n";
+/// assert!(noyalib::from_slice::<Config>(yaml).is_ok());
+/// assert!(noyalib::from_slice_strict::<Config>(yaml).is_err());
+/// ```
+#[cfg(feature = "std")]
+pub fn from_slice_strict<T>(b: &[u8]) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let s = core::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
+    from_str_strict(s)
+}
+
+/// Strict deserialise from an IO reader — like [`from_reader`] but
+/// errors if the input contains keys the target type `T` does not
+/// declare.
+///
+/// Same semantics as [`from_str_strict`]. Reads the entire stream
+/// into memory before parsing, mirroring [`from_reader`].
+///
+/// # Errors
+///
+/// - The reader returns an I/O error or the data is not valid UTF-8.
+/// - Any key in the YAML document is not declared on `T`.
+/// - Any of the regular [`from_reader`] error paths.
+///
+/// # Examples
+///
+/// ```
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Config {
+///     port: u16,
+/// }
+///
+/// let yaml = b"port: 8080\nporrt: 9090\n".to_vec();
+/// assert!(noyalib::from_reader::<_, Config>(&yaml[..]).is_ok());
+/// assert!(noyalib::from_reader_strict::<_, Config>(&yaml[..]).is_err());
+/// ```
+#[cfg(feature = "std")]
+pub fn from_reader_strict<R, T>(mut reader: R) -> Result<T>
+where
+    R: io::Read,
+    T: for<'de> Deserialize<'de>,
+{
+    let mut s = String::new();
+    let _ = reader.read_to_string(&mut s).map_err(Error::Io)?;
+    from_str_strict(&s)
+}
+
 /// Deserialize YAML from a string with custom security limits.
 ///
 /// # Examples

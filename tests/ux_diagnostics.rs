@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use noyalib::{from_str, from_str_strict, Error};
+use noyalib::{from_reader_strict, from_slice_strict, from_str, from_str_strict, Error};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +108,54 @@ server:
         }
         other => panic!("expected UnknownField, got {other:?}"),
     }
+}
+
+// ── Strict variants for slice / reader inputs ─────────────────────
+
+#[test]
+fn strict_from_slice_surfaces_typo_as_typed_error() {
+    let yaml: &[u8] = b"port: 8080\nhost: api.example.com\nporrt: 9090\n";
+    let res: Result<ServerConfig, _> = from_slice_strict(yaml);
+    let err = res.unwrap_err();
+    match &err {
+        Error::UnknownField(msg) => assert!(msg.contains("porrt")),
+        other => panic!("expected UnknownField, got {other:?}"),
+    }
+}
+
+#[test]
+fn strict_from_slice_passes_when_every_key_is_declared() {
+    let yaml: &[u8] = b"port: 8080\nhost: api.example.com\ntls: true\n";
+    let cfg: ServerConfig = from_slice_strict(yaml).unwrap();
+    assert_eq!(cfg.port, 8080);
+    assert!(cfg.tls);
+}
+
+#[test]
+fn strict_from_slice_rejects_invalid_utf8() {
+    // Invalid UTF-8 byte (0xFF) inside an otherwise plausible payload.
+    let yaml: &[u8] = b"port: \xff\n";
+    let res: Result<ServerConfig, _> = from_slice_strict(yaml);
+    assert!(res.is_err());
+}
+
+#[test]
+fn strict_from_reader_surfaces_typo_as_typed_error() {
+    let yaml = b"port: 8080\nhost: api.example.com\nporrt: 9090\n".to_vec();
+    let res: Result<ServerConfig, _> = from_reader_strict(&yaml[..]);
+    let err = res.unwrap_err();
+    match &err {
+        Error::UnknownField(msg) => assert!(msg.contains("porrt")),
+        other => panic!("expected UnknownField, got {other:?}"),
+    }
+}
+
+#[test]
+fn strict_from_reader_passes_when_every_key_is_declared() {
+    let yaml = b"port: 8080\nhost: api.example.com\ntls: true\n".to_vec();
+    let cfg: ServerConfig = from_reader_strict(&yaml[..]).unwrap();
+    assert_eq!(cfg.port, 8080);
+    assert!(cfg.tls);
 }
 
 // ── Source location on parse errors ───────────────────────────────
