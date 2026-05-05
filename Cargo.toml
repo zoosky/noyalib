@@ -1,5 +1,5 @@
 [workspace]
-members = ["noyalib-wasm", "noyalib-mcp"]
+members = ["noyalib-wasm", "noyalib-mcp", "noyalib-lsp"]
 exclude = ["examples/wasm", "fuzz"]
 
 [package]
