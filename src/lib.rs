@@ -195,6 +195,8 @@ pub mod figment;
 mod flattened;
 /// Formatting wrappers for per-value YAML output style control.
 pub mod fmt;
+/// Key interning for memory-efficient repeated-key workloads.
+pub mod interner;
 /// Parallel multi-document YAML parsing via Rayon. Gated by the
 /// `parallel` feature.
 #[cfg(feature = "parallel")]

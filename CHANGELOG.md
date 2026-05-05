@@ -7,6 +7,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Key interner
+
+- **`noyalib::interner::KeyInterner`** — `&str` → `Arc<str>`
+  deduplication primitive for memory-efficient repeated-key
+  workloads. Each call to `intern(key)` returns a shared
+  `Arc<str>`; the first call allocates, every subsequent call
+  with the same key bytes returns a clone of the cached entry.
+- Targets the Kubernetes-shaped use case where keys like
+  `metadata`, `labels`, `name`, `apiVersion`, `selector` repeat
+  thousands of times across a stream. For 20-byte keys repeated
+  10 000 times, footprint drops from ~200 KB to ~20 bytes +
+  `Arc` pointers.
+- Public surface: `KeyInterner::new`, `with_capacity(n)`,
+  `intern(&str) -> Arc<str>`, `get(&str) -> Option<Arc<str>>`,
+  `len`, `is_empty`, `clear`.
+- The `Mapping` public API is **unchanged** — `Mapping<String,
+  Value>` is preserved so existing call sites compile clean. A
+  future major version may swap the internal storage to
+  `Arc<str>` and use the interner transparently during parse;
+  v0.0.1 ships the primitive without that breaking change.
+- 7 unit tests covering basic intern semantics, distinct-key
+  separation, empty-string handling, `get` lookup,
+  `clear` semantics, and a Kubernetes-key-set dedup smoke test.
+
 ### Changed — CST short-pointer compression
 
 - `GreenChild::Token { len }` is now `u32` (was `usize`). YAML
