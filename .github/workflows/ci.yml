@@ -57,12 +57,45 @@ jobs:
       # (no_std + default), which is what crate consumers
       # actually rely on.
 
-  miri:
-    name: Miri (nightly)
-    # Scheduled nightly — crate is #![forbid(unsafe_code)] so Miri is a
-    # defence-in-depth check, not a per-push gate.
+  miri-focused:
+    name: Miri (focused, per-PR)
+    # noyalib is `#![forbid(unsafe_code)]` so Miri does not police
+    # noyalib's own code. The `unsafe` lives in the runtime
+    # dependencies (`indexmap`, `rustc-hash`, `ryu`, `itoa`,
+    # `memchr`, `smallvec`); Miri verifies the *interaction*
+    # between noyalib and those crates is sound. Plus, simulating
+    # different endianness via `MIRI_TARGET` proves the SWAR
+    # decimal parser and structural-bitmask iterator work on
+    # big-endian platforms. Runs the focused subset
+    # (`scripts/miri.sh`) on every PR so any regression in the
+    # supply-chain interaction surface fails fast.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+          components: miri
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: false
+      - name: Run focused Miri suite
+        run: ./scripts/miri.sh
+
+  miri-full:
+    name: Miri (full + big-endian, scheduled)
+    # Weekly full sweep — `cargo miri test --lib` plus a
+    # big-endian cross-target run (mips64) to catch any
+    # endianness assumption that would slip past the focused
+    # per-PR job. Bandwidth-intensive (~30+ minutes) so gated
+    # behind the schedule / manual trigger.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
       RUSTUP_TOOLCHAIN: nightly
     steps:
@@ -78,10 +111,14 @@ jobs:
           save-if: false
       - name: Setup Miri
         run: cargo +nightly miri setup
-      - name: Run tests under Miri
-        run: cargo +nightly miri test
+      - name: Run full Miri suite (native)
+        run: cargo +nightly miri test --lib
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
+      - name: Run focused Miri suite (big-endian mips64)
+        run: ./scripts/miri.sh
+        env:
+          MIRI_TARGET: mips64-unknown-linux-gnuabi64
 
   cargo-deny:
     name: cargo-deny

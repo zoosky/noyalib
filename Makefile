@@ -8,12 +8,14 @@
 #   make fmt      — check formatting
 #   make deny     — run cargo-deny supply-chain checks
 #   make doc      — build documentation
-#   make miri     — run tests under Miri (requires nightly)
+#   make miri     — run focused Miri suite via scripts/miri.sh (nightly)
+#   make miri-full — run full lib test suite under Miri (slow)
+#   make miri-bigendian — Miri-simulate a big-endian target (mips64)
 #   make sbom     — generate software bill of materials
 #   make examples  — run all examples sequentially
 #   make clean    — remove build artifacts
 
-.PHONY: all check clippy test fmt deny doc miri sbom examples compliance clean
+.PHONY: all check clippy test fmt deny doc miri miri-full miri-bigendian sbom examples compliance clean
 
 all: check clippy test
 
@@ -39,7 +41,13 @@ doc:
 	cargo doc --no-deps --all-features
 
 miri:
-	cargo +nightly miri test
+	./scripts/miri.sh
+
+miri-full:
+	cargo +nightly miri test --lib
+
+miri-bigendian:
+	MIRI_TARGET=mips64-unknown-linux-gnuabi64 ./scripts/miri.sh
 
 sbom:
 	cargo tree --edges normal --prefix depth --format '{p} {l}' > SBOM.txt

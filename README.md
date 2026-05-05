@@ -981,6 +981,32 @@ cargo +nightly fuzz run fuzz_strict      # Tight security limits
 
 Seed corpus included in `fuzz/corpus/seed/`.
 
+### Miri (UB / aliasing / leak verification)
+
+noyalib is `#![forbid(unsafe_code)]` so Miri does not police
+noyalib's own code — every byte is checked at compile time. The
+reason a Miri job exists is to verify the *interaction* with the
+runtime dependencies (`indexmap`, `rustc-hash`, `ryu`, `itoa`,
+`memchr`, `smallvec` — all of which use `unsafe` internally) is
+sound, plus to validate that the SWAR decimal parser and the
+structural-bitmask iterator behave correctly under simulated
+big-endian targets.
+
+```bash
+make miri              # focused suite — parser, scanner, value, interner, simd
+make miri-full         # full lib test suite under Miri (slow)
+make miri-bigendian    # focused suite simulated on mips64 big-endian
+
+# Or invoke the script directly:
+./scripts/miri.sh                    # full focused suite
+./scripts/miri.sh simd               # subset
+MIRI_TARGET=mips64-unknown-linux-gnuabi64 ./scripts/miri.sh
+```
+
+The CI matrix runs the focused suite on every PR (`miri-focused`)
+and the full + big-endian sweep on a weekly schedule
+(`miri-full`).
+
 ### CI
 
 | Workflow | Trigger | Purpose |
