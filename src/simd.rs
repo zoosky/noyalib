@@ -1064,11 +1064,11 @@ mod tests {
         // chunks: the SIMD path and the scalar path must produce
         // bit-for-bit equal masks.
         let needle_sets: &[&[u8]] = &[
-            b":",                 // arity 1
-            b":\n",               // arity 2
-            b":,#",               // arity 3
-            b":-[]{}\n",          // arity 7
-            b":-[]{}\n# \t",      // arity 10 (>8 — exercises fall-through)
+            b":",            // arity 1
+            b":\n",          // arity 2
+            b":,#",          // arity 3
+            b":-[]{}\n",     // arity 7
+            b":-[]{}\n# \t", // arity 10 (>8 — exercises fall-through)
         ];
         for &needles in needle_sets {
             let s = SimdScanner::new(needles);
@@ -1194,10 +1194,7 @@ mod tests {
         // u64::MAX + 1
         assert_eq!(parse_decimal_u64(b"18446744073709551616"), None);
         // Way overflow
-        assert_eq!(
-            parse_decimal_u64(b"99999999999999999999999"),
-            None,
-        );
+        assert_eq!(parse_decimal_u64(b"99999999999999999999999"), None,);
     }
 
     #[test]
@@ -1206,11 +1203,24 @@ mod tests {
         // bit-for-bit equivalent to the stdlib parser for every
         // length 1..=20.
         for n in [
-            0u64, 1, 9, 10, 99, 100, 999, 1000,
-            12345, 1234567, 12345678, 123456789, 9876543210,
-            1234567890123456, 9_223_372_036_854_775_807,  // i64::MAX
+            0u64,
+            1,
+            9,
+            10,
+            99,
+            100,
+            999,
+            1000,
+            12345,
+            1234567,
+            12345678,
+            123456789,
+            9876543210,
+            1234567890123456,
+            9_223_372_036_854_775_807, // i64::MAX
             10_000_000_000_000_000_000,
-            u64::MAX - 1, u64::MAX,
+            u64::MAX - 1,
+            u64::MAX,
         ] {
             let s = n.to_string();
             assert_eq!(parse_decimal_u64(s.as_bytes()), Some(n), "n={n}");
@@ -1243,10 +1253,21 @@ mod tests {
     #[test]
     fn parse_decimal_i64_matches_stdlib_across_full_range() {
         for n in [
-            0i64, 1, -1, 10, -10, 100, -100,
-            i32::MIN as i64, i32::MAX as i64,
-            i64::MIN, i64::MAX, i64::MAX - 1, i64::MIN + 1,
-            -123_456_789, 987_654_321,
+            0i64,
+            1,
+            -1,
+            10,
+            -10,
+            100,
+            -100,
+            i32::MIN as i64,
+            i32::MAX as i64,
+            i64::MIN,
+            i64::MAX,
+            i64::MAX - 1,
+            i64::MIN + 1,
+            -123_456_789,
+            987_654_321,
         ] {
             let s = n.to_string();
             assert_eq!(parse_decimal_i64(s.as_bytes()), Some(n), "n={n}");

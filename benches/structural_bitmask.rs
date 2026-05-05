@@ -86,13 +86,21 @@ fn bench_structural(c: &mut Criterion) {
             b.iter(|| scalar_walk(black_box(h), STRUCTURAL_NEEDLES));
         });
 
-        group.bench_with_input(BenchmarkId::new("memchr_find_any_of", label), &haystack, |b, h| {
-            b.iter(|| memchr_walk(black_box(h), STRUCTURAL_NEEDLES));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("memchr_find_any_of", label),
+            &haystack,
+            |b, h| {
+                b.iter(|| memchr_walk(black_box(h), STRUCTURAL_NEEDLES));
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("structural_iter", label), &haystack, |b, h| {
-            b.iter(|| structural_iter_walk(black_box(h), &scanner));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("structural_iter", label),
+            &haystack,
+            |b, h| {
+                b.iter(|| structural_iter_walk(black_box(h), &scanner));
+            },
+        );
     }
 
     group.finish();

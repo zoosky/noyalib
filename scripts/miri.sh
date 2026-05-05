@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Noyalib
 # SPDX-License-Identifier: MIT OR Apache-2.0
-# Copyright (c) 2026 Noyalib. All rights reserved.
 
 # scripts/miri.sh — run noyalib's "high-leverage" tests under Miri.
 #

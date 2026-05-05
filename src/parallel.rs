@@ -142,8 +142,8 @@ pub fn split(input: &str) -> Vec<&str> {
     while i + 3 <= bytes.len() {
         let at_line_start = i == 0 || bytes[i - 1] == b'\n' || bytes[i - 1] == b'\r';
         if at_line_start && &bytes[i..i + 3] == b"---" {
-            let next_ok = i + 3 >= bytes.len()
-                || matches!(bytes[i + 3], b'\n' | b'\r' | b' ' | b'\t');
+            let next_ok =
+                i + 3 >= bytes.len() || matches!(bytes[i + 3], b'\n' | b'\r' | b' ' | b'\t');
             if next_ok {
                 markers.push(i);
                 // Skip past the marker to avoid re-matching it on

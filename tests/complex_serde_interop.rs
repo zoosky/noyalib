@@ -126,9 +126,15 @@ memory: 256Mi
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(untagged)]
 enum Resource {
-    Pod { containers: Vec<String> },
-    Service { ports: Vec<u16> },
-    ConfigMap { data: std::collections::BTreeMap<String, String> },
+    Pod {
+        containers: Vec<String>,
+    },
+    Service {
+        ports: Vec<u16>,
+    },
+    ConfigMap {
+        data: std::collections::BTreeMap<String, String>,
+    },
 }
 
 #[test]
@@ -173,12 +179,8 @@ fn internally_tagged_enum_round_trips() {
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", content = "spec")]
 enum AdjResource {
-    Pod {
-        containers: u32,
-    },
-    Service {
-        ports: Vec<u16>,
-    },
+    Pod { containers: u32 },
+    Service { ports: Vec<u16> },
 }
 
 #[test]

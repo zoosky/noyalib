@@ -155,10 +155,7 @@ mod tests {
     fn descriptors_lists_both_tools_with_input_schemas() {
         let d = descriptors();
         assert_eq!(d.len(), 2);
-        let names: Vec<&str> = d
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = d.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"noyalib_get"));
         assert!(names.contains(&"noyalib_set"));
         for tool in &d {

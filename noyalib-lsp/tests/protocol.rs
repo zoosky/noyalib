@@ -89,7 +89,10 @@ fn initialize_returns_capabilities() {
     })]);
     assert_eq!(resps.len(), 1);
     let r = &resps[0];
-    assert_eq!(r["result"]["serverInfo"]["name"].as_str(), Some("noyalib-lsp"));
+    assert_eq!(
+        r["result"]["serverInfo"]["name"].as_str(),
+        Some("noyalib-lsp")
+    );
     assert_eq!(
         r["result"]["capabilities"]["documentFormattingProvider"].as_bool(),
         Some(true),

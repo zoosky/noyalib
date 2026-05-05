@@ -57,22 +57,22 @@ fn make_yaml(item_count: usize) -> String {
 fn bench_streaming_vs_value(c: &mut Criterion) {
     let mut group = c.benchmark_group("streaming_vs_value");
 
-    for &(label, count) in &[("small", 8usize), ("medium", 800usize), ("large", 8000usize)] {
+    for &(label, count) in &[
+        ("small", 8usize),
+        ("medium", 800usize),
+        ("large", 8000usize),
+    ] {
         let yaml = make_yaml(count);
         group.throughput(Throughput::Bytes(yaml.len() as u64));
 
         // ── Streaming path (no AST allocation) ─────────────────────
-        group.bench_with_input(
-            BenchmarkId::new("streaming", label),
-            &yaml,
-            |b, yaml| {
-                b.iter(|| {
-                    let mut de = StreamingDeserializer::new(black_box(yaml.as_str()));
-                    let doc: Doc = Deserialize::deserialize(&mut de).unwrap();
-                    black_box(doc);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("streaming", label), &yaml, |b, yaml| {
+            b.iter(|| {
+                let mut de = StreamingDeserializer::new(black_box(yaml.as_str()));
+                let doc: Doc = Deserialize::deserialize(&mut de).unwrap();
+                black_box(doc);
+            });
+        });
 
         // ── AST path (build Value, then deserialise) ───────────────
         group.bench_with_input(BenchmarkId::new("ast", label), &yaml, |b, yaml| {

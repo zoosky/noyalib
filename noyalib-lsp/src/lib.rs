@@ -440,7 +440,10 @@ mod tests {
         let req = json!({"jsonrpc": "2.0", "method": "initialize", "id": 1, "params": {}});
         let out = s.handle_message(&req.to_string());
         let v = parse_reply(&out);
-        assert_eq!(v["result"]["serverInfo"]["name"].as_str(), Some("noyalib-lsp"));
+        assert_eq!(
+            v["result"]["serverInfo"]["name"].as_str(),
+            Some("noyalib-lsp")
+        );
         assert_eq!(
             v["result"]["capabilities"]["documentFormattingProvider"].as_bool(),
             Some(true),
@@ -467,13 +470,12 @@ mod tests {
     #[test]
     fn shutdown_then_non_exit_method_is_rejected() {
         let mut s = Server::new();
-        let _ = s.handle_message(
-            &json!({"jsonrpc": "2.0", "method": "shutdown", "id": 1}).to_string(),
-        );
+        let _ =
+            s.handle_message(&json!({"jsonrpc": "2.0", "method": "shutdown", "id": 1}).to_string());
         let out = s.handle_message(
             &json!({"jsonrpc": "2.0", "method": "textDocument/hover", "id": 2,
                 "params": {"textDocument": {"uri": "f"}, "position": {"line": 0, "character": 0}}})
-                .to_string(),
+            .to_string(),
         );
         let v = parse_reply(&out);
         assert_eq!(v["error"]["code"].as_i64().unwrap(), -32600);
@@ -482,9 +484,8 @@ mod tests {
     #[test]
     fn exit_after_shutdown_succeeds() {
         let mut s = Server::new();
-        let _ = s.handle_message(
-            &json!({"jsonrpc": "2.0", "method": "shutdown", "id": 1}).to_string(),
-        );
+        let _ =
+            s.handle_message(&json!({"jsonrpc": "2.0", "method": "shutdown", "id": 1}).to_string());
         let out = s.handle_message(&json!({"jsonrpc": "2.0", "method": "exit"}).to_string());
         // Notifications swallow no reply; outcome should be silent.
         assert!(out.reply.is_none());

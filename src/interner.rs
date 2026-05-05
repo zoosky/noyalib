@@ -114,10 +114,7 @@ impl KeyInterner {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         KeyInterner {
-            table: FxHashMap::with_capacity_and_hasher(
-                capacity,
-                rustc_hash::FxBuildHasher,
-            ),
+            table: FxHashMap::with_capacity_and_hasher(capacity, rustc_hash::FxBuildHasher),
         }
     }
 
@@ -156,7 +153,9 @@ impl KeyInterner {
     /// assert!(interner.get("port").is_some());
     /// ```
     pub fn get(&self, key: &str) -> Option<Arc<str>> {
-        self.table.get_key_value(key).map(|(arc, _)| Arc::clone(arc))
+        self.table
+            .get_key_value(key)
+            .map(|(arc, _)| Arc::clone(arc))
     }
 
     /// Number of distinct keys interned so far.
@@ -276,9 +275,19 @@ mod tests {
         // / `labels` / `name` / `selector` shares one allocation.
         let mut interner = KeyInterner::new();
         let keys = [
-            "apiVersion", "kind", "metadata", "name", "labels",
-            "spec", "selector", "matchLabels", "template",
-            "containers", "image", "ports", "containerPort",
+            "apiVersion",
+            "kind",
+            "metadata",
+            "name",
+            "labels",
+            "spec",
+            "selector",
+            "matchLabels",
+            "template",
+            "containers",
+            "image",
+            "ports",
+            "containerPort",
         ];
         // Intern every key 100 times to simulate a stream of 100
         // similar manifests.

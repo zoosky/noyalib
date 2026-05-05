@@ -97,13 +97,17 @@ fn bench_soak(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(BenchmarkId::new("streaming_typed", label), &yaml, |b, yaml| {
-            b.iter(|| {
-                let mut de = StreamingDeserializer::new(black_box(yaml.as_str()));
-                let doc: Doc = Deserialize::deserialize(&mut de).unwrap();
-                black_box(doc);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("streaming_typed", label),
+            &yaml,
+            |b, yaml| {
+                b.iter(|| {
+                    let mut de = StreamingDeserializer::new(black_box(yaml.as_str()));
+                    let doc: Doc = Deserialize::deserialize(&mut de).unwrap();
+                    black_box(doc);
+                });
+            },
+        );
     }
 
     group.finish();

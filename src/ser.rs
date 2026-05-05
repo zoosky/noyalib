@@ -969,9 +969,7 @@ fn write_mapping(
             // guides (Kubernetes manifests, GitHub Actions
             // workflows). Mappings and other non-sequence block
             // values keep the standard indent.
-            let next_indent = if config.compact_list_indent
-                && matches!(value, Value::Sequence(_))
-            {
+            let next_indent = if config.compact_list_indent && matches!(value, Value::Sequence(_)) {
                 indent
             } else {
                 indent + 1

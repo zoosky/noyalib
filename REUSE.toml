@@ -45,6 +45,7 @@ path = [
     "docs/**",
     "tests/README.md",
     "noyalib-mcp/README.md",
+    "noyalib-lsp/README.md",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Noyalib"

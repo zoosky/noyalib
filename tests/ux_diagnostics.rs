@@ -156,10 +156,7 @@ trailer: ok
 fn type_mismatch_surfaces_as_typed_error() {
     let yaml = "port: not-an-integer\nhost: api\n";
     let res: Result<ServerConfig, _> = from_str(yaml);
-    assert!(
-        res.is_err(),
-        "string-shaped port must not coerce into u16"
-    );
+    assert!(res.is_err(), "string-shaped port must not coerce into u16");
 }
 
 #[test]

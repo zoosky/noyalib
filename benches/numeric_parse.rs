@@ -44,10 +44,7 @@ fn bench_parse_u64(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("stdlib", label), bytes, |b, bs| {
             b.iter(|| {
-                let v: u64 = std::str::from_utf8(black_box(bs))
-                    .unwrap()
-                    .parse()
-                    .unwrap();
+                let v: u64 = std::str::from_utf8(black_box(bs)).unwrap().parse().unwrap();
                 black_box(v);
             });
         });
@@ -78,10 +75,7 @@ fn bench_parse_i64(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("stdlib", label), bytes, |b, bs| {
             b.iter(|| {
-                let v: i64 = std::str::from_utf8(black_box(bs))
-                    .unwrap()
-                    .parse()
-                    .unwrap();
+                let v: i64 = std::str::from_utf8(black_box(bs)).unwrap().parse().unwrap();
                 black_box(v);
             });
         });
@@ -100,7 +94,9 @@ fn bench_parse_i64(c: &mut Criterion) {
 /// Bulk parse — simulates a YAML document of port numbers / counter
 /// values where every record carries a fresh integer parse.
 fn bench_bulk_parse(c: &mut Criterion) {
-    let values: Vec<String> = (0u64..1000).map(|i| (i * 12345 + 100).to_string()).collect();
+    let values: Vec<String> = (0u64..1000)
+        .map(|i| (i * 12345 + 100).to_string())
+        .collect();
     let byte_slices: Vec<&[u8]> = values.iter().map(|s| s.as_bytes()).collect();
     let total_bytes: u64 = values.iter().map(|s| s.len() as u64).sum();
 
