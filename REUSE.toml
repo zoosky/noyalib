@@ -88,6 +88,7 @@ path = [
     "noyalib-wasm/Cargo.toml",
     "noyalib-wasm/index.html",
     "noyalib-mcp/Cargo.toml",
+    "noyalib-lsp/Cargo.toml",
     "examples/wasm/.gitignore",
     "examples/wasm/Cargo.toml",
     "examples/wasm/index.html",

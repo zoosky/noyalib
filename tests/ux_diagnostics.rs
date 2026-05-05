@@ -158,6 +158,35 @@ fn strict_from_reader_passes_when_every_key_is_declared() {
     assert!(cfg.tls);
 }
 
+#[test]
+fn strict_from_reader_surfaces_io_error() {
+    // A reader that returns an `io::Error` on first poll exercises
+    // the `map_err(Error::Io)?` branch in `from_reader_strict`.
+    struct FailingReader;
+    impl std::io::Read for FailingReader {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "boom"))
+        }
+    }
+    let res: Result<ServerConfig, _> = from_reader_strict(FailingReader);
+    let err = res.unwrap_err();
+    assert!(
+        matches!(err, Error::Io(_)),
+        "expected Error::Io, got {err:?}"
+    );
+}
+
+#[test]
+fn strict_from_reader_rejects_invalid_utf8() {
+    // `read_to_string` returns an `io::Error` of kind InvalidData
+    // when the bytes aren't UTF-8, so this also lands on the
+    // `map_err(Error::Io)?` branch — but via a different
+    // io::ErrorKind, complementing the FailingReader path.
+    let bad: &[u8] = b"port: \xff\n";
+    let res: Result<ServerConfig, _> = from_reader_strict(bad);
+    assert!(res.is_err());
+}
+
 // ── Source location on parse errors ───────────────────────────────
 
 #[test]
