@@ -44,25 +44,39 @@
 //!
 //! ```
 //! # #[cfg(feature = "parallel")] {
-//! use noyalib::load_all_as_parallel;
 //! let yaml = "---\nid: 1\n---\nid: 2\n---\nid: 3\n";
 //! #[derive(serde::Deserialize, Debug)]
 //! struct Record { id: u32 }
-//! let records: Vec<Record> = load_all_as_parallel(yaml).unwrap();
+//! let records: Vec<Record> = noyalib::parallel::parse(yaml).unwrap();
 //! assert_eq!(records.len(), 3);
 //! # }
 //! ```
+//!
+//! # API shape
+//!
+//! - [`parse`] — typed deserialise into `Vec<T>`.
+//! - [`values`] — dynamic-tree variant returning `Vec<Value>`.
+//! - [`split`] — standalone document-boundary pre-scanner for
+//!   callers driving their own concurrency primitives.
+//!
+//! Names are kept short on purpose — the `parallel` namespace
+//! already encodes the concurrency contract, so the function
+//! verb stays single-word: `parallel::parse` reads as one
+//! sentence.
 
 use crate::error::Result;
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
-/// Deserialise every YAML document in `input` into `T`, parsing in
-/// parallel via Rayon's global thread pool.
+/// Deserialise every YAML document in `input` into `T`, parsing
+/// in parallel via Rayon's global thread pool.
 ///
 /// `T` must be `Send` because the per-document parses run on
 /// arbitrary worker threads. The result is collected back into a
 /// `Vec<T>` in document order.
+///
+/// Reads as `noyalib::parallel::parse::<MyType>(input)` —
+/// concurrency lives in the namespace, the verb is one word.
 ///
 /// # Errors
 ///
@@ -73,60 +87,55 @@ use serde::de::DeserializeOwned;
 /// # Examples
 ///
 /// ```
-/// use noyalib::load_all_as_parallel;
 /// let yaml = "---\nport: 80\n---\nport: 443\n";
 /// #[derive(serde::Deserialize, Debug, PartialEq)]
 /// struct Service { port: u16 }
-/// let v: Vec<Service> = load_all_as_parallel(yaml).unwrap();
+/// let v: Vec<Service> = noyalib::parallel::parse(yaml).unwrap();
 /// assert_eq!(v[0].port, 80);
 /// assert_eq!(v[1].port, 443);
 /// ```
-pub fn load_all_as_parallel<T>(input: &str) -> Result<Vec<T>>
+pub fn parse<T>(input: &str) -> Result<Vec<T>>
 where
     T: DeserializeOwned + Send,
 {
-    let chunks = split_documents(input);
+    let chunks = split(input);
     chunks
         .par_iter()
         .map(|chunk| crate::from_str::<T>(chunk))
         .collect::<Result<Vec<T>>>()
 }
 
-/// Like [`load_all_as_parallel`] but yields a [`Vec<crate::Value>`]
-/// — the dynamic-tree shape, useful when the caller wants to
-/// route documents to different typed handlers post-parse.
+/// Dynamic-tree variant of [`parse`]: returns a
+/// [`Vec<crate::Value>`]. Use when the caller wants to route
+/// documents to different typed handlers post-parse.
 ///
 /// # Examples
 ///
 /// ```
-/// use noyalib::{load_all_parallel, Value};
+/// use noyalib::Value;
 /// let yaml = "---\na: 1\n---\nb: 2\n";
-/// let docs: Vec<Value> = load_all_parallel(yaml).unwrap();
+/// let docs: Vec<Value> = noyalib::parallel::values(yaml).unwrap();
 /// assert_eq!(docs.len(), 2);
 /// assert_eq!(docs[0]["a"].as_i64(), Some(1));
 /// assert_eq!(docs[1]["b"].as_i64(), Some(2));
 /// ```
-pub fn load_all_parallel(input: &str) -> Result<Vec<crate::Value>> {
-    load_all_as_parallel::<crate::Value>(input)
+pub fn values(input: &str) -> Result<Vec<crate::Value>> {
+    parse::<crate::Value>(input)
 }
 
 /// Split `input` into per-document byte slices on YAML 1.2 `---`
-/// markers. Public so callers that want to drive their own
-/// parallel-iteration shape (e.g. async tasks) can reuse the same
-/// boundary scan.
-///
-/// The scan is single-pass `O(input.len())` and does not allocate
-/// beyond the returned `Vec<&str>`.
+/// markers. Single-pass `O(input.len())`. Public so callers that
+/// drive their own concurrency primitives (async tasks, custom
+/// thread pools) can reuse the same boundary scan.
 ///
 /// # Examples
 ///
 /// ```
-/// use noyalib::parallel::split_documents;
-/// let docs = split_documents("---\na: 1\n---\nb: 2\n");
+/// let docs = noyalib::parallel::split("---\na: 1\n---\nb: 2\n");
 /// assert_eq!(docs.len(), 2);
 /// ```
 #[must_use]
-pub fn split_documents(input: &str) -> Vec<&str> {
+pub fn split(input: &str) -> Vec<&str> {
     let bytes = input.as_bytes();
     let mut markers: Vec<usize> = Vec::new();
     let mut i = 0;
@@ -186,9 +195,9 @@ mod tests {
     use serde::Deserialize;
 
     #[test]
-    fn split_documents_separates_three_records() {
+    fn split_separates_three_records() {
         let yaml = "---\nid: 1\n---\nid: 2\n---\nid: 3\n";
-        let docs = split_documents(yaml);
+        let docs = split(yaml);
         assert_eq!(docs.len(), 3);
         assert!(docs[0].contains("id: 1"));
         assert!(docs[1].contains("id: 2"));
@@ -196,57 +205,57 @@ mod tests {
     }
 
     #[test]
-    fn split_documents_handles_no_separators() {
+    fn split_handles_no_separators() {
         let yaml = "single: doc\n";
-        let docs = split_documents(yaml);
+        let docs = split(yaml);
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0], yaml);
     }
 
     #[test]
-    fn split_documents_handles_empty_input() {
-        assert!(split_documents("").is_empty());
+    fn split_handles_empty_input() {
+        assert!(split("").is_empty());
     }
 
     #[test]
-    fn split_documents_handles_implicit_first_doc() {
+    fn split_handles_implicit_first_doc() {
         // Input starts with content, then `---`, then another doc.
         // The preamble is the implicit first document.
         let yaml = "name: a\n---\nname: b\n";
-        let docs = split_documents(yaml);
+        let docs = split(yaml);
         assert_eq!(docs.len(), 2);
         assert!(docs[0].contains("name: a"));
         assert!(docs[1].contains("name: b"));
     }
 
     #[test]
-    fn split_documents_ignores_dashes_mid_line() {
+    fn split_ignores_dashes_mid_line() {
         // `---` not at column 0 is part of a scalar, not a marker.
         let yaml = "key: value---suffix\n";
-        let docs = split_documents(yaml);
+        let docs = split(yaml);
         assert_eq!(docs.len(), 1);
         assert!(docs[0].contains("value---suffix"));
     }
 
     #[test]
-    fn split_documents_requires_post_marker_whitespace() {
+    fn split_requires_post_marker_whitespace() {
         // `---foo` is *not* a document start — the marker must be
         // followed by whitespace or end-of-input. (This is a
         // simplification of the spec but matches every real YAML
         // emitter we've encountered.)
         let yaml = "key: a\n---foo\nkey: b\n";
-        let docs = split_documents(yaml);
+        let docs = split(yaml);
         assert_eq!(docs.len(), 1, "got: {docs:?}");
     }
 
     #[test]
-    fn load_all_as_parallel_round_trips_typed_records() {
+    fn parse_round_trips_typed_records() {
         #[derive(Debug, Deserialize, PartialEq)]
         struct Record {
             id: u32,
         }
         let yaml = "---\nid: 1\n---\nid: 2\n---\nid: 3\n";
-        let records: Vec<Record> = load_all_as_parallel(yaml).unwrap();
+        let records: Vec<Record> = parse(yaml).unwrap();
         assert_eq!(
             records,
             vec![Record { id: 1 }, Record { id: 2 }, Record { id: 3 }]
@@ -254,16 +263,16 @@ mod tests {
     }
 
     #[test]
-    fn load_all_parallel_yields_value_per_document() {
+    fn values_yields_value_per_document() {
         let yaml = "---\na: 1\n---\nb: 2\n";
-        let docs = load_all_parallel(yaml).unwrap();
+        let docs = values(yaml).unwrap();
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0]["a"].as_i64(), Some(1));
         assert_eq!(docs[1]["b"].as_i64(), Some(2));
     }
 
     #[test]
-    fn load_all_as_parallel_propagates_first_error() {
+    fn parse_propagates_first_error() {
         #[derive(Debug, Deserialize)]
         #[allow(dead_code)]
         struct Record {
@@ -271,12 +280,12 @@ mod tests {
         }
         // Second doc has unparseable content.
         let yaml = "---\nid: 1\n---\nid: [\n";
-        let res: Result<Vec<Record>> = load_all_as_parallel(yaml);
+        let res: Result<Vec<Record>> = parse(yaml);
         assert!(res.is_err());
     }
 
     #[test]
-    fn load_all_as_parallel_matches_sequential_for_correctness() {
+    fn parse_matches_sequential_for_correctness() {
         // Stress test: 50 small documents. The parallel and
         // sequential implementations must produce bit-for-bit
         // identical results.
@@ -290,7 +299,7 @@ mod tests {
             id: u32,
             name: String,
         }
-        let parallel: Vec<Record> = load_all_as_parallel(&yaml).unwrap();
+        let parallel: Vec<Record> = parse(&yaml).unwrap();
         let sequential: Vec<Record> = crate::load_all_as(&yaml).unwrap();
         assert_eq!(parallel, sequential);
     }

@@ -37,11 +37,11 @@ jobs:
         toolchain: [stable, nightly]
         include:
           - os: ubuntu-latest
-            toolchain: "1.75.0"
+            toolchain: "1.88.0"
           - os: macos-latest
-            toolchain: "1.75.0"
+            toolchain: "1.88.0"
           - os: windows-latest
-            toolchain: "1.75.0"
+            toolchain: "1.88.0"
     continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -181,8 +181,8 @@ jobs:
       - uses: fsfe/reuse-action@bb774aa972c2a89ff34781233d275075cbddf542 # v6
 
   msrv-clippy:
-    name: MSRV (1.75.0) clippy
-    # The test-matrix already runs `cargo test --all-features` on 1.75.0
+    name: MSRV (1.88.0) clippy
+    # The test-matrix already runs `cargo test --all-features` on 1.88.0
     # across Linux/macOS/Windows, which catches build- and syntax-level
     # MSRV drift. This job complements it by running clippy on the same
     # toolchain so a lint pattern that compiles only on a newer rustc
@@ -192,7 +192,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
-          toolchain: "1.75.0"
+          toolchain: "1.88.0"
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: cargo clippy on MSRV

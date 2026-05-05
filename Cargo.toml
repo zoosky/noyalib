@@ -6,7 +6,7 @@ exclude = ["examples/wasm", "fuzz"]
 name = "noyalib"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.75.0"
+rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 description = "A pure Rust YAML library with zero unsafe code and full serde integration"
 repository = "https://github.com/sebastienrousseau/noyalib"
@@ -233,8 +233,8 @@ required-features = ["validate-schema"]
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
-indexmap = { version = "2.10", features = ["serde"] }
-rustc-hash = "2.0"
+indexmap = { version = "2", features = ["serde"] }
+rustc-hash = "2"
 itoa = "1"
 ryu = "1"
 memchr = "2.7"
@@ -270,10 +270,11 @@ figment = { version = "0.10", optional = true }
 # `[dev-dependencies]`) because Cargo doesn't allow optional
 # dev-deps. It's gated behind the `compare-saphyr` feature and
 # only used inside `#[cfg(feature = "compare-saphyr")]` bench
-# arms; nothing in the runtime crate references it. Keeps the
-# MSRV-1.75 build path clean (saphyr's lineage adopted Rust 2024
-# edition, which Cargo 1.75 cannot parse).
-serde-saphyr = { version = ">=0.0.10, <0.0.25", optional = true }
+# arms; nothing in the runtime crate references it. Off by default
+# so an `--all-features` build doesn't pull in the saphyr crate
+# (which is fine on MSRV 1.85+ but still extra deps the rest of
+# the workspace doesn't need).
+serde-saphyr = { version = "0.0", optional = true }
 # Parallel multi-document parsing — pulled in only when the
 # `parallel` feature is on. Rayon is the de-facto safe data-parallel
 # Rust crate and itself uses well-vetted unsafe internally; the

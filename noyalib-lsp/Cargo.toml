@@ -2,7 +2,7 @@
 name = "noyalib-lsp"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.75.0"
+rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 description = "Language Server Protocol implementation for noyalib — YAML formatting, validation, and hover-driven JSON Schema descriptions"
 repository = "https://github.com/sebastienrousseau/noyalib"

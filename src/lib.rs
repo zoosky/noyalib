@@ -258,9 +258,6 @@ pub use de::{
     DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig,
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
-#[cfg(feature = "parallel")]
-#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
-pub use parallel::{load_all_as_parallel, load_all_parallel};
 pub use error::{Error, Location, Result};
 pub use flattened::Flattened;
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};

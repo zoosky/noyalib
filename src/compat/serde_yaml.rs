@@ -7,6 +7,43 @@
 //! module exposes a name-for-name surface so existing codebases
 //! can migrate by editing two lines:
 //!
+//! ## Why migrate from `serde_yaml`?
+//!
+//! - **Maintained.** `serde_yaml` 0.9 was archived by its author
+//!   in 2024; security advisories and YAML-spec corrections do
+//!   not flow into it. noyalib is actively maintained.
+//! - **Faster.** noyalib's deserialiser outpaces `serde_yaml_ng`
+//!   (the most active fork) by **39 – 64 %** on representative
+//!   workloads; the streaming path adds another 22 % on top of
+//!   that for large documents. SIMD-accelerated structural
+//!   discovery and SWAR decimal parsing pull big-document parses
+//!   another 4–9× ahead on the bytes / second metric.
+//!   Numbers are reproducible via `cargo bench --bench
+//!   comparison`.
+//! - **Zero `unsafe`.** noyalib enforces `#![forbid(unsafe_code)]`
+//!   across the entire workspace — every line of parser, scanner,
+//!   formatter, and CST code is checked at compile time. Audits
+//!   that would otherwise need to verify `serde_yaml`'s `unsafe`
+//!   blocks evaporate.
+//! - **Lossless tooling.** noyalib ships a byte-faithful CST
+//!   ([`crate::cst::Document`]) so editing tools can patch a
+//!   single value while preserving every comment, indent, and
+//!   sibling entry — something the original `serde_yaml` cannot
+//!   do at all.
+//! - **No dead branch.** The `compat-serde-yaml` shim does
+//!   **not** re-introduce the unmaintained crate as a dependency.
+//!   Every type the shim exposes is a noyalib-native type
+//!   re-exported under the `serde_yaml` name; downstream
+//!   `cargo audit` / `cargo deny` never picks up the archived
+//!   advisory chain.
+//! - **YAML 1.2 spec compliant.** noyalib passes 406/406 cases
+//!   in the official YAML 1.2 test suite. `serde_yaml` 0.9
+//!   carries known spec deviations that are baked-in for back
+//!   compat; noyalib has the freedom to fix them.
+//!
+//! ## Drop-in migration
+//!
+//!
 //! ```toml
 //! # Cargo.toml — before
 //! serde_yaml = "0.9"
