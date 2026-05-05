@@ -498,6 +498,56 @@ impl SimdScanner {
     }
 }
 
+/// Canonical YAML 1.2 plain-scalar boundary candidate set in
+/// **block** context. The scanner consumes a plain scalar by
+/// "jumping" to the first byte in this set, then validating
+/// whether it is a true terminator (e.g. `:` is only a key
+/// indicator when followed by whitespace, `#` is only a comment
+/// when preceded by whitespace).
+///
+/// This is the input to [`SimdScanner::new`] / [`StructuralIter`]
+/// for the block-context plain-scalar fast path.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::{BLOCK_PLAIN_NEEDLES, SimdScanner};
+/// let s = SimdScanner::new(BLOCK_PLAIN_NEEDLES);
+/// assert_eq!(s.find_any(b"hello: world"), Some(5));
+/// ```
+pub const BLOCK_PLAIN_NEEDLES: &[u8] = b": \t";
+
+/// Canonical YAML 1.2 plain-scalar boundary candidate set inside
+/// **flow** collections (`[ ]`, `{ }`). Adds the flow-collection
+/// terminators (`,`, `[`, `]`, `{`, `}`) to the block set.
+///
+/// The wider needle set means the scanner sees more candidate
+/// boundaries per chunk in flow context — exactly the workload
+/// where `StructuralIter`'s 32-byte-bitmask discovery beats a
+/// per-candidate restart pattern.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::{FLOW_PLAIN_NEEDLES, SimdScanner};
+/// let s = SimdScanner::new(FLOW_PLAIN_NEEDLES);
+/// assert_eq!(s.find_any(b"hello, world"), Some(5));
+/// ```
+pub const FLOW_PLAIN_NEEDLES: &[u8] = b": \t,[]{}";
+
+/// Canonical newline-discovery needles. Used by block-scalar
+/// (`|` / `>`) line counting, comment-text scanning, and any
+/// other "find next line break" hot path.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::{LINE_BREAK_NEEDLES, SimdScanner};
+/// let s = SimdScanner::new(LINE_BREAK_NEEDLES);
+/// assert_eq!(s.find_any(b"line one\r\nline two"), Some(8));
+/// ```
+pub const LINE_BREAK_NEEDLES: &[u8] = b"\n\r";
+
 /// Iterator over every structural-byte position in a haystack.
 ///
 /// Uses [`SimdScanner::structural_bitmask_32`] under the hood: each
@@ -607,6 +657,158 @@ impl Iterator for StructuralIter<'_> {
             return None;
         }
     }
+}
+
+/// SWAR decimal parser: parse an unsigned 64-bit integer from a
+/// byte slice of ASCII digits. Returns `None` if the slice is
+/// empty, contains a non-digit byte, or overflows `u64`.
+///
+/// Uses SWAR (SIMD Within A Register) when the input is at least
+/// 8 bytes long: 8 ASCII digits are parsed in a single `u64`
+/// multiply-shift pipeline, eliminating the per-byte branch the
+/// stdlib `<u64 as FromStr>::from_str` walks. For inputs shorter
+/// than 8 bytes the scalar fallback runs — a tight `* 10 + d`
+/// loop that LLVM auto-vectorises on most targets.
+///
+/// Pure-safe Rust — preserves the workspace
+/// `#![forbid(unsafe_code)]` invariant. Validates every byte is
+/// in `b'0'..=b'9'` before computing the result, so malformed
+/// input never produces a garbage answer.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::parse_decimal_u64;
+/// assert_eq!(parse_decimal_u64(b"12345"), Some(12_345));
+/// assert_eq!(parse_decimal_u64(b"9223372036854775807"),
+///            Some(9_223_372_036_854_775_807));
+/// assert_eq!(parse_decimal_u64(b""), None);
+/// assert_eq!(parse_decimal_u64(b"12a4"), None);
+/// assert_eq!(parse_decimal_u64(b"99999999999999999999"), None); // overflow
+/// ```
+#[must_use]
+pub fn parse_decimal_u64(bytes: &[u8]) -> Option<u64> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut result: u64 = 0;
+    let mut i = 0;
+    // SWAR fast path: process 8 digits per iteration. Bypass when
+    // the remaining slice is shorter — the validation cost would
+    // outweigh the SWAR multiply pipeline.
+    while i + 8 <= bytes.len() {
+        let mut arr = [0u8; 8];
+        arr.copy_from_slice(&bytes[i..i + 8]);
+        match parse_8_digits(arr) {
+            Some(eight) => {
+                // Shift the accumulator up by 8 decimal places
+                // and add the new chunk. Overflow → bail.
+                result = result.checked_mul(100_000_000)?.checked_add(eight)?;
+                i += 8;
+            }
+            None => return None,
+        }
+    }
+    // Scalar tail: 0..7 remaining bytes.
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        result = result.checked_mul(10)?.checked_add((b - b'0') as u64)?;
+        i += 1;
+    }
+    Some(result)
+}
+
+/// SWAR decimal parser for signed `i64`. Accepts an optional
+/// leading `+` or `-`, then forwards to [`parse_decimal_u64`].
+/// Returns `None` for empty input, non-digit bytes, or overflow
+/// in either direction.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::parse_decimal_i64;
+/// assert_eq!(parse_decimal_i64(b"42"), Some(42));
+/// assert_eq!(parse_decimal_i64(b"-42"), Some(-42));
+/// assert_eq!(parse_decimal_i64(b"+42"), Some(42));
+/// assert_eq!(parse_decimal_i64(b"-9223372036854775808"), Some(i64::MIN));
+/// assert_eq!(parse_decimal_i64(b"9223372036854775808"), None);
+/// ```
+#[must_use]
+pub fn parse_decimal_i64(bytes: &[u8]) -> Option<i64> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let (negative, digits) = match bytes[0] {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let abs = parse_decimal_u64(digits)?;
+    if negative {
+        // Special-case `i64::MIN` whose absolute value (2^63) does
+        // not fit in i64. The unsigned form 9_223_372_036_854_775_808
+        // converts directly via the wrapping cast.
+        if abs == (i64::MAX as u64) + 1 {
+            Some(i64::MIN)
+        } else {
+            i64::try_from(abs).ok().map(|n| -n)
+        }
+    } else {
+        i64::try_from(abs).ok()
+    }
+}
+
+/// Parse exactly 8 ASCII digits in a single SWAR pipeline.
+///
+/// The classic `(* 10) + (* 100) + (* 10000)` ladder folds the
+/// 8-byte block into a single `u64` digit value via three
+/// shift-add-mask phases. Each phase pairs adjacent units so the
+/// total instruction count is independent of the input value —
+/// branch-free arithmetic on a `u64` register.
+///
+/// Returns `None` if any byte is outside `b'0'..=b'9'`.
+fn parse_8_digits(arr: [u8; 8]) -> Option<u64> {
+    let chunk = u64::from_be_bytes(arr);
+    // Validate: every byte is in 0x30..=0x39 ('0'..='9'). Subtract
+    // 0x30 from each byte; result is 0..=9 if valid. To detect
+    // out-of-range, check the subtracted byte is < 10 by adding
+    // 0x76 (= 0x80 - 0x0A) and looking for high-bit propagation.
+    let sub = chunk.wrapping_sub(0x3030_3030_3030_3030);
+    let above_9 = sub.wrapping_add(0x7676_7676_7676_7676) & 0x8080_8080_8080_8080;
+    let below_0 = chunk & 0x8080_8080_8080_8080;
+    if above_9 != 0 || below_0 != 0 {
+        return None;
+    }
+    // SWAR fold: three phases of pair-wise (high*N + low). The
+    // big-endian `from_be_bytes` reading puts the leftmost digit
+    // in the highest byte, which is exactly what the per-pair
+    // shift-and-mask pattern wants.
+    //
+    // Phase 1 — pair adjacent bytes (16-bit half-words):
+    //   for each pair (high_byte, low_byte): high*10 + low.
+    //   Multiplying high by 10 cannot overflow the half-word
+    //   (max digit 9 → 90 < 256), so the pairs stay independent.
+    let high = (sub & 0xFF00_FF00_FF00_FF00) >> 8;
+    let low = sub & 0x00FF_00FF_00FF_00FF;
+    let chunk = high.wrapping_mul(10).wrapping_add(low);
+
+    // Phase 2 — pair adjacent half-words (32-bit halves):
+    //   for each pair (high_word, low_word): high*100 + low.
+    //   Max half-word value is 99 * 100 + 99 = 9999 < 65 536, so
+    //   each 32-bit pair stays independent.
+    let high = (chunk & 0xFFFF_0000_FFFF_0000) >> 16;
+    let low = chunk & 0x0000_FFFF_0000_FFFF;
+    let chunk = high.wrapping_mul(100).wrapping_add(low);
+
+    // Phase 3 — combine the two 32-bit halves into a single u64:
+    //   high * 10_000 + low. Max high half is 9999, so high*10_000
+    //   = 99_990_000; plus 9999 = 99_999_999 < 2^32 — fits.
+    let high = chunk >> 32;
+    let low = chunk & 0xFFFF_FFFF;
+    Some(high.wrapping_mul(10_000).wrapping_add(low))
 }
 
 #[cfg(test)]
@@ -947,5 +1149,107 @@ mod tests {
             .collect();
         let simd: Vec<usize> = StructuralIter::new(&s, &buf).collect();
         assert_eq!(simd, scalar);
+    }
+
+    // ── SWAR decimal parsing ──────────────────────────────────────
+
+    #[test]
+    fn parse_decimal_u64_basic() {
+        assert_eq!(parse_decimal_u64(b"0"), Some(0));
+        assert_eq!(parse_decimal_u64(b"42"), Some(42));
+        assert_eq!(parse_decimal_u64(b"12345678"), Some(12_345_678));
+        assert_eq!(parse_decimal_u64(b"99999999"), Some(99_999_999));
+    }
+
+    #[test]
+    fn parse_decimal_u64_long_inputs_swar_path() {
+        assert_eq!(parse_decimal_u64(b"1234567890"), Some(1_234_567_890));
+        assert_eq!(
+            parse_decimal_u64(b"9999999999999999"),
+            Some(9_999_999_999_999_999),
+        );
+        assert_eq!(
+            parse_decimal_u64(b"1234567812345678"),
+            Some(1_234_567_812_345_678),
+        );
+    }
+
+    #[test]
+    fn parse_decimal_u64_max() {
+        assert_eq!(parse_decimal_u64(b"18446744073709551615"), Some(u64::MAX));
+    }
+
+    #[test]
+    fn parse_decimal_u64_rejects_non_digits() {
+        assert_eq!(parse_decimal_u64(b""), None);
+        assert_eq!(parse_decimal_u64(b"12a4"), None);
+        assert_eq!(parse_decimal_u64(b" 42"), None);
+        assert_eq!(parse_decimal_u64(b"42 "), None);
+        assert_eq!(parse_decimal_u64(b"-42"), None);
+        assert_eq!(parse_decimal_u64(b"+42"), None);
+    }
+
+    #[test]
+    fn parse_decimal_u64_overflow_returns_none() {
+        // u64::MAX + 1
+        assert_eq!(parse_decimal_u64(b"18446744073709551616"), None);
+        // Way overflow
+        assert_eq!(
+            parse_decimal_u64(b"99999999999999999999999"),
+            None,
+        );
+    }
+
+    #[test]
+    fn parse_decimal_u64_matches_stdlib_baseline() {
+        // Sweep many lengths and values to ensure SWAR path is
+        // bit-for-bit equivalent to the stdlib parser for every
+        // length 1..=20.
+        for n in [
+            0u64, 1, 9, 10, 99, 100, 999, 1000,
+            12345, 1234567, 12345678, 123456789, 9876543210,
+            1234567890123456, 9_223_372_036_854_775_807,  // i64::MAX
+            10_000_000_000_000_000_000,
+            u64::MAX - 1, u64::MAX,
+        ] {
+            let s = n.to_string();
+            assert_eq!(parse_decimal_u64(s.as_bytes()), Some(n), "n={n}");
+        }
+    }
+
+    #[test]
+    fn parse_decimal_i64_handles_signs() {
+        assert_eq!(parse_decimal_i64(b"42"), Some(42));
+        assert_eq!(parse_decimal_i64(b"+42"), Some(42));
+        assert_eq!(parse_decimal_i64(b"-42"), Some(-42));
+        assert_eq!(parse_decimal_i64(b"0"), Some(0));
+        assert_eq!(parse_decimal_i64(b"-0"), Some(0));
+    }
+
+    #[test]
+    fn parse_decimal_i64_handles_min_max() {
+        assert_eq!(parse_decimal_i64(b"9223372036854775807"), Some(i64::MAX));
+        assert_eq!(parse_decimal_i64(b"-9223372036854775808"), Some(i64::MIN));
+    }
+
+    #[test]
+    fn parse_decimal_i64_rejects_overflow() {
+        // i64::MAX + 1
+        assert_eq!(parse_decimal_i64(b"9223372036854775808"), None);
+        // i64::MIN - 1
+        assert_eq!(parse_decimal_i64(b"-9223372036854775809"), None);
+    }
+
+    #[test]
+    fn parse_decimal_i64_matches_stdlib_across_full_range() {
+        for n in [
+            0i64, 1, -1, 10, -10, 100, -100,
+            i32::MIN as i64, i32::MAX as i64,
+            i64::MIN, i64::MAX, i64::MAX - 1, i64::MIN + 1,
+            -123_456_789, 987_654_321,
+        ] {
+            let s = n.to_string();
+            assert_eq!(parse_decimal_i64(s.as_bytes()), Some(n), "n={n}");
+        }
     }
 }

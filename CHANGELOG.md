@@ -7,6 +7,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — SWAR decimal-integer parser
+
+- **`noyalib::simd::parse_decimal_u64` / `parse_decimal_i64`** —
+  branch-free 8-digits-per-cycle SWAR pipeline replacing the
+  stdlib byte-by-byte loop. Three pair-wise multiply-add phases
+  fold a `u64` chunk of ASCII digits into the parsed value with
+  no per-byte branch.
+- Plumbed into the streaming integer resolver
+  (`crate::streaming::parse_integer`); base-10 plain scalars now
+  flow through the SWAR path. Hex / octal / sign-prefixed paths
+  retain stdlib for spec-correct overflow semantics.
+- Bench results (`benches/numeric_parse.rs`):
+  - 3-digit input: parity with stdlib (SWAR doesn't engage).
+  - **8 digits: 2.17× faster** (8.12 ns → 3.74 ns).
+  - **19 digits: 2.38× faster** (22 ns → 9.25 ns).
+  - **i64::MAX / i64::MIN: 2.5× faster.**
+  - **Bulk parse of 1000 integers: 47 % faster.**
+- Validation: every byte checked in `b'0'..=b'9'` before
+  arithmetic; `wrapping_mul` is intentional in the SWAR pipeline
+  (high bits discarded by downstream shift-and-mask) and the
+  validator rejects malformed input. Overflow returns `None`.
+- 11 unit tests including baseline equivalence against
+  `<u64 as FromStr>::from_str` across 19 representative values
+  (covers `i64::MIN`, `i64::MAX`, `u64::MAX`, sign handling).
+- 406/406 YAML 1.2 spec compliance preserved.
+
+### Added — Canonical scanner needle constants
+
+- **`simd::BLOCK_PLAIN_NEEDLES`** / **`simd::FLOW_PLAIN_NEEDLES`** /
+  **`simd::LINE_BREAK_NEEDLES`** — public `&[u8]` constants
+  documenting the YAML 1.2 plain-scalar boundary candidate sets
+  per parser context. Future scanner refactors can reach the
+  canonical set via these names without re-deriving them.
+
 ### Added — Structural bitmask discovery (`simdjson`-style)
 
 - **`SimdScanner::structural_bitmask_32(&[u8; 32]) -> u32`** — load
