@@ -83,6 +83,17 @@ pub enum HandleOutcome {
 /// Process one newline-delimited JSON-RPC message. The stdio loop
 /// in `main` calls this per line; tests call it with crafted
 /// strings.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib_mcp::{handle_message, HandleOutcome};
+/// let req = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+/// match handle_message(req) {
+///     HandleOutcome::Reply(s) => assert!(s.contains("\"result\":{}")),
+///     HandleOutcome::Silent => panic!("expected reply"),
+/// }
+/// ```
 #[must_use]
 pub fn handle_message(raw: &str) -> HandleOutcome {
     let req: Request = match serde_json::from_str(raw) {
@@ -121,6 +132,15 @@ pub fn handle_message(raw: &str) -> HandleOutcome {
 
 /// MCP method dispatcher. Returns the `result` payload on success
 /// or a `(code, message)` pair for the error envelope.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib_mcp::dispatch;
+/// use serde_json::Value;
+/// let v = dispatch("ping", Value::Null).unwrap();
+/// assert!(v.is_object());
+/// ```
 pub fn dispatch(method: &str, params: JsonValue) -> Result<JsonValue, (i32, String)> {
     match method {
         "initialize" => Ok(json!({
@@ -144,6 +164,15 @@ pub fn dispatch(method: &str, params: JsonValue) -> Result<JsonValue, (i32, Stri
 }
 
 /// Render a JSON-RPC error envelope to a single line string.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib_mcp::error_str;
+/// use serde_json::json;
+/// let s = error_str(json!(1), -32601, "method not found".into());
+/// assert!(s.contains("\"code\":-32601"));
+/// ```
 pub fn error_str(id: JsonValue, code: i32, message: String) -> String {
     serde_json::to_string(&ErrorResponse {
         jsonrpc: "2.0",

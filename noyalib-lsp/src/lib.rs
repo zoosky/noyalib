@@ -93,6 +93,15 @@ pub struct HandleOutcome {
 
 impl HandleOutcome {
     /// Build a reply-only outcome with no notifications.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::HandleOutcome;
+    /// let o = HandleOutcome::reply("{}".into());
+    /// assert!(o.reply.is_some());
+    /// assert!(o.notifications.is_empty());
+    /// ```
     pub fn reply(payload: String) -> Self {
         HandleOutcome {
             reply: Some(payload),
@@ -101,6 +110,15 @@ impl HandleOutcome {
     }
 
     /// Notification-only outcome (no reply expected by the client).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::HandleOutcome;
+    /// let o = HandleOutcome::notify("{}".into());
+    /// assert!(o.reply.is_none());
+    /// assert_eq!(o.notifications.len(), 1);
+    /// ```
     pub fn notify(payload: String) -> Self {
         HandleOutcome {
             reply: None,
@@ -109,6 +127,15 @@ impl HandleOutcome {
     }
 
     /// Empty / no-op outcome.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::HandleOutcome;
+    /// let o = HandleOutcome::silent();
+    /// assert!(o.reply.is_none());
+    /// assert!(o.notifications.is_empty());
+    /// ```
     pub fn silent() -> Self {
         HandleOutcome::default()
     }
@@ -116,6 +143,14 @@ impl HandleOutcome {
 
 /// Stateful LSP server. One instance per stdio session; the document
 /// store owns the in-memory snapshot of every open buffer.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib_lsp::Server;
+/// let server = Server::new();
+/// assert_eq!(server.open_document_count(), 0);
+/// ```
 #[derive(Debug, Default)]
 pub struct Server {
     /// Documents the client has opened, keyed by URI.
@@ -129,6 +164,14 @@ pub struct Server {
 
 impl Server {
     /// Construct a fresh server with an empty document store.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::Server;
+    /// let server = Server::new();
+    /// assert_eq!(server.open_document_count(), 0);
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Server::default()
@@ -136,6 +179,13 @@ impl Server {
 
     /// Number of currently-open documents. Useful for tests that
     /// assert the server's internal state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::Server;
+    /// assert_eq!(Server::new().open_document_count(), 0);
+    /// ```
     #[must_use]
     pub fn open_document_count(&self) -> usize {
         self.documents.len()
@@ -143,6 +193,14 @@ impl Server {
 
     /// Snapshot of an open document, or `None` if the URI is not
     /// known.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::Server;
+    /// let server = Server::new();
+    /// assert_eq!(server.document("file:///nope.yaml"), None);
+    /// ```
     #[must_use]
     pub fn document(&self, uri: &str) -> Option<&str> {
         self.documents.get(uri).map(String::as_str)
@@ -151,6 +209,16 @@ impl Server {
     /// Process one parsed JSON-RPC line and return the resulting
     /// reply / notifications. The stdio loop in `main` calls this
     /// per LSP message; tests call it with crafted strings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib_lsp::Server;
+    /// let mut server = Server::new();
+    /// let req = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
+    /// let outcome = server.handle_message(req);
+    /// assert!(outcome.reply.is_some());
+    /// ```
     pub fn handle_message(&mut self, raw: &str) -> HandleOutcome {
         let req: Request = match serde_json::from_str(raw) {
             Ok(r) => r,
@@ -321,6 +389,15 @@ fn uri_from_params(params: &JsonValue) -> Option<String> {
 }
 
 /// Render a JSON-RPC error envelope to a single-line string.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib_lsp::error_str;
+/// use serde_json::json;
+/// let s = error_str(json!(1), -32601, "method not found".into());
+/// assert!(s.contains("\"code\":-32601"));
+/// ```
 pub fn error_str(id: JsonValue, code: i32, message: String) -> String {
     serde_json::to_string(&ErrorResponse {
         jsonrpc: "2.0",

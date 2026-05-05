@@ -18,17 +18,40 @@ use noyalib::cst::Document;
 use noyalib::Value;
 
 /// Parse a YAML string into a [`Value`] tree.
+///
+/// # Examples
+///
+/// ```
+/// let v = noyalib_wasm::core::parse_yaml_to_value("k: 1\n").unwrap();
+/// assert_eq!(v["k"].as_i64(), Some(1));
+/// ```
 pub fn parse_yaml_to_value(yaml: &str) -> noyalib::Result<Value> {
     noyalib::from_str(yaml)
 }
 
 /// Serialise a [`Value`] tree back to YAML text.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib_wasm::core::{parse_yaml_to_value, value_to_yaml};
+/// let v = parse_yaml_to_value("k: 1\n").unwrap();
+/// let s = value_to_yaml(&v).unwrap();
+/// assert!(s.contains("k:"));
+/// ```
 pub fn value_to_yaml(value: &Value) -> noyalib::Result<String> {
     noyalib::to_string(value)
 }
 
 /// Round-trip a YAML string through parsing + serialisation. Useful
 /// as a smoke test that the input is parseable and re-emittable.
+///
+/// # Examples
+///
+/// ```
+/// let s = noyalib_wasm::core::yaml_round_trip("k: 42\n").unwrap();
+/// assert!(s.contains("42"));
+/// ```
 pub fn yaml_round_trip(yaml: &str) -> noyalib::Result<String> {
     let v = parse_yaml_to_value(yaml)?;
     value_to_yaml(&v)
@@ -37,6 +60,12 @@ pub fn yaml_round_trip(yaml: &str) -> noyalib::Result<String> {
 /// Validate a YAML string against the embedded JSON schema. Returns
 /// `Ok(true)` on success — the binary form is what the WASM API
 /// returns to JS callers.
+///
+/// # Examples
+///
+/// ```
+/// assert!(noyalib_wasm::core::validate_yaml_json("k: 1\n").unwrap());
+/// ```
 pub fn validate_yaml_json(yaml: &str) -> noyalib::Result<bool> {
     let value: Value = noyalib::from_str(yaml)?;
     noyalib::validate_yaml_json_schema(&value).map(|()| true)
@@ -44,6 +73,15 @@ pub fn validate_yaml_json(yaml: &str) -> noyalib::Result<bool> {
 
 /// Resolve a dotted path inside a YAML document, returning the
 /// resolved [`Value`] when the path exists.
+///
+/// # Examples
+///
+/// ```
+/// let v = noyalib_wasm::core::yaml_get_path("a:\n  b: 1\n", "a.b")
+///     .unwrap()
+///     .unwrap();
+/// assert_eq!(v.as_i64(), Some(1));
+/// ```
 pub fn yaml_get_path(yaml: &str, path: &str) -> noyalib::Result<Option<Value>> {
     let value: Value = noyalib::from_str(yaml)?;
     Ok(value.get_path(path).cloned())
@@ -51,6 +89,14 @@ pub fn yaml_get_path(yaml: &str, path: &str) -> noyalib::Result<Option<Value>> {
 
 /// Merge `override_yaml` into `base_yaml` and re-emit the combined
 /// document. The override has precedence, mirroring `Value::merge`.
+///
+/// # Examples
+///
+/// ```
+/// let merged = noyalib_wasm::core::merge_yaml("a: 1\n", "b: 2\n").unwrap();
+/// assert!(merged.contains("a:"));
+/// assert!(merged.contains("b:"));
+/// ```
 pub fn merge_yaml(base_yaml: &str, override_yaml: &str) -> noyalib::Result<String> {
     let mut base: Value = noyalib::from_str(base_yaml)?;
     let overrides: Value = noyalib::from_str(override_yaml)?;
@@ -61,6 +107,14 @@ pub fn merge_yaml(base_yaml: &str, override_yaml: &str) -> noyalib::Result<Strin
 /// Look up the byte span of the value at `path` inside the parsed
 /// document. The pair `(start, end)` is half-open — `end` is the
 /// first byte past the value.
+///
+/// # Examples
+///
+/// ```
+/// let doc = noyalib::cst::parse_document("name: noyalib\n").unwrap();
+/// let (s, e) = noyalib_wasm::core::document_span_at(&doc, "name").unwrap();
+/// assert_eq!(&"name: noyalib\n"[s..e], "noyalib");
+/// ```
 pub fn document_span_at(doc: &Document, path: &str) -> Option<(usize, usize)> {
     doc.span_at(path)
 }
@@ -73,11 +127,27 @@ pub fn document_span_at(doc: &Document, path: &str) -> Option<(usize, usize)> {
 /// scalar leaves and an acceptable fixed cost on the WASM
 /// boundary, where the value is about to be re-encoded as a
 /// JsValue anyway.
+///
+/// # Examples
+///
+/// ```
+/// let doc = noyalib::cst::parse_document("a:\n  b: 1\n").unwrap();
+/// let v = noyalib_wasm::core::document_get_value(&doc, "a.b").unwrap();
+/// assert_eq!(v.as_i64(), Some(1));
+/// ```
 pub fn document_get_value(doc: &Document, path: &str) -> Option<Value> {
     doc.as_value().get_path(path).cloned()
 }
 
 /// Read the raw source fragment at the given path.
+///
+/// # Examples
+///
+/// ```
+/// let doc = noyalib::cst::parse_document("name: noyalib\n").unwrap();
+/// let s = noyalib_wasm::core::document_get_source(&doc, "name").unwrap();
+/// assert_eq!(s, "noyalib");
+/// ```
 pub fn document_get_source<'a>(doc: &'a Document, path: &str) -> Option<&'a str> {
     doc.get(path)
 }
@@ -85,6 +155,15 @@ pub fn document_get_source<'a>(doc: &'a Document, path: &str) -> Option<&'a str>
 /// Read the comments associated with the node at `path`. Returns
 /// `(before_comments, inline_comment)` — both views the WASM API
 /// surfaces verbatim to JS callers.
+///
+/// # Examples
+///
+/// ```
+/// let doc = noyalib::cst::parse_document("# top\nname: noyalib\n").unwrap();
+/// let (before, inline) = noyalib_wasm::core::document_comments_at(&doc, "name");
+/// assert!(!before.is_empty());
+/// assert!(inline.is_none());
+/// ```
 pub fn document_comments_at(doc: &Document, path: &str) -> (Vec<String>, Option<String>) {
     let bundle = doc.comments_at(path);
     let before: Vec<String> = bundle.before.iter().map(|c| c.text.clone()).collect();
