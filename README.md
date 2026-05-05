@@ -64,11 +64,18 @@ cd noyalib
 make          # check + clippy + test
 ```
 
-Requires **Rust 1.85.0+** (declared as `rust-version` in `Cargo.toml`
-and gated by a dedicated MSRV job in CI on Linux, macOS, and
-Windows). `rust-toolchain.toml` itself selects `stable` for local
-development; the 1.85.0 floor is enforced by the build, not by
-your toolchain pin.
+Requires **Rust 1.75.0+** for the core feature set (`default-features
+= false` and the standard `std` default). Optional features pull in
+ergonomics deps that have themselves bumped past 1.75 — `miette`
+→ backtrace 1.82+, `garde` → 1.84+, `validate-schema` /
+`figment` → ICU chain 1.86+, `parallel` → rayon-core 1.80+. Use
+those with a current stable toolchain; the core lib stays
+buildable on the Ubuntu 24.04 LTS rustc-1.75 floor.
+
+`rust-toolchain.toml` itself selects `stable` for local
+development; the 1.75.0 floor on the core surface is enforced by
+the dedicated `msrv-1-75-core` CI job (Ubuntu, no-default-features
++ default-features build paths).
 
 ---
 
@@ -382,7 +389,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Coverage** | 95%+ line coverage |
 | **Dependencies** | 8 runtime + 7 optional (miette, garde, validator, serde_yaml, schemars, serde_json, jsonschema) |
 | **WASM binary** | 338 KB (release, LTO) |
-| **MSRV** | Rust 1.85.0 |
+| **MSRV** | Rust 1.75.0 (core); newer for optional features |
 
 ---
 
@@ -457,6 +464,138 @@ fix-loop iterates until convergence. Unparseable inputs (e.g.
 `port: "abc"` against `type: integer`) are left in place so the
 caller can surface the residue via a follow-up
 `validate_against_schema` call.
+
+---
+
+## Policy enforcement (Safe YAML)
+
+The pluggable [`policy::Policy`] trait + `ParserConfig::with_policy(p)`
+lets you reject documents that violate organisational constraints
+*at parse time*, before any data flows to downstream code. Built-in
+policies cover the most common asks; custom policies implement the
+trait directly.
+
+```rust
+use noyalib::policy::DenyAnchors;
+use noyalib::{from_str_with_config, ParserConfig, Value};
+
+let cfg = ParserConfig::new().with_policy(DenyAnchors);
+
+// Anchors / aliases are the classical billion-laughs vector and a
+// readability hazard in audited configs. With `DenyAnchors`
+// registered, any document that defines `&name` or dereferences
+// `*name` is rejected before deserialise begins.
+let res: Result<Value, _> =
+    from_str_with_config("key: &x 1\nval: *x\n", &cfg);
+assert!(res.is_err());
+
+// Anchor-free input passes through unchanged.
+let v: Value = from_str_with_config("key: 1\nval: 1\n", &cfg).unwrap();
+assert!(matches!(v, Value::Mapping(_)));
+```
+
+Built-ins: `DenyAnchors`, `DenyTags` (rejects custom tags while
+preserving YAML 1.2 core tags), `MaxScalarLength(n)`. Compose
+freely — `cfg.with_policy(DenyAnchors).with_policy(DenyTags)`
+runs both in registration order.
+
+[`policy::Policy`]: https://docs.rs/noyalib/latest/noyalib/policy/trait.Policy.html
+
+---
+
+## Strict deserialise (typo detection)
+
+`noyalib::from_str_strict<T>` errors if the YAML carries any keys
+the target type `T` doesn't declare — closing the silent-data-loss
+gap when a config-key typo (e.g. `replicass: 3`) deserialises into
+a struct whose `replicas` field stays at its `Default`:
+
+```rust
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct Config {
+    port: u16,
+    host: String,
+}
+
+let yaml = "port: 8080\nhost: api.example.com\nporrt: 9090\n";
+
+// Lenient path silently drops `porrt`.
+let cfg: Config = noyalib::from_str(yaml).unwrap();
+assert_eq!(cfg.port, 8080);
+
+// Strict path surfaces the typo as a typed error.
+let err = noyalib::from_str_strict::<Config>(yaml).unwrap_err();
+assert!(err.to_string().contains("porrt"));
+```
+
+The strict path walks nested structs — a typo at `server.unknown`
+is reported with its parent path so the user sees exactly where
+the bad key lives.
+
+---
+
+## Compact list indentation
+
+Two camps disagree on whether YAML lists under a mapping key
+should indent (the default) or align with the key column. noyalib
+ships both styles; opt into the compact form via
+`SerializerConfig::compact_list_indent(true)`:
+
+```rust
+use noyalib::{to_string_with_config, SerializerConfig, Value};
+
+let yaml = "items:\n  - a\n  - b\n";
+let v: Value = noyalib::from_str(yaml).unwrap();
+
+// Default — list items indented one level past the key.
+let std = noyalib::to_string(&v).unwrap();
+// Output:
+//   items:
+//     - a
+//     - b
+
+// Compact — list items align with the key column. Style preferred
+// by Kubernetes manifests and GitHub Actions workflows.
+let cfg = SerializerConfig::new().compact_list_indent(true);
+let compact = to_string_with_config(&v, &cfg).unwrap();
+// Output:
+//   items:
+//   - a
+//   - b
+```
+
+---
+
+## Key interning (memory footprint)
+
+For Kubernetes-shaped streams that repeat the same keys
+(`metadata`, `labels`, `name`, `apiVersion`, `selector`) thousands
+of times, `noyalib::interner::KeyInterner` deduplicates the heap
+allocations:
+
+```rust
+use noyalib::interner::KeyInterner;
+use std::sync::Arc;
+
+let mut interner = KeyInterner::new();
+let a = interner.intern("metadata");
+let b = interner.intern("metadata");
+// Same `Arc` — second call returned a clone of the cached entry.
+assert!(Arc::ptr_eq(&a, &b));
+```
+
+| Workload | Without interning | With `KeyInterner` |
+| :--- | ---: | ---: |
+| 20-byte key × 100 records | 2 KB heap | 20 B + 100 × 16 B (Arc clones) ≈ 1.6 KB |
+| 20-byte key × 10 000 records | 200 KB | 20 B + 160 KB ≈ **20 B for the strings** |
+| Distinct K8s key set × 1 000 manifests | ~520 KB | 13 distinct allocations + 13 000 × 16 B Arc clones |
+
+The Mapping public API stays `String`-keyed for v0.0.1 — the
+interner is the explicit opt-in primitive. A future major version
+may switch the internal storage to `Arc<str>` and use the interner
+transparently during parse.
 
 ---
 
