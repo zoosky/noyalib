@@ -226,3 +226,120 @@ fn run_file(
     io::stdout().write_all(formatted.as_bytes())?;
     Ok(changed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(parts: &[&str]) -> Vec<String> {
+        std::iter::once("noyafmt".to_string())
+            .chain(parts.iter().map(|s| s.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn parse_help_flag() {
+        let r = parse_args(args(&["--help"]));
+        assert!(matches!(r, Err(ArgError::Help)));
+    }
+
+    #[test]
+    fn parse_help_short_flag() {
+        let r = parse_args(args(&["-h"]));
+        assert!(matches!(r, Err(ArgError::Help)));
+    }
+
+    #[test]
+    fn parse_version_flag() {
+        let r = parse_args(args(&["--version"]));
+        assert!(matches!(r, Err(ArgError::Version)));
+    }
+
+    #[test]
+    fn parse_version_short_flag() {
+        let r = parse_args(args(&["-V"]));
+        assert!(matches!(r, Err(ArgError::Version)));
+    }
+
+    #[test]
+    fn parse_check_with_files() {
+        let r = parse_args(args(&["--check", "a.yaml", "b.yaml"])).unwrap();
+        assert!(r.check);
+        assert_eq!(r.files.len(), 2);
+    }
+
+    #[test]
+    fn parse_write_with_file() {
+        let r = parse_args(args(&["--write", "x.yaml"])).unwrap();
+        assert!(r.write);
+        assert_eq!(r.files.len(), 1);
+    }
+
+    #[test]
+    fn parse_stdin_alone() {
+        let r = parse_args(args(&["--stdin"])).unwrap();
+        assert!(r.stdin);
+        assert!(r.files.is_empty());
+    }
+
+    #[test]
+    fn parse_indent_separate_value() {
+        let r = parse_args(args(&["--indent", "4", "--stdin"])).unwrap();
+        assert_eq!(r.indent, Some(4));
+    }
+
+    #[test]
+    fn parse_indent_eq_value() {
+        let r = parse_args(args(&["--indent=8", "--stdin"])).unwrap();
+        assert_eq!(r.indent, Some(8));
+    }
+
+    #[test]
+    fn parse_indent_missing_value_errors() {
+        let r = parse_args(args(&["--indent"]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_indent_non_numeric_errors() {
+        let r = parse_args(args(&["--indent", "abc", "--stdin"]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_indent_eq_non_numeric_errors() {
+        let r = parse_args(args(&["--indent=abc", "--stdin"]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_unknown_option_errors() {
+        let r = parse_args(args(&["--frobnicate"]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_check_and_write_rejected() {
+        let r = parse_args(args(&["--check", "--write", "f.yaml"]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_stdin_with_files_rejected() {
+        let r = parse_args(args(&["--stdin", "f.yaml"]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_no_args_errors() {
+        let r = parse_args(args(&[]));
+        assert!(matches!(r, Err(ArgError::Bad(_))));
+    }
+
+    #[test]
+    fn parse_double_dash_treats_remainder_as_files() {
+        let r = parse_args(args(&["--", "--check", "literal.yaml"])).unwrap();
+        assert_eq!(r.files.len(), 2);
+        assert!(!r.check);
+    }
+}

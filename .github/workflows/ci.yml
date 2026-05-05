@@ -267,25 +267,35 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: "Coverage report (gates: 95% fn / 90% region)"
+      - name: "Coverage report (gates: 95% fn / 92% region / 93% line)"
         env:
           NOYALIB_COVERAGE: '1'
-        # Two thresholds:
+        # Three thresholds:
         #   - --fail-under-functions 95 — every public/private fn
         #     should be exercised; lands the "95% gold standard"
-        #     promise for the most user-visible metric.
-        #   - --fail-under-regions 90 — region coverage is more
-        #     granular than functions; the bar starts at 90% with
-        #     headroom (current ≈92%) and ratchets up as new tests
-        #     close the gap to 95% organically.
-        # `noyalib-wasm/src/lib.rs` is excluded — it is JsValue
-        # marshalling that requires a wasm-bindgen runtime, covered
-        # separately by `wasm_bindgen_test` under `wasm-pack test`.
+        #     promise for the most user-visible metric. Currently
+        #     at ~95.8 %, just above the gate.
+        #   - --fail-under-lines 93 — line coverage. Currently
+        #     ~93.5 %, just above the gate.
+        #   - --fail-under-regions 92 — region coverage is more
+        #     granular than functions or lines. Currently ~92.5 %.
+        #     Gate ratchets up as new tests close the residue.
+        #
+        # Excluded from the report:
+        #   - `noyalib-wasm/src/lib.rs` — JsValue marshalling that
+        #     requires a wasm-bindgen runtime; covered separately
+        #     by `wasm_bindgen_test` under `wasm-pack test`.
+        #   - `noyalib-mcp/tests/protocol.rs` and
+        #     `noyalib-lsp/tests/protocol.rs` — subprocess-driving
+        #     end-to-end tests that don't run cleanly under
+        #     llvm-cov instrumentation. The same logic is covered
+        #     by per-module unit tests in those crates.
         run: |
           cargo llvm-cov --workspace --all-features --no-fail-fast \
-            --ignore-filename-regex 'noyalib-wasm/src/lib\.rs' \
+            --ignore-filename-regex 'noyalib-wasm/src/lib\.rs|noyalib-(mcp|lsp)/tests/protocol' \
             --fail-under-functions 95 \
-            --fail-under-regions 90
+            --fail-under-lines 93 \
+            --fail-under-regions 92
 
   no-std:
     name: no_std (alloc-only) build
