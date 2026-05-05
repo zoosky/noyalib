@@ -322,6 +322,10 @@ harness = false
 name = "large_doc_soak"
 harness = false
 
+[[bench]]
+name = "structural_bitmask"
+harness = false
+
 [features]
 default = ["std"]
 # Synchronise serde's std mode with ours so the `serde::de::Error`

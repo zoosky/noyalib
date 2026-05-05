@@ -7,6 +7,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Structural bitmask discovery (`simdjson`-style)
+
+- **`SimdScanner::structural_bitmask_32(&[u8; 32]) -> u32`** — load
+  a 32-byte chunk and produce a dense bitmask where bit `i` is set
+  iff `chunk[i]` is in the scanner's needle set. The building
+  block of `simdjson`-style structural discovery: instead of
+  walking the haystack and stopping at every delimiter, callers
+  drain the mask via `mask.trailing_zeros()` + `mask & (mask - 1)`
+  and advance the parser state machine directly from one delimiter
+  to the next.
+- **`StructuralIter`** — iterator that walks every structural-byte
+  position in a haystack of arbitrary length. Handles the chunk
+  loop, the partial-chunk tail, and the cached-bit drain
+  internally so callers see one stream of byte offsets in order.
+- Bench results (`benches/structural_bitmask.rs`, real YAML-shaped
+  input):
+  - **Stable Rust**: 4.2× faster than the existing memchr-loop
+    structural-discovery path across 4 KiB / 64 KiB / 1 MiB.
+  - **Nightly with `nightly-simd`**: 9.2× faster than the same
+    baseline (single `Simd<u8, 32>` chunk + branchless
+    `to_bitmask()` per 32-byte window).
+- Five unit tests + cross-needle-set baseline equivalence check
+  (every YAML-relevant arity 1 / 2 / 3 / 7 / 10) and four
+  `StructuralIter` correctness tests covering chunk-boundary
+  straddles, partial tails, and 2 KiB adversarial inputs against a
+  scalar baseline.
+
 ### Removed — `thiserror` runtime dependency
 
 - noyalib's `Error` enum no longer derives `thiserror::Error`. The

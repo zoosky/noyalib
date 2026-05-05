@@ -409,6 +409,204 @@ impl SimdScanner {
         }
         None
     }
+
+    /// Produce a 32-bit "structural bitmask" for a 32-byte chunk:
+    /// bit `i` is set iff `chunk[i]` is in the scanner's needle set.
+    ///
+    /// This is the building block of the `simdjson`-style structural
+    /// discovery loop — instead of walking the haystack byte by byte
+    /// and stopping at every delimiter, the caller produces a
+    /// dense 32-bit bitmask per chunk and walks the bits via
+    /// `trailing_zeros()`. Each `1` bit is one delimiter, each `0`
+    /// bit is one byte the scanner can skip without inspection.
+    ///
+    /// On stable Rust the inner loop is bytewise + bit-set (LLVM
+    /// auto-vectorises). With the `nightly-simd` Cargo feature on a
+    /// nightly toolchain, it widens to a single `Simd<u8, 32>`
+    /// chunk + `to_bitmask()` — one branchless dispatch per
+    /// 32-byte window.
+    ///
+    /// Pair with [`StructuralIter`] to walk every structural byte
+    /// position in a haystack of arbitrary length; that helper
+    /// handles the chunk-loop boundary and the partial-chunk tail.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::simd::SimdScanner;
+    /// let s = SimdScanner::new(b":-{}\n");
+    ///
+    /// // 32-byte chunk: structural bytes at positions 0, 4, 8, 17.
+    /// //                              "  0   4   8        17"
+    /// let chunk: [u8; 32] = *b":bcd-fgh:abcdefgh{ijklmnopqrstuv";
+    /// let mask = s.structural_bitmask_32(&chunk);
+    /// // bits 0, 4, 8, 17 set.
+    /// assert_eq!(mask & (1 << 0), 1 << 0);
+    /// assert_eq!(mask & (1 << 4), 1 << 4);
+    /// assert_eq!(mask & (1 << 8), 1 << 8);
+    /// assert_eq!(mask & (1 << 17), 1 << 17);
+    /// ```
+    #[must_use]
+    pub fn structural_bitmask_32(&self, chunk: &[u8; 32]) -> u32 {
+        #[cfg(all(feature = "nightly-simd", noyalib_nightly))]
+        {
+            self.structural_bitmask_32_simd(chunk)
+        }
+        #[cfg(not(all(feature = "nightly-simd", noyalib_nightly)))]
+        {
+            self.structural_bitmask_32_scalar(chunk)
+        }
+    }
+
+    fn structural_bitmask_32_scalar(&self, chunk: &[u8; 32]) -> u32 {
+        let mut mask: u32 = 0;
+        for (i, &b) in chunk.iter().enumerate() {
+            // Branchless: shift the bool result into bit position i.
+            // Produces a tight inner loop that LLVM auto-vectorises
+            // on most targets.
+            mask |= u32::from(self.bitmap.contains(b)) << i;
+        }
+        mask
+    }
+
+    #[cfg(all(feature = "nightly-simd", noyalib_nightly))]
+    fn structural_bitmask_32_simd(&self, chunk: &[u8; 32]) -> u32 {
+        use core::simd::cmp::SimdPartialEq;
+        use core::simd::{Mask, Simd};
+
+        let needle_count = self.needle_count as usize;
+        if needle_count == 0 {
+            return 0;
+        }
+        if needle_count > 8 {
+            // Beyond 8 needles the broadcast path costs more than
+            // the bitmap test — fall through to the scalar path.
+            return self.structural_bitmask_32_scalar(chunk);
+        }
+
+        let active = &self.needles[..needle_count];
+        let chunk_v: Simd<u8, 32> = Simd::from_slice(chunk);
+        let mut combined: Mask<i8, 32> = Mask::splat(false);
+        for &n in active {
+            let needle: Simd<u8, 32> = Simd::splat(n);
+            combined |= chunk_v.simd_eq(needle);
+        }
+        // `to_bitmask()` returns the chunk lanes as a primitive
+        // bitset. For LANES=32 this is a `u32`; we reinforce the
+        // type so the scalar fall-back signature stays identical.
+        combined.to_bitmask() as u32
+    }
+}
+
+/// Iterator over every structural-byte position in a haystack.
+///
+/// Uses [`SimdScanner::structural_bitmask_32`] under the hood: each
+/// 32-byte chunk produces a `u32` bitmask, and the iterator walks
+/// the bits via `mask.trailing_zeros()` + `mask & (mask - 1)` (the
+/// classic "blsr" pattern). The state machine in a parser inner
+/// loop can advance directly from one delimiter to the next without
+/// inspecting any of the bytes between them — the same shape that
+/// powers `simdjson`'s structural-character pass.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::{SimdScanner, StructuralIter};
+///
+/// let s = SimdScanner::new(b":\n");
+/// let positions: Vec<usize> =
+///     StructuralIter::new(&s, b"k1: v1\nk2: v2\n").collect();
+/// assert_eq!(positions, vec![2, 6, 9, 13]);
+/// ```
+#[derive(Debug)]
+pub struct StructuralIter<'a> {
+    scanner: &'a SimdScanner,
+    haystack: &'a [u8],
+    /// Next byte position to scan (chunk loader anchors here).
+    cursor: usize,
+    /// Base offset for `cached_mask`'s bits — the start of the
+    /// chunk that produced the cached bits.
+    cached_base: usize,
+    /// Bitmask of structural positions inside the chunk that
+    /// started at `cached_base`. Bit `i` in the mask corresponds
+    /// to byte `cached_base + i` in `haystack`.
+    cached_mask: u32,
+}
+
+impl<'a> StructuralIter<'a> {
+    /// Construct an iterator over every structural-byte position in
+    /// `haystack` according to `scanner`'s needle set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::simd::{SimdScanner, StructuralIter};
+    /// let s = SimdScanner::new(b":\n");
+    /// let it = StructuralIter::new(&s, b"a: b\n");
+    /// let v: Vec<usize> = it.collect();
+    /// assert_eq!(v, vec![1, 4]);
+    /// ```
+    #[must_use]
+    pub fn new(scanner: &'a SimdScanner, haystack: &'a [u8]) -> Self {
+        StructuralIter {
+            scanner,
+            haystack,
+            cursor: 0,
+            cached_base: 0,
+            cached_mask: 0,
+        }
+    }
+}
+
+impl Iterator for StructuralIter<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        // Drain the cached chunk first.
+        if self.cached_mask != 0 {
+            let bit = self.cached_mask.trailing_zeros() as usize;
+            // Clear the lowest set bit (`x & (x - 1)` — the standard
+            // `BLSR` idiom).
+            self.cached_mask &= self.cached_mask - 1;
+            return Some(self.cached_base + bit);
+        }
+
+        // Refill from the next 32-byte chunk; if the tail is
+        // shorter than 32 bytes, fall back to the scalar contains
+        // test for the remaining bytes.
+        loop {
+            if self.cursor >= self.haystack.len() {
+                return None;
+            }
+            let remaining = self.haystack.len() - self.cursor;
+            if remaining >= 32 {
+                let mut chunk = [0u8; 32];
+                chunk.copy_from_slice(&self.haystack[self.cursor..self.cursor + 32]);
+                let mask = self.scanner.structural_bitmask_32(&chunk);
+                let chunk_origin = self.cursor;
+                self.cursor += 32;
+                if mask != 0 {
+                    let bit = mask.trailing_zeros() as usize;
+                    self.cached_base = chunk_origin;
+                    self.cached_mask = mask & (mask - 1);
+                    return Some(chunk_origin + bit);
+                }
+                continue;
+            }
+
+            // Tail (< 32 bytes): scalar scan.
+            for offset in 0..remaining {
+                let b = self.haystack[self.cursor + offset];
+                if self.scanner.bitmap.contains(b) {
+                    let pos = self.cursor + offset;
+                    self.cursor = pos + 1;
+                    return Some(pos);
+                }
+            }
+            self.cursor = self.haystack.len();
+            return None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -623,5 +821,131 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── structural_bitmask_32 + StructuralIter ─────────────────────
+
+    fn baseline_bitmask_32(chunk: &[u8; 32], needles: &[u8]) -> u32 {
+        let mut m: u32 = 0;
+        for (i, &b) in chunk.iter().enumerate() {
+            if needles.contains(&b) {
+                m |= 1u32 << i;
+            }
+        }
+        m
+    }
+
+    #[test]
+    fn structural_bitmask_marks_every_needle_position() {
+        let s = SimdScanner::new(b":-{}\n");
+        let chunk: [u8; 32] = *b":bcd-fgh:abcdefgh{ijklmnopqrstuv";
+        let mask = s.structural_bitmask_32(&chunk);
+        // Bytes at positions 0, 4, 8, 17 are needles.
+        assert_eq!(mask & (1 << 0), 1 << 0);
+        assert_eq!(mask & (1 << 4), 1 << 4);
+        assert_eq!(mask & (1 << 8), 1 << 8);
+        assert_eq!(mask & (1 << 17), 1 << 17);
+        // Sanity: no other bits set.
+        assert_eq!(mask, (1 << 0) | (1 << 4) | (1 << 8) | (1 << 17));
+    }
+
+    #[test]
+    fn structural_bitmask_is_zero_for_clean_chunks() {
+        let s = SimdScanner::new(b":\n");
+        let chunk = *b"plain text only no delim chars!.";
+        assert_eq!(s.structural_bitmask_32(&chunk), 0);
+    }
+
+    #[test]
+    fn structural_bitmask_matches_baseline_across_needle_sets() {
+        // Test every YAML-relevant needle set against deterministic
+        // chunks: the SIMD path and the scalar path must produce
+        // bit-for-bit equal masks.
+        let needle_sets: &[&[u8]] = &[
+            b":",                 // arity 1
+            b":\n",               // arity 2
+            b":,#",               // arity 3
+            b":-[]{}\n",          // arity 7
+            b":-[]{}\n# \t",      // arity 10 (>8 — exercises fall-through)
+        ];
+        for &needles in needle_sets {
+            let s = SimdScanner::new(needles);
+            // 64 deterministic chunks: each one has needle bytes at
+            // varying positions + filler.
+            for variant in 0..64u8 {
+                let mut chunk = [0u8; 32];
+                for (i, slot) in chunk.iter_mut().enumerate() {
+                    *slot = (i as u8).wrapping_add(33).wrapping_add(variant);
+                    while needles.contains(slot) {
+                        *slot = slot.wrapping_add(1);
+                    }
+                }
+                // Sprinkle needles at some positions deterministically.
+                for j in (0..32).step_by(3) {
+                    if (variant as usize + j) & 1 == 1 {
+                        chunk[j] = needles[(variant as usize + j) % needles.len()];
+                    }
+                }
+                let actual = s.structural_bitmask_32(&chunk);
+                let expected = baseline_bitmask_32(&chunk, needles);
+                assert_eq!(
+                    actual, expected,
+                    "needles={needles:?} variant={variant} chunk={chunk:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structural_iter_yields_positions_in_order() {
+        let s = SimdScanner::new(b":\n");
+        let positions: Vec<usize> = StructuralIter::new(&s, b"k1: v1\nk2: v2\n").collect();
+        assert_eq!(positions, vec![2, 6, 9, 13]);
+    }
+
+    #[test]
+    fn structural_iter_handles_empty_input() {
+        let s = SimdScanner::new(b":");
+        let positions: Vec<usize> = StructuralIter::new(&s, b"").collect();
+        assert!(positions.is_empty());
+    }
+
+    #[test]
+    fn structural_iter_handles_partial_chunk_tail() {
+        // Tail less than 32 bytes — exercises the scalar fall-back
+        // inside StructuralIter::next.
+        let s = SimdScanner::new(b":");
+        let positions: Vec<usize> = StructuralIter::new(&s, b"abc:def:gh").collect();
+        assert_eq!(positions, vec![3, 7]);
+    }
+
+    #[test]
+    fn structural_iter_spans_multiple_chunks() {
+        // Build a 100-byte haystack with a needle every 25 bytes —
+        // the iterator must straddle the 32-byte chunk boundary
+        // cleanly and not double-count or miss any.
+        let mut buf = vec![b'.'; 100];
+        for &p in &[5usize, 25, 60, 95] {
+            buf[p] = b':';
+        }
+        let s = SimdScanner::new(b":");
+        let positions: Vec<usize> = StructuralIter::new(&s, &buf).collect();
+        assert_eq!(positions, vec![5, 25, 60, 95]);
+    }
+
+    #[test]
+    fn structural_iter_count_matches_scalar_baseline() {
+        let s = SimdScanner::new(b":\n,#");
+        // Adversarial input — alternating needle / non-needle.
+        let buf: Vec<u8> = (0..2048u32)
+            .map(|i| if i % 7 == 0 { b':' } else { b'a' })
+            .collect();
+        let scalar: Vec<usize> = buf
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &b)| (b == b':').then_some(i))
+            .collect();
+        let simd: Vec<usize> = StructuralIter::new(&s, &buf).collect();
+        assert_eq!(simd, scalar);
     }
 }
