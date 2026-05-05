@@ -277,9 +277,10 @@ Built on top of the lossless CST:
   over stdio so any conforming editor can use it directly:
 
   ```bash
-  # Build the server binary.
-  cargo build -p noyalib-lsp --release
-  # → target/release/noyalib-lsp
+  # Install the server binary into ~/.cargo/bin (preferred).
+  cargo install --path noyalib-lsp
+  # …or build from a checkout without installing globally:
+  cargo build -p noyalib-lsp --release  # → target/release/noyalib-lsp
   ```
 
   - **Neovim** (`lspconfig`):
@@ -613,6 +614,40 @@ The slice and reader variants share `from_str_strict`'s semantics —
 they exist so callers that already hold bytes (a buffer, a
 network frame, a `bytes::Bytes`) don't have to round-trip through
 `String` to opt in.
+
+---
+
+## Diagnostics output
+
+Every parse error carries an exact `(line, column, byte offset)`
+triple. `Error::format_with_source(input)` renders a rustc-style
+snippet without pulling in any extra dependency:
+
+```text
+error: expected ',' or ']'
+  --> input.yaml:2:7
+   |
+ 1 | host: localhost
+ 2 | port: [broken
+   |       ^^^^^^ here
+ 3 | db: postgres
+   |
+```
+
+Enabling `--features miette` makes `noyalib::Error` implement
+[`miette::Diagnostic`](https://docs.rs/miette/latest/miette/trait.Diagnostic.html);
+wrapping the error in `miette::Report` gives terminals with ANSI
+support the same snippet with a colour-coded label, and lets a
+CLI surface error codes (`noyalib::parse`,
+`noyalib::duplicate_key`, …) and actionable help text from the
+same call site:
+
+```rust,ignore
+let cfg: Config = noyalib::from_str(yaml)
+    .map_err(|e| miette::Report::new(e).with_source_code(yaml.to_owned()))?;
+```
+
+See `examples/diagnostic.rs` for the full integration pattern.
 
 ---
 

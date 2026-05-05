@@ -7,6 +7,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Strict deserialise on every input shape
+
+- **`noyalib::from_slice_strict<T>`** and
+  **`noyalib::from_reader_strict<R, T>`** — same unknown-field
+  detection semantics as `from_str_strict`, but accepting `&[u8]`
+  and `impl io::Read` directly so callers already holding bytes
+  or a reader don't have to round-trip through `String` to opt
+  in. Both gated behind `#[cfg(feature = "std")]` to match the
+  existing string-input variant; both re-exported from the crate
+  root.
+- Five new integration tests in `tests/ux_diagnostics.rs` cover
+  happy path + typo detection on both new helpers, plus
+  invalid-UTF-8 rejection on the slice path. Doc-tests on each
+  helper give an executable usage example.
+- README "Strict deserialise" section gains an input-shape × API
+  matrix (`&str` / `&[u8]` / `impl io::Read` × lenient / strict).
+
 ### Added — Ecosystem-citizen examples
 
 - Six new examples that show noyalib slotting into the standard
