@@ -892,14 +892,14 @@ let yaml = to_string_with_config(&value, &config)?;
 
 ## Examples
 
-Run all 45 examples:
+Run all examples:
 
 ```bash
 cargo run --example all
 ```
 
 <details>
-<summary><b>All 45 examples</b></summary>
+<summary><b>All examples</b></summary>
 
 | Category | Example | Purpose |
 | :--- | :--- | :--- |
@@ -949,6 +949,12 @@ cargo run --example all
 | **Runtime** | `async_io` | Async integration (spawn\_blocking pattern) |
 | | `recursive` | Self-referential types (trees, org charts) |
 | **Bench** | `bench` | Performance overview |
+| **Ecosystem** | `include` | `$include`-key modular config (Argo CD / JSON-Schema-style refs) |
+| | `figment` | Layered defaults / YAML / env via the `figment` Provider |
+| | `validation_garde` | Declarative validation through `garde` + `Validated<T>` |
+| | `validation_validator` | Declarative validation through `validator` + `ValidatedValidator<T>` |
+| | `diagnostic_path` | `serde_path_to_error` — pinpoint the offending nested key |
+| | `robotics_polymorphism` | Tagged-enum dispatch with `Degrees` / `Radians` / `StrictFloat` |
 
 </details>
 
@@ -961,7 +967,7 @@ make              # check + clippy + test
 make test         # run all tests
 make clippy       # lint with Clippy
 make fmt          # check formatting
-make examples     # run all 45 examples
+make examples     # run all examples
 make doc          # build API documentation
 make deny         # supply-chain audit
 make miri         # Miri memory checking (requires nightly)

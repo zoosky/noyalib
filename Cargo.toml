@@ -231,6 +231,35 @@ name = "schema_validation"
 path = "examples/schema_validation.rs"
 required-features = ["validate-schema"]
 
+## ── Ecosystem Citizen ──
+[[example]]
+name = "include"
+path = "examples/include.rs"
+
+[[example]]
+name = "figment"
+path = "examples/figment.rs"
+required-features = ["figment"]
+
+[[example]]
+name = "validation_garde"
+path = "examples/validation_garde.rs"
+required-features = ["garde"]
+
+[[example]]
+name = "validation_validator"
+path = "examples/validation_validator.rs"
+required-features = ["validator"]
+
+[[example]]
+name = "diagnostic_path"
+path = "examples/diagnostic_path.rs"
+
+[[example]]
+name = "robotics_polymorphism"
+path = "examples/robotics_polymorphism.rs"
+required-features = ["robotics"]
+
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 indexmap = { version = ">=2, <2.11", features = ["serde"] }
@@ -265,7 +294,7 @@ jsonschema = { version = "0.33", optional = true, default-features = false }
 # `figment` integration — drop-in `Provider` for the popular
 # layered-configuration crate. Pulled in only when the `figment`
 # feature is on so non-figment users don't pay for it.
-figment = { version = "0.10", optional = true }
+figment = { version = "0.10", optional = true, features = ["env"] }
 # NOTE: `serde-saphyr` lives under `[dependencies]` (not
 # `[dev-dependencies]`) because Cargo doesn't allow optional
 # dev-deps. It's gated behind the `compare-saphyr` feature and

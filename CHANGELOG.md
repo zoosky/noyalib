@@ -7,6 +7,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Ecosystem-citizen examples
+
+- Six new examples that show noyalib slotting into the standard
+  Rust configuration / validation / diagnostics toolbox without
+  custom glue:
+  - `include` — `$include`-key modular configs (Argo CD / JSON
+    Schema `$ref`-style cross-file references) with cycle detection.
+  - `figment` — layered defaults / YAML / env composition through
+    the `figment::Provider` we already ship under the `figment`
+    feature; demonstrates per-environment overlay chains.
+  - `validation_garde` — declarative logic validation via the
+    `garde` crate paired with `Validated<T>`.
+  - `validation_validator` — same scenario through the
+    `validator` crate (Actix / Axum / Rocket idiom) paired with
+    `ValidatedValidator<T>`.
+  - `diagnostic_path` — `serde_path_to_error` integration that
+    pinpoints the offending nested key (including sequence indices
+    such as `server.replicas[1].weight`) in deeply structured
+    documents.
+  - `robotics_polymorphism` — tagged-enum dispatch + the
+    `Degrees` / `Radians` / `StrictFloat` newtypes from the
+    `robotics` feature, illustrating unit-aware parsing on a
+    Tree-Planting Robot mission plan.
+- The `figment` Cargo dep now activates its `env` feature so the
+  example chain (`Yaml::string` → `Env::prefixed`) compiles
+  without consumers having to opt into it themselves.
+
 ### Added — Key interner
 
 - **`noyalib::interner::KeyInterner`** — `&str` → `Arc<str>`
