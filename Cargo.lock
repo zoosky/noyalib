@@ -999,7 +999,6 @@ dependencies = [
  "serde_path_to_error",
  "serde_yaml_ng",
  "smallvec",
- "thiserror",
  "validator",
  "yaml-rust2",
 ]

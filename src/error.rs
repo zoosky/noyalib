@@ -126,7 +126,7 @@ impl fmt::Display for Location {
 /// let err = from_str::<Value>("a: [unclosed").unwrap_err();
 /// assert!(matches!(err, Error::Parse(_) | Error::ParseWithLocation { .. }));
 /// ```
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Error during YAML parsing.
@@ -136,7 +136,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::Parse("unexpected token".into());
     /// ```
-    #[error("YAML parse error: {0}")]
     Parse(String),
 
     /// Error during YAML parsing with location information.
@@ -150,7 +149,6 @@ pub enum Error {
     ///     location: Location::from_index("a: [", 3),
     /// };
     /// ```
-    #[error("YAML parse error at {location}: {message}")]
     ParseWithLocation {
         /// The error message.
         ///
@@ -191,7 +189,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::Serialize("bad value".into());
     /// ```
-    #[error("serialization error: {0}")]
     Serialize(String),
 
     /// Error during deserialization.
@@ -201,7 +198,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::Deserialize("type mismatch".into());
     /// ```
-    #[error("deserialization error: {0}")]
     Deserialize(String),
 
     /// Error during deserialization with location information.
@@ -215,7 +211,6 @@ pub enum Error {
     ///     location: Location::default(),
     /// };
     /// ```
-    #[error("deserialization error at {location}: {message}")]
     DeserializeWithLocation {
         /// The error message.
         ///
@@ -258,8 +253,7 @@ pub enum Error {
     /// let _e = noyalib::Error::Io(ioe);
     /// ```
     #[cfg(feature = "std")]
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
 
     /// Custom error message.
     ///
@@ -268,7 +262,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::Custom("whatever".into());
     /// ```
-    #[error("{0}")]
     Custom(String),
 
     /// Error when recursion depth limit is exceeded.
@@ -278,7 +271,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::RecursionLimitExceeded { depth: 64 };
     /// ```
-    #[error("recursion depth limit exceeded: {depth}")]
     RecursionLimitExceeded {
         /// The current depth.
         ///
@@ -302,7 +294,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::DuplicateKey("name".into());
     /// ```
-    #[error("duplicate key: {0}")]
     DuplicateKey(String),
 
     /// Repetition limit exceeded (security limit against billion-laughs).
@@ -312,7 +303,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::RepetitionLimitExceeded;
     /// ```
-    #[error("alias expansion limit exceeded")]
     RepetitionLimitExceeded,
 
     /// Unknown anchor encountered.
@@ -322,7 +312,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::UnknownAnchor("missing".into());
     /// ```
-    #[error("unknown anchor: {0}")]
     UnknownAnchor(String),
 
     /// Unknown anchor encountered at a specific location.
@@ -337,7 +326,6 @@ pub enum Error {
     ///     suggestion: None,
     /// };
     /// ```
-    #[error("unknown anchor: {name} at {location}")]
     UnknownAnchorAt {
         /// The anchor name.
         ///
@@ -396,7 +384,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::MissingField("name".into());
     /// ```
-    #[error("missing field: {0}")]
     MissingField(String),
 
     /// Unknown field in a mapping (with `deny_unknown_fields`).
@@ -406,7 +393,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::UnknownField("extra".into());
     /// ```
-    #[error("unknown field: {0}")]
     UnknownField(String),
 
     /// Scalar encountered where a mapping was expected during merge.
@@ -416,7 +402,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::ScalarInMergeElement;
     /// ```
-    #[error("scalar in merge element")]
     ScalarInMergeElement,
 
     /// Sequence encountered where a mapping was expected during merge.
@@ -426,7 +411,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::SequenceInMergeElement;
     /// ```
-    #[error("sequence in merge element")]
     SequenceInMergeElement,
 
     /// Tagged value encountered during merge.
@@ -436,7 +420,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::TaggedInMerge;
     /// ```
-    #[error("tagged value in merge")]
     TaggedInMerge,
 
     /// Generic invalid construct error.
@@ -446,7 +429,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::Invalid("bad construct".into());
     /// ```
-    #[error("invalid YAML: {0}")]
     Invalid(String),
 
     /// A type mismatch error.
@@ -459,7 +441,6 @@ pub enum Error {
     ///     found: "string".into(),
     /// };
     /// ```
-    #[error("type mismatch: expected {expected}, found {found}")]
     TypeMismatch {
         /// The expected type.
         ///
@@ -495,7 +476,6 @@ pub enum Error {
     /// use std::sync::Arc;
     /// let _e = noyalib::Error::Shared(Arc::new(noyalib::Error::EndOfStream));
     /// ```
-    #[error("{0}")]
     Shared(Arc<Error>),
 
     /// End of stream reached unexpectedly.
@@ -505,7 +485,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::EndOfStream;
     /// ```
-    #[error("unexpected end of stream")]
     EndOfStream,
 
     /// More than one document found where one was expected.
@@ -515,7 +494,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::MoreThanOneDocument;
     /// ```
-    #[error("multiple documents in stream; expected exactly one")]
     MoreThanOneDocument,
 
     /// Scalar in merge (legacy variant).
@@ -525,7 +503,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::ScalarInMerge;
     /// ```
-    #[error("scalar in merge")]
     ScalarInMerge,
 
     /// Empty tag encountered.
@@ -535,7 +512,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::EmptyTag;
     /// ```
-    #[error("empty tag")]
     EmptyTag,
 
     /// Failed to parse a number.
@@ -545,7 +521,6 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::FailedToParseNumber("not-a-number".into());
     /// ```
-    #[error("failed to parse number: {0}")]
     FailedToParseNumber(String),
 
     /// A message error from Serde (compat variant).
@@ -555,8 +530,79 @@ pub enum Error {
     /// ```
     /// let _e = noyalib::Error::Message("oops".into(), Some(42));
     /// ```
-    #[error("serde error: {0}")]
     Message(String, Option<usize>),
+}
+
+// ── Manual `Display` + `Error` impls ───────────────────────────────────
+//
+// noyalib does not depend on `thiserror` so the proc-macro
+// expansion cost stays out of every downstream crate's compile.
+// These impls reproduce the exact format strings the previous
+// `#[error("...")]` attributes generated, so the user-visible
+// `Display` output is byte-stable across the migration.
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Parse(msg) => write!(f, "YAML parse error: {msg}"),
+            Error::ParseWithLocation { message, location } => {
+                write!(f, "YAML parse error at {location}: {message}")
+            }
+            Error::Serialize(msg) => write!(f, "serialization error: {msg}"),
+            Error::Deserialize(msg) => write!(f, "deserialization error: {msg}"),
+            Error::DeserializeWithLocation { message, location } => {
+                write!(f, "deserialization error at {location}: {message}")
+            }
+            #[cfg(feature = "std")]
+            Error::Io(e) => write!(f, "I/O error: {e}"),
+            Error::Custom(msg) => f.write_str(msg),
+            Error::RecursionLimitExceeded { depth } => {
+                write!(f, "recursion depth limit exceeded: {depth}")
+            }
+            Error::DuplicateKey(name) => write!(f, "duplicate key: {name}"),
+            Error::RepetitionLimitExceeded => f.write_str("alias expansion limit exceeded"),
+            Error::UnknownAnchor(name) => write!(f, "unknown anchor: {name}"),
+            Error::UnknownAnchorAt { name, location, .. } => {
+                write!(f, "unknown anchor: {name} at {location}")
+            }
+            Error::MissingField(name) => write!(f, "missing field: {name}"),
+            Error::UnknownField(name) => write!(f, "unknown field: {name}"),
+            Error::ScalarInMergeElement => f.write_str("scalar in merge element"),
+            Error::SequenceInMergeElement => f.write_str("sequence in merge element"),
+            Error::TaggedInMerge => f.write_str("tagged value in merge"),
+            Error::Invalid(msg) => write!(f, "invalid YAML: {msg}"),
+            Error::TypeMismatch { expected, found } => {
+                write!(f, "type mismatch: expected {expected}, found {found}")
+            }
+            Error::Shared(arc) => fmt::Display::fmt(arc.as_ref(), f),
+            Error::EndOfStream => f.write_str("unexpected end of stream"),
+            Error::MoreThanOneDocument => {
+                f.write_str("multiple documents in stream; expected exactly one")
+            }
+            Error::ScalarInMerge => f.write_str("scalar in merge"),
+            Error::EmptyTag => f.write_str("empty tag"),
+            Error::FailedToParseNumber(msg) => write!(f, "failed to parse number: {msg}"),
+            Error::Message(msg, _) => write!(f, "serde error: {msg}"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Io(e) => Some(e),
+            Error::Shared(arc) => Some(arc.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
 }
 
 impl Error {

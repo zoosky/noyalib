@@ -7,6 +7,26 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Removed — `thiserror` runtime dependency
+
+- noyalib's `Error` enum no longer derives `thiserror::Error`. The
+  `Display` and `std::error::Error` impls are now hand-written
+  (matching the previous `#[error(...)]` format strings byte-for-
+  byte, so all `Display` output is stable across the migration).
+- Drops the proc-macro from every downstream crate's compile graph
+  — meaningful for downstream build times in big workspaces.
+- The runtime dep list is now: `serde`, `indexmap`, `rustc-hash`,
+  `itoa`, `ryu`, `memchr`, `smallvec`. Every other dep is feature-
+  gated and off by default.
+
+### Changed — `serde` defaults synchronised with our `std` feature
+
+- `serde = { default-features = false, features = ["derive",
+  "alloc"] }` plus `std = ["serde/std"]` so `cargo build
+  --no-default-features` actually compiles in no_std mode (serde's
+  `de::Error` super-trait `StdError` resolves to a no_std-friendly
+  bound when serde is itself in no_std mode).
+
 ### Removed — `serde_yaml` 0.9 upstream dependency
 
 - The `compat-serde-yaml` shim **no longer pulls in the

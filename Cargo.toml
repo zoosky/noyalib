@@ -232,10 +232,9 @@ path = "examples/schema_validation.rs"
 required-features = ["validate-schema"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 indexmap = { version = "2.10", features = ["serde"] }
 rustc-hash = "2.0"
-thiserror = "2.0"
 itoa = "1"
 ryu = "1"
 memchr = "2.7"
@@ -325,7 +324,11 @@ harness = false
 
 [features]
 default = ["std"]
-std = []
+# Synchronise serde's std mode with ours so the `serde::de::Error`
+# trait's `StdError` super-trait resolves consistently. With this
+# wired, `cargo build --no-default-features` truly compiles in
+# no_std and serde's de::Error does not require `std::error::Error`.
+std = ["serde/std"]
 miette = ["dep:miette"]
 robotics = []
 garde = ["dep:garde"]
