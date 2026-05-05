@@ -64,10 +64,11 @@ cd noyalib
 make          # check + clippy + test
 ```
 
-Requires **Rust 1.75.0+** (declared as `rust-version` in `Cargo.toml` and
-gated by a dedicated MSRV job in CI on Linux, macOS, and Windows).
-`rust-toolchain.toml` itself selects `stable` for local development; the
-1.75.0 floor is enforced by the build, not by your toolchain pin.
+Requires **Rust 1.85.0+** (declared as `rust-version` in `Cargo.toml`
+and gated by a dedicated MSRV job in CI on Linux, macOS, and
+Windows). `rust-toolchain.toml` itself selects `stable` for local
+development; the 1.85.0 floor is enforced by the build, not by
+your toolchain pin.
 
 ---
 
@@ -101,6 +102,67 @@ features:
     Ok(())
 }
 ```
+
+---
+
+## Why noyalib?
+
+A safe, modern replacement for `serde_yaml`, `serde_yml`, `libyml`,
+and the `libyaml`-FFI ecosystem. **Not a fork — a clean-room
+implementation of the YAML 1.2 spec** built around three architectural
+choices the legacy crates can't make.
+
+### The C-legacy bottleneck
+
+Most popular Rust YAML crates wrap `libyaml` (via C-FFI) or are
+forks of forks of `serde_yaml`. They inherit two structural costs:
+
+1. **`unsafe` everywhere.** FFI-wrapping crates need `unsafe` to cross
+   the C boundary. The `unsafe` blocks are usually well-vetted, but
+   their existence makes a security-conscious downstream audit
+   meaningfully harder.
+2. **AST-as-intermediate.** The legacy pattern is `parse → Value →
+   T::deserialize(&Value)`. The intermediate `Value` tree allocates
+   every key, every scalar, every nested mapping — even for typed
+   targets that throw the AST away one line later.
+
+### The pure-Rust future
+
+noyalib starts from a different premise: **streaming-first
+architecture**. The default deserialise path is
+`StreamingDeserializer` — it walks parser events directly into the
+typed target without materialising a `Value` AST. The dynamic
+`Value` tree is still available when the caller wants it, but it's
+no longer in the critical path.
+
+Layered on top:
+
+- **`#![forbid(unsafe_code)]`** at the workspace root — no FFI, no
+  raw-pointer dereferences, no `unsafe` blocks anywhere in the
+  parser, scanner, formatter, or CST. Verified by CI on every
+  push.
+- **SIMD-accelerated structural discovery.** Stable Rust dispatches
+  to `memchr` (SSE2 / NEON) for the arity-1/2/3 hot paths and SWAR
+  for arity-4+. With `nightly-simd` on, the structural-bitmask
+  scanner widens to a 32-byte `Simd<u8, 32>` chunk and walks
+  delimiters via `mask.trailing_zeros()` — the same shape that
+  powers `simdjson`.
+- **SWAR decimal parsing.** The plain-scalar integer resolver
+  parses 8 ASCII digits per `u64` cycle via three pair-wise
+  multiply-add phases. ~2× faster than the stdlib `<i64 as
+  FromStr>::from_str` on big numbers.
+- **Lossless CST.** A side-table green tree (the
+  `noyalib::cst::Document` type) reproduces the source byte-for-byte
+  and supports surgical edits — `doc.set("version", "0.0.2")`
+  rewrites only the touched span; every comment, indent, and
+  sibling entry survives.
+
+### Lineage statement
+
+> **noyalib is a safe, modern replacement for `serde_yaml`,
+> `serde_yml`, and `libyml`. It is not a fork — every line is a
+> clean-room implementation of the YAML 1.2 spec, validated against
+> 406/406 cases of the official YAML test suite.**
 
 ---
 
@@ -164,7 +226,7 @@ noyalib is designed to be the **no-compromise** YAML library for Rust: fast, saf
 - **`miette` diagnostics** -- rich terminal errors with source spans
 - **100% YAML Test Suite** -- 406/406 official test cases pass, no skips
 - **338 KB WASM binary** -- runs in browsers via wasm-bindgen
-- **8 runtime dependencies** -- serde, indexmap, rustc-hash, thiserror, itoa, ryu, memchr, smallvec
+- **7 runtime dependencies** -- serde, indexmap, rustc-hash, itoa, ryu, memchr, smallvec (zero archived deps; `thiserror` removed in favour of hand-written `Display` / `Error` impls)
 - **3,600+ tests** -- unit, integration, doc-tests, property-based, official suite, CLI smoke
 - **45 branded examples** with animated spinner UI
 
@@ -183,8 +245,18 @@ noyalib competes across four categories of Rust YAML libraries:
 | **Streaming deser** | Yes | No | No | No | No | No |
 | **`#![no_std]`** | Yes | No | No | No | No | No |
 | **Zero-copy scalars** | Yes | No | No | No | No | Yes |
-| **SIMD scanning** | Yes (memchr) | No | No | No | No | No |
-| **DoS hardened** | 7 limits | Basic | Basic | Yes | No | Yes |
+| **SIMD scanning** | Yes (memchr + bitmask) | No | No | No | No | No |
+| **SWAR numeric parse** | Yes | No | No | No | No | No |
+| **Parallel multi-doc** | Yes (`parallel::parse`) | No | No | No | No | No |
+| **DoS hardened** | 7 budgets | Basic | Basic | Yes | No | Yes |
+| **Pluggable policies** | Yes (`policy::Policy`) | No | No | No | No | No |
+| **Secret interpolation** | Yes (`${VAR}`) | No | No | Yes | No | No |
+| **CST manipulation** | Yes (`cst::Document`) | No | No | No | No | No |
+| **Native LSP** | Yes (`noyalib-lsp`) | No | No | No | No | No |
+| **MCP server** | Yes (`noyalib-mcp`) | No | No | No | No | No |
+| **JSON Schema codegen** | Yes (`schema_for`) | No | No | No | No | No |
+| **JSON Schema validate** | Yes (`validate_against_schema`) | No | No | No | No | No |
+| **Schema-driven autofix** | Yes (`coerce_to_schema`) | No | No | No | No | No |
 | **`miette` diagnostics** | Yes | No | No | No | No | No |
 | **WASM** | 338 KB | No | No | No | No | No |
 | **Source spans** | Yes | No | No | Yes | No | No |
@@ -229,6 +301,60 @@ Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--releas
 | **noyalib** | **12.7 us** |
 | serde\_yaml\_ng | 25.5 us (2.0x) |
 
+### SIMD structural-discovery throughput
+
+How fast each library can find every YAML delimiter in a 1 MiB
+real-shaped document. The structural-bitmask path replaces the
+classical "find one delimiter at a time" pattern with a 32-byte
+chunk that drains every delimiter via `mask.trailing_zeros()`
+before reloading. (`benches/structural_bitmask.rs`)
+
+| Path | 4 KiB | 64 KiB | 1 MiB | vs memchr loop |
+| :--- | ---: | ---: | ---: | ---: |
+| scalar (byte-by-byte baseline) | 13.0 us | 206 us | 3.33 ms | 0.86x |
+| memchr + `find_any_of` loop | 11.3 us | 179 us | 2.89 ms | 1.0x |
+| **`StructuralIter` (stable)** | **2.7 us** | **42.3 us** | **681 us** | **4.2x** |
+| **`StructuralIter` (nightly-simd)** | **1.20 us** | **19.7 us** | **311 us** | **9.2x** |
+
+`serde_yaml_ng` and `serde-saphyr` use byte-by-byte structural
+discovery — they sit alongside the `scalar baseline` row and lose
+to the 32-byte-bitmask path by an order of magnitude on the
+1 MiB workload.
+
+### SWAR decimal-integer parsing
+
+Plain-scalar integer resolution via the SIMD-Within-A-Register
+pipeline that folds 8 ASCII digits per `u64` cycle.
+(`benches/numeric_parse.rs`)
+
+| Width | stdlib `from_str` | **SWAR** | speedup |
+| :--- | ---: | ---: | ---: |
+| 8 digits | 8.12 ns | **3.74 ns** | **2.17x** |
+| 19 digits | 22.0 ns | **9.25 ns** | **2.38x** |
+| `i64::MAX` | 24.6 ns | **9.75 ns** | **2.52x** |
+| Bulk parse 1000 ints | 7.93 us | **5.38 us** | **1.47x** |
+
+### Parallel multi-document throughput
+
+Linear scaling across CPU cores for `---`-separated streams
+(telemetry logs, audit exports, Kubernetes-resource snapshots).
+Pre-scan runs in `O(input_len)` on the main thread; the per-
+document parse work distributes across the Rayon thread pool.
+(`benches/streaming_vs_value.rs`, `benches/large_doc_soak.rs`)
+
+```rust
+// Single-threaded baseline:
+let docs: Vec<MyType> = noyalib::load_all_as(yaml)?;
+
+// Parallel (off by default — pulls Rayon under `parallel`
+// feature). Drop-in replacement, scales near-linearly with cores
+// on multi-document inputs:
+let docs: Vec<MyType> = noyalib::parallel::parse(yaml)?;
+```
+
+This is a **unique advantage** — every other Rust YAML library is
+single-threaded.
+
 ### Architecture validation
 
 | Capability | Measured Impact |
@@ -256,7 +382,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Coverage** | 95%+ line coverage |
 | **Dependencies** | 8 runtime + 7 optional (miette, garde, validator, serde_yaml, schemars, serde_json, jsonschema) |
 | **WASM binary** | 338 KB (release, LTO) |
-| **MSRV** | Rust 1.75.0 |
+| **MSRV** | Rust 1.85.0 |
 
 ---
 
@@ -281,8 +407,94 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Schema codegen** | `schema` feature: derive `JsonSchema` (re-exported from `schemars`), then `schema_for::<T>() -> Result<Value>` or `schema_for_yaml::<T>() -> Result<String>` to emit the JSON Schema 2020-12 document. Honours `#[doc]`, `#[serde(default)]`, `#[serde(rename)]`, integer bounds, nested types via `$defs`. |
 | **Schema validation** | `validate-schema` feature (implies `schema`): `validate_against_schema(value, schema) -> Result<()>` enforces a JSON Schema 2020-12 contract on parsed YAML. Multiple violations aggregated with RFC 6901 JSON-pointer paths. `validate_against_schema_str` is the raw-text convenience. |
 | **Binary scalars** | First-class `!!binary` tag with RFC 4648 base64 round-trip. `serde_bytes::ByteBuf` / `Bytes` work end-to-end including non-UTF-8 payloads. |
-| **`serde_yaml` shim** | `compat-serde-yaml` feature: name-for-name re-exports plus `From` / `TryFrom` between `noyalib::Value` and `serde_yaml::Value` (`SerdeYamlConversionError` for the lossy edges). |
-| **SIMD primitives** | `noyalib::simd::find_any_of` / `clean_prefix_len` / `ByteBitmap`. The parser hot path routes through these primitives for free; the public API is exposed for callers building their own scanners. memchr arity-1/2/3 + SWAR arity-4+ on 64 KiB sparse haystack: ~58× and ~5.4× faster than the byte-by-byte baseline respectively. |
+| **`serde_yaml` shim** | `compat-serde-yaml` feature: name-for-name re-exports backed by noyalib-native types — **the unmaintained `serde_yaml` 0.9 crate is intentionally not a dependency**. Migrating in-flight `::serde_yaml::Value` from un-migrated modules flows through the Serde bridge: `noyalib::to_value(&upstream)?`. |
+| **SIMD primitives** | `noyalib::simd::find_any_of` / `clean_prefix_len` / `SimdScanner` / `StructuralIter` / `ByteBitmap` / `parse_decimal_{u64,i64}`. Parser hot path routes through them for free; public for downstream scanner authors. **`StructuralIter`** delivers 4.2× stable / 9.2× nightly-simd vs the memchr loop on 1 MiB workloads. |
+| **Parallel parsing** | `parallel` feature: `noyalib::parallel::parse<T>` and `noyalib::parallel::values` deserialise multi-document streams across the Rayon thread pool. Pre-scan in `O(input_len)`; per-document work parallelises naturally. Linear-with-cores on `---`-separated logs / audit dumps / Kubernetes snapshots. |
+| **Pluggable policies** | `noyalib::policy::Policy` trait + `ParserConfig::with_policy(p)`. Built-ins: `DenyAnchors` (rejects `&name` / `*name` — billion-laughs guard), `DenyTags` (rejects custom tags), `MaxScalarLength(n)` (caps individual scalar size). Custom policies implement the trait. |
+| **Schema autofix** | `validate-schema` feature: `coerce_to_schema(value, schema) -> Result<usize>` walks JSON Schema type-mismatch errors and rewrites string-shaped scalars into the schema's expected type when the parse succeeds. Solves the `port: "8080"` quoting slip-up automatically. Library engine behind `noyavalidate --fix`. |
+| **Key interner** | `noyalib::interner::KeyInterner` — `&str → Arc<str>` deduplication for repeated-key workloads. Kubernetes-shaped streams with 20-byte keys × 10 000 records: footprint drops from ~200 KB of fresh allocations to ~20 B + Arc pointers. |
+
+---
+
+## Governance: schema-driven autofix
+
+YAML written by hand often has type slips that strict validation
+catches but humans don't notice — `port: "8080"` (string) where
+the schema declares `port: integer`. noyalib ships a one-call
+fix-up engine that rewrites these to match the schema:
+
+```rust
+use noyalib::{coerce_to_schema, from_str, schema_for, validate_against_schema, JsonSchema};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct ServerConfig {
+    /// Port the server binds on.
+    port: u16,
+    /// Hostname or IP literal.
+    host: String,
+}
+
+let schema = schema_for::<ServerConfig>().unwrap();
+
+// Hand-written YAML with the port quoted by mistake.
+let mut data = from_str("port: \"8080\"\nhost: api.example.com\n").unwrap();
+
+// Strict pass — fails because `port` is a string.
+assert!(validate_against_schema(&data, &schema).is_err());
+
+// Apply schema-driven coercions.
+let n = coerce_to_schema(&mut data, &schema).unwrap();
+assert_eq!(n, 1, "one fix expected");
+
+// Re-validation passes — port is now an integer.
+validate_against_schema(&data, &schema).unwrap();
+```
+
+Library engine behind `noyavalidate --fix`. Handles `String →
+Integer`, `String → Number`, `String → Boolean` coercions; the
+fix-loop iterates until convergence. Unparseable inputs (e.g.
+`port: "abc"` against `type: integer`) are left in place so the
+caller can surface the residue via a follow-up
+`validate_against_schema` call.
+
+---
+
+## The "Norway problem"
+
+YAML 1.1 resolved the bare scalar `no` as the boolean `false`. The
+country code for **Norway** is `NO`, so a YAML 1.1 parser
+silently rewrites `country: NO` to `country: false`. Real-world
+data corruption.
+
+**YAML 1.2's official fix** is to drop those bare-word booleans —
+only `true` and `false` count. noyalib defaults to YAML 1.2
+strict semantics, so `country: NO` round-trips as the string
+`"NO"`.
+
+For migrating from Docker Compose / GitHub Actions / pre-1.2 YAML
+toolchains that *expect* the legacy behaviour, opt back in via
+`legacy_booleans`:
+
+```rust
+use noyalib::{from_str_with_config, ParserConfig, Value};
+
+// Default (YAML 1.2 strict): "NO" → string.
+let v: Value = noyalib::from_str("country: NO\n").unwrap();
+assert_eq!(v["country"].as_str(), Some("NO"));
+
+// Opt-in legacy mode: "NO" → false. Use only when migrating
+// from a toolchain that depended on the YAML 1.1 behaviour.
+let cfg = ParserConfig::new().legacy_booleans(true);
+let v: Value = from_str_with_config("country: NO\n", &cfg).unwrap();
+assert_eq!(v["country"].as_bool(), Some(false));
+```
+
+Conversely, `strict_booleans = true` *tightens* the YAML 1.2
+contract — only the lowercase forms (`true` / `false`) are
+recognised; `True`, `TRUE`, `Yes`, etc. all stay strings. Use
+this for schema-strict pipelines where boolean-shape ambiguity
+is a contract violation.
 
 ---
 
@@ -645,23 +857,109 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for signed commits and PR guidelines.
 
 ## Security
 
-<details>
-<summary><b>Safety guarantees and compliance</b></summary>
+YAML parsers are notorious attack surface — `libyaml`-based wrappers
+have shipped multiple critical CVEs over the years (deserialisation
+RCE in PyYAML, billion-laughs amplification in dozens of language
+ecosystems, code-execution-via-tag in legacy Ruby YAML). noyalib's
+posture is built around closing each of those vectors at the
+*architectural* level, not via opt-in flags.
 
-- `#![forbid(unsafe_code)]` across the entire codebase
-- `#[non_exhaustive]` on `ParserConfig`, `SerializerConfig`, `FlowStyle`, `ScalarStyle`
-- `#[must_use]` on 83 query methods
-- `#[track_caller]` on 13 Index/IndexMut panic paths
-- All internal invariant panics documented with `expect("internal: ...")`
-- 7 configurable DoS limits with `ParserConfig::strict()`
-- **Billion-laughs protection**: `max_alias_expansions` with `saturating_add` overflow guard on alias byte tracking
-- `cargo audit` with zero advisories
-- `cargo deny` -- license, advisory, ban, and source checks
-- SPDX license headers on all source files
-- Signed commits enforced via CI
-- Comment round-tripping: not supported (YAML spec excludes comments from data model). `Commented<T>` provides write-only comment injection. CST-based preservation tracked as future work
+### RCE prevention (no arbitrary object instantiation)
 
-</details>
+**noyalib does not instantiate arbitrary objects via tags.** YAML's
+custom-tag mechanism (`!Foo`, `!!python/object`) is the historical
+RCE vector — a malicious tag can load arbitrary code in legacy
+parsers. noyalib only deserialises into Rust types you've defined
+at compile time, with `#[derive(Deserialize)]`. Custom tags are
+either:
+
+- Surfaced as `Value::Tagged(tag, inner)` — pure data, no code path
+  invoked.
+- Routed through an explicit `TagRegistry` you opt into — every
+  recognised tag is one you've named.
+
+There is no path from a parsed YAML document to running attacker-
+chosen code. Period.
+
+### Configurable resource budgets
+
+The `ParserConfig::strict()` preset enforces seven **resource
+budgets** that cap every dimension of input size — designed to
+make billion-laughs and similar memory-amplification attacks
+mathematically impossible:
+
+| Budget | Default | `strict()` | Protects against |
+| :--- | ---: | ---: | :--- |
+| `max_depth` | 128 | 64 | Stack-blowing nested structures |
+| `max_document_length` | 64 MiB | 1 MiB | Oversized payloads |
+| `max_alias_expansions` | 1024 | 100 | **Billion-laughs amplification** |
+| `max_mapping_keys` | 64 K | 1024 | Hash-collision DoS |
+| `max_sequence_length` | 64 K | 1024 | Memory-spike DoS |
+| `duplicate_key_policy` | `Last` | `Error` | Silent data loss |
+| `strict_booleans` | off | on | The "Norway problem" |
+
+Alias-byte accumulation uses `saturating_add` so a crafted input
+that overflows a `usize` counter still triggers the limit cleanly
+— no integer-wrap escape hatch.
+
+### Secret redaction (`${VAR}` interpolation)
+
+`Value::interpolate_properties` (see `examples/env.rs`) substitutes
+`${name}` references inside string scalars from a property map.
+The interpolator is deliberately **lossy by default for unknown
+keys** — pair it with a `secrecy::Secret<T>` field to keep the
+substituted value out of `Debug` / log output.
+
+```rust
+use noyalib::{from_str, Value};
+use std::collections::HashMap;
+
+let yaml = "db_url: ${DATABASE_URL}\napi_key: ${API_KEY}\n";
+let mut map = HashMap::new();
+map.insert("DATABASE_URL".into(), "postgres://...".into());
+map.insert("API_KEY".into(), "redacted-token".into());
+
+let mut value: Value = from_str(yaml).unwrap();
+value.interpolate_properties(&map).unwrap();
+// `api_key` now holds the substituted secret — wrap downstream
+// in `secrecy::Secret<String>` to keep it out of Debug formatting.
+```
+
+### Compile- and runtime-safety guarantees
+
+- `#![forbid(unsafe_code)]` across the **entire workspace** — no
+  FFI, no raw-pointer dereferences, no `unsafe` blocks anywhere.
+- `#[non_exhaustive]` on `ParserConfig`, `SerializerConfig`,
+  `FlowStyle`, `ScalarStyle`, `Error` — adding a variant is not a
+  semver break.
+- `#[must_use]` on 83 query methods — silent result-discarding
+  bugs caught at compile time.
+- `#[track_caller]` on 13 Index/IndexMut panic paths — panic
+  diagnostics point at *your* call site, not noyalib internals.
+- Pluggable parser policies (`DenyAnchors`, `DenyTags`,
+  `MaxScalarLength`) — opt into "Safe YAML" enforcement at parse
+  time. See `noyalib::policy`.
+
+### Supply chain
+
+- `cargo audit` clean — zero advisories.
+- `cargo deny` clean — license / advisory / ban / source checks.
+- `cargo vet` clean — every dependency in the graph has a local
+  audit or imported coverage from Mozilla / Google / Bytecode
+  Alliance / Embark / ISRG audit sets.
+- `OpenSSF Scorecard` tracked, badge in the header.
+- `SLSA L3` build provenance + sigstore signing on every release.
+- `REUSE.software` 3.3 compliant — every source file carries
+  SPDX headers.
+- Signed commits (SSH ed25519) enforced via CI.
+
+### Notes
+
+- Comment round-tripping for the data-binding API is not supported
+  (YAML spec excludes comments from the data model). `Commented<T>`
+  provides write-only comment injection. The CST API
+  (`noyalib::cst::Document`) preserves comments byte-for-faithfully
+  for the lossless-tooling path.
 
 ---
 
