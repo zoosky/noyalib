@@ -1,55 +1,63 @@
 <!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
 
-# noyalib-wasm
+<p align="center">
+  <img src="https://cloudcdn.pro/noyalib/v1/logos/noyalib.svg" alt="Noyalib logo" width="128" />
+</p>
 
-`wasm-bindgen` wrapper around
-[noyalib](https://github.com/sebastienrousseau/noyalib) — pure-
-Rust YAML 1.2, zero `unsafe`, ~338 KB after LTO. Runs in
-browsers, Node, Cloudflare Workers, Deno, and any other
-WASM-capable host.
+<h1 align="center">noyalib-wasm</h1>
 
-[![npm](https://img.shields.io/npm/v/@noyalib/noyalib-wasm.svg)](https://www.npmjs.com/package/@noyalib/noyalib-wasm)
-[![Build](https://img.shields.io/github/actions/workflow/status/sebastienrousseau/noyalib/ci.yml?branch=main)](https://github.com/sebastienrousseau/noyalib/actions)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+<p align="center">
+  <strong><code>wasm-bindgen</code> wrapper around noyalib —
+  pure-Rust YAML 1.2, zero <code>unsafe</code>, ~338 KB after
+  LTO. Runs in browsers, Node, Cloudflare Workers, Deno, and
+  any other WASM-capable host.</strong>
+</p>
 
-Drop-in for the workloads
-[`js-yaml`](https://github.com/nodeca/js-yaml) usually covers
-(YAML editors, in-browser config validation, Kubernetes-manifest
-tools) with two material differences:
+<p align="center">
+  <a href="https://github.com/sebastienrousseau/noyalib/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/noyalib/ci.yml?style=for-the-badge&logo=github" alt="Build" /></a>
+  <a href="https://www.npmjs.com/package/@noyalib/noyalib-wasm"><img src="https://img.shields.io/npm/v/@noyalib/noyalib-wasm?style=for-the-badge&color=fc8d62&logo=npm" alt="npm" /></a>
+  <a href="https://docs.rs/noyalib-wasm"><img src="https://img.shields.io/badge/docs.rs-noyalib--wasm-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
+  <a href="https://bundlephobia.com/package/@noyalib/noyalib-wasm"><img src="https://img.shields.io/bundlephobia/minzip/@noyalib/noyalib-wasm?style=for-the-badge&color=informational" alt="Bundle size" /></a>
+  <a href="https://api.securityscorecards.dev/projects/github.com/sebastienrousseau/noyalib"><img src="https://api.securityscorecards.dev/projects/github.com/sebastienrousseau/noyalib/badge" alt="OpenSSF Scorecard" /></a>
+</p>
 
-1. **Comments + structure are preserved** when you go through
-   the lossless-CST API (`Document.parse` →
-   `Document.set("server.port", "9090")` →
-   `Document.toString()`). `js-yaml` discards comments by spec.
-2. **Pure-Rust YAML 1.2 semantics**, not the YAML 1.1 quirks
-   `js-yaml` inherits. The "Norway problem" (`country: NO`
-   parsed as `false`) doesn't happen here.
+---
 
 ## Contents
 
-- [Install](#install)
-- [Quick Start](#quick-start)
-- [Surface](#surface)
-- [Bundle size](#bundle-size)
-- [Targets](#targets)
-- [Provenance](#provenance)
-- [Examples](#examples)
+- [Install](#install) — npm, build from source
+- [Quick Start](#quick-start) — parse, edit, validate
+- [Why this approach?](#why-this-approach) — vs `js-yaml`
+- [Surface](#surface) — exported APIs
+- [Bundle size](#bundle-size) — what you ship to users
+- [Targets](#targets) — every wasm-pack flavour
+- [Provenance](#provenance) — npm + cosign
+- [Examples](#examples) — Node + browser demos
+- [When not to use noyalib-wasm](#when-not-to-use-noyalib-wasm)
 - [Documentation](#documentation)
 - [License](#license)
+
+---
 
 ## Install
 
 ```sh
 npm install @noyalib/noyalib-wasm
+# or
+pnpm add @noyalib/noyalib-wasm
+# or
+yarn add @noyalib/noyalib-wasm
 ```
 
-Or build from source:
+Or build from source against any wasm-pack target:
 
 ```sh
 git clone https://github.com/sebastienrousseau/noyalib
 cd noyalib/crates/noyalib-wasm
 wasm-pack build --release --target bundler
 ```
+
+---
 
 ## Quick Start
 
@@ -76,29 +84,74 @@ doc.set("server.port", "9090");
 fs.writeFileSync("config.yaml", doc.toString());
 ```
 
+---
+
+## Why this approach?
+
+[`js-yaml`](https://github.com/nodeca/js-yaml) is the de-facto
+JS YAML parser, and it's good — but it makes two tradeoffs that
+hurt for editor and tooling workloads:
+
+1. **`js-yaml` discards comments by spec.** It implements the
+   YAML data model, which excludes comments. Round-tripping a
+   document through `parse` → `dump` strips every `#` line.
+   noyalib's `Document` API runs through a lossless CST that
+   reproduces the source byte-for-byte; only the surgically
+   touched span changes on a `set`.
+
+2. **`js-yaml` follows YAML 1.1 by default.** That's the
+   "Norway problem": `country: NO` parses as `country: false`,
+   silently rewriting the country code. noyalib defaults to
+   YAML 1.2 strict semantics; only `true` / `false` are
+   booleans.
+
+Other differences worth knowing about:
+
+- **JSON Schema 2020-12 validation built in.** Same engine as
+  the `noyavalidate` CLI ships.
+- **Pure-Rust, zero `unsafe`.** Every byte of the parser,
+  scanner, formatter, and CST is checked at compile time by the
+  workspace `#![forbid(unsafe_code)]` lint.
+- **~338 KB bundle.** That's roughly the same size as `js-yaml`
+  minified + gzipped, with the lossless-CST surface and YAML
+  1.2 semantics baked in.
+
+---
+
 ## Surface
 
 | Export | What it does |
 |---|---|
-| `parse(yaml)` | Parse a YAML document into a JS value (mirrors `js-yaml`'s `load`). |
+| `parse(yaml)` | Parse a YAML document into a JS value. Mirrors `js-yaml`'s `load`. |
 | `stringify(value)` | Serialise a JS value back to YAML. |
-| `validate_json(value, schema)` | Validate a value against a JSON Schema 2020-12 contract. |
-| `Document.parse(yaml)` | Open a lossless CST. |
-| `Document.set(path, fragment)` | Surgically rewrite a value at a dotted path. |
-| `Document.get(path)` | Read a value at a dotted path. |
-| `Document.toString()` | Serialise the CST back to bytes. |
-| `merge(a, b)` | Deep-merge YAML documents (delegates to `noyalib::Value::merge`). |
+| `validate_json(value, schema)` | Validate a value against a JSON Schema 2020-12 contract. Returns `true` / `false`; the structured-error variant is on the roadmap. |
+| `Document.parse(yaml)` | Open a lossless CST. Returns a `Document` handle. |
+| `Document.set(path, fragment)` | Surgically rewrite a value at a dotted path. The fragment may be a literal scalar (`"9090"`) or a YAML-shaped string. |
+| `Document.get(path)` | Read a value at a dotted path. Returns `null` if missing. |
+| `Document.toString()` | Serialise the CST back to bytes. Byte-identical to the parsed source if no edits were made. |
+| `merge(a, b)` | Deep-merge two YAML documents. Delegates to `noyalib::Value::merge`. |
+
+Every function is `async` only via `init()` — once the WASM
+blob is loaded, individual calls are synchronous.
+
+---
 
 ## Bundle size
 
-| Build | Size |
-|---|---|
-| Default (`wasm-pack build --release --target bundler`) | ~338 KB |
-| `--features wasm-opt` (post-build pass) | ~280 KB |
+| Build | Size (raw) | Size (gzip) |
+|---|---|---|
+| Default (`wasm-pack build --release --target bundler`) | ~338 KB | ~140 KB |
+| `--features wasm-opt` (post-build pass) | ~280 KB | ~115 KB |
 
 Tree-shaking-friendly — the `Document` API and the plain
-`parse` / `stringify` API are independent modules; bundlers drop
-whichever your code does not import.
+`parse` / `stringify` API are independent modules; bundlers
+drop whichever your code does not import.
+
+For comparison: `js-yaml` 4.x lands around ~50 KB minified +
+~12 KB gzipped, but does not provide lossless-CST or schema
+validation.
+
+---
 
 ## Targets
 
@@ -106,11 +159,16 @@ whichever your code does not import.
 
 ```sh
 wasm-pack build --target bundler    # webpack, rollup, esbuild
-wasm-pack build --target web        # native ES module
+wasm-pack build --target web        # native ES module via <script type="module">
 wasm-pack build --target nodejs     # commonjs Node import
 wasm-pack build --target deno       # Deno-native module
 wasm-pack build --target no-modules # plain global, no module loader
 ```
+
+Cloudflare Workers and edge runtimes generally consume the
+`bundler` target via their packaging step.
+
+---
 
 ## Provenance
 
@@ -123,17 +181,60 @@ produced it. Verify via:
 npm view @noyalib/noyalib-wasm provenance
 ```
 
+The underlying `.wasm` is also signed with cosign keyless
+alongside every release; the verify command is identical to
+the source crate's:
+
+```sh
+cosign verify-blob \
+  --certificate-identity-regexp 'https://github.com/sebastienrousseau/noyalib/' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate noyalib_wasm_bg.wasm.pem \
+  --signature   noyalib_wasm_bg.wasm.sig \
+  noyalib_wasm_bg.wasm
+```
+
+Full cookbook: [`pkg/VERIFY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/pkg/VERIFY.md).
+
+---
+
 ## Examples
 
 Browser + Node demos under
 [`crates/noyalib-wasm/examples/`](examples/):
 
-```text
-crates/noyalib-wasm/examples/browser/index.html   # in-page YAML editor demo
-crates/noyalib-wasm/examples/node-stringify.js    # parse + stringify round-trip
-crates/noyalib-wasm/examples/cst-edit.js          # lossless edit preserving comments
-crates/noyalib-wasm/examples/schema-validate.js   # validate against JSON Schema
+| Path | Target | What it shows |
+|---|---|---|
+| [`node-stringify.js`](examples/node-stringify.js) | Node | `parse` + `stringify` round-trip. |
+| [`cst-edit.js`](examples/cst-edit.js) | Node | Lossless CST edit; comments + whitespace preserved. |
+| [`schema-validate.js`](examples/schema-validate.js) | Node | JSON Schema 2020-12 validation, good and bad cases. |
+| [`browser/index.html`](examples/browser/index.html) | Browser | Live in-page YAML editor with a parsed-JSON pane. |
+
+```bash
+# Node:
+wasm-pack build --release --target nodejs crates/noyalib-wasm
+node crates/noyalib-wasm/examples/cst-edit.js
+
+# Browser:
+wasm-pack build --release --target web crates/noyalib-wasm
+cd crates/noyalib-wasm/examples/browser
+python3 -m http.server     # or any static-file server
 ```
+
+---
+
+## When not to use noyalib-wasm
+
+- **You only ever consume YAML in Node and don't care about
+  comment-preserving edits or YAML 1.2 strictness.** `js-yaml`
+  is smaller (~50 KB minified) and the de-facto standard;
+  reach for it first.
+- **You need a streaming parser for multi-GB documents.** The
+  WASM bindings always read the full document into memory.
+  For TB-scale streaming workloads, drive the noyalib library
+  directly from a Rust process and pipe results out.
+
+---
 
 ## Documentation
 
@@ -142,6 +243,8 @@ crates/noyalib-wasm/examples/schema-validate.js   # validate against JSON Schema
 - **API reference (rustdoc)**: <https://docs.rs/noyalib-wasm>
 - **Workspace README**:
   <https://github.com/sebastienrousseau/noyalib#readme>
+
+---
 
 ## License
 
