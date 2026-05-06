@@ -43,6 +43,8 @@ path = [
     "README.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
+    "GETTING_STARTED.md",
+    "GLOSSARY.md",
     "PLAN.md",
     "SECURITY.md",
     "doc/**",
