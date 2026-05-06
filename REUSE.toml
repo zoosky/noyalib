@@ -47,11 +47,16 @@ path = [
     "SECURITY.md",
     "doc/**",
     "crates/noya-cli/README.md",
+    "crates/noya-cli/examples/README.md",
     "crates/noyalib/README.md",
     "crates/noyalib/tests/README.md",
     "crates/noyalib-lsp/README.md",
+    "crates/noyalib-lsp/examples/README.md",
     "crates/noyalib-mcp/README.md",
+    "crates/noyalib-mcp/examples/README.md",
     "crates/noyalib-wasm/README.md",
+    "crates/noyalib-wasm/examples/README.md",
+    "crates/noyalib-wasm/examples/browser/index.html",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Noyalib"
