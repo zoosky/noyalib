@@ -44,10 +44,40 @@
 
 ## Install
 
+### As a Rust library (crates.io)
+
 ```toml
 [dependencies]
 noyalib = "0.0.1"
 ```
+
+### As a CLI tool
+
+The `noyafmt` and `noyavalidate` binaries ship through every
+mainstream package channel.
+
+| Channel | Install |
+|---|---|
+| Cargo | `cargo install noyalib` |
+| Homebrew (personal tap) | `brew tap sebastienrousseau/tap && brew install noyalib` |
+| Arch Linux (AUR) | `yay -S noyalib-bin` (binary) or `yay -S noyalib` (source) |
+| Scoop (Windows) | `scoop bucket add sebastienrousseau https://github.com/sebastienrousseau/scoop-bucket && scoop install noyalib` |
+| Nix / NixOS | `nix run github:sebastienrousseau/noyalib` |
+| Container (GHCR) | `docker run --rm ghcr.io/sebastienrousseau/noyafmt:latest --version` |
+| npm (WASM) | `npm install @noyalib/noyalib-wasm` |
+| npm (MCP) | `npx noyalib-mcp` (no Rust toolchain needed) |
+| VS Code | search `noyalib` in the Marketplace |
+| Open VSX | search `noyalib` in [open-vsx.org](https://open-vsx.org) |
+
+GitHub Releases additionally publish pre-built tarballs for
+Linux (gnu + musl), macOS (Intel + Apple Silicon + universal),
+and Windows (x86_64, i686, aarch64). Each archive ships with the
+binaries, man pages, shell completions, license bundle, and a
+cosign keyless signature + SLSA L3 attestation.
+
+See [`pkg/VERIFY.md`](pkg/VERIFY.md) for verification commands
+and [`pkg/PUBLISH.md`](pkg/PUBLISH.md) for the per-channel
+maintainer runbook.
 
 ### `no_std` support
 
