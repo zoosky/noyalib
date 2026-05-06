@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2026 Noyalib
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# `cargo-about` configuration. Used by `make notice` /
+# `cargo xtask notice` to produce the NOTICE file shipped in
+# every release tarball, .deb, .rpm, and MSI.
+#
+# https://embarkstudios.github.io/cargo-about/
+
+# Licenses we are happy to redistribute under. Anything not on
+# this list will fail the `cargo about generate` step so a new
+# transitive license never lands silently.
+accepted = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+
+# Targets the NOTICE applies to. We list the ones the release
+# pipeline actually builds for; transitive deps gated behind
+# `target_os` predicates flow in based on this set.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+
+# Skip dev-dependencies so test-only crates don't appear in the
+# end-user-facing notice.
+no-default-features = false
+
+# Workspace-only: skip any crate whose license metadata is
+# missing — they bubble up as failures rather than silent
+# omissions. (We have none currently, but this catches new
+# additions.)
+private = { ignore = false }
+
+# Per-crate overrides for the rare case where a crate's
+# Cargo.toml license field is incomplete or wrong. Empty for
+# v0.0.1.
+[crates.unicode-ident.clarify]
+license = "(MIT OR Apache-2.0) AND Unicode-3.0"
+[[crates.unicode-ident.clarify.git]]
+path = "LICENSE-UNICODE"
+license = "Unicode-3.0"
+checksum = "0x"   # populated on first run

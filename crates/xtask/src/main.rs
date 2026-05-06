@@ -7,7 +7,10 @@
 //! ```text
 //! cargo xtask completions   # writes complete/*.{bash,fish,zsh,ps1}
 //! cargo xtask manpages      # writes doc/*.1
-//! cargo xtask all           # both, in one pass
+//! cargo xtask notice        # writes NOTICE  (via cargo-about)
+//! cargo xtask sbom          # writes SBOM.txt (via cargo tree)
+//! cargo xtask vendor        # writes vendor/   (via cargo vendor)
+//! cargo xtask all           # completions + manpages in one pass
 //! ```
 //!
 //! The same [`clap::Command`] builders the binaries parse against
@@ -15,9 +18,16 @@
 //! noyavalidate_command}` — drive both the build script
 //! (`crates/noya-cli/build.rs`) and this xtask. So binaries, man
 //! pages, and shell completions can never drift.
+//!
+//! `notice`, `sbom`, and `vendor` shell out to `cargo about`,
+//! `cargo tree`, and `cargo vendor` respectively. They're
+//! collected here so contributors only have one entry point to
+//! remember and `make` targets can route through `cargo xtask
+//! …` without conditional logic.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use clap::Parser;
 
@@ -32,7 +42,13 @@ enum Cmd {
     Completions,
     /// Regenerate roff-format man pages under `doc/`.
     Manpages,
-    /// Run every codegen task in one go.
+    /// Regenerate NOTICE via cargo-about (license attribution).
+    Notice,
+    /// Regenerate SBOM.txt via `cargo tree`.
+    Sbom,
+    /// Vendor every dependency under `vendor/` for offline builds.
+    Vendor,
+    /// Run completions + manpages in one go.
     All,
 }
 
@@ -40,6 +56,9 @@ fn main() -> std::io::Result<()> {
     match Cmd::parse() {
         Cmd::Completions => write_completions(&workspace_root()?)?,
         Cmd::Manpages => write_manpages(&workspace_root()?)?,
+        Cmd::Notice => write_notice(&workspace_root()?)?,
+        Cmd::Sbom => write_sbom(&workspace_root()?)?,
+        Cmd::Vendor => write_vendor(&workspace_root()?)?,
         Cmd::All => {
             let root = workspace_root()?;
             write_completions(&root)?;
@@ -86,6 +105,90 @@ fn write_completions(root: &Path) -> std::io::Result<()> {
             eprintln!("→ {}", path.display());
         }
     }
+    Ok(())
+}
+
+/// Run `cargo about generate` against the workspace's
+/// `about.toml` plus the `about.hbs` template and write the
+/// result to `<root>/NOTICE`. Requires `cargo-about` on PATH;
+/// the Makefile `notice` target installs it on demand if absent.
+fn write_notice(root: &Path) -> std::io::Result<()> {
+    let about_toml = root.join("about.toml");
+    let about_hbs = root.join("about.hbs");
+    let notice = root.join("NOTICE");
+
+    let status = Command::new("cargo")
+        .args([
+            "about",
+            "generate",
+            "-c",
+            about_toml.to_str().unwrap(),
+            "-o",
+            notice.to_str().unwrap(),
+            about_hbs.to_str().unwrap(),
+        ])
+        .current_dir(root)
+        .status()?;
+
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "cargo about generate failed (exit {status}); is `cargo-about` installed?"
+        )));
+    }
+    eprintln!("→ {}", notice.display());
+    Ok(())
+}
+
+/// Run `cargo tree --edges normal` and write the result to
+/// `<root>/SBOM.txt`. Plain text by intent — every release
+/// pipeline downstream of the GitHub Release attaches signed
+/// machine-readable attestations alongside.
+fn write_sbom(root: &Path) -> std::io::Result<()> {
+    let path = root.join("SBOM.txt");
+    let output = Command::new("cargo")
+        .args([
+            "tree", "--edges", "normal", "--prefix", "depth", "--format", "{p} {l}",
+        ])
+        .current_dir(root)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "cargo tree failed (exit {})",
+            output.status,
+        )));
+    }
+    fs::write(&path, &output.stdout)?;
+    eprintln!("→ {}", path.display());
+    Ok(())
+}
+
+/// Run `cargo vendor --versioned-dirs` against the workspace and
+/// configure `.cargo/config.toml` to consume the result. Used by
+/// air-gapped / RHEL / FIPS-bound build chains.
+fn write_vendor(root: &Path) -> std::io::Result<()> {
+    let vendor_dir = root.join("vendor");
+    let status = Command::new("cargo")
+        .args(["vendor", "--versioned-dirs", "vendor"])
+        .current_dir(root)
+        .status()?;
+
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "cargo vendor failed (exit {status})"
+        )));
+    }
+    eprintln!("→ {}", vendor_dir.display());
+    eprintln!(
+        "  configure cargo to use the vendored sources via\n\
+         \n\
+         \t[source.crates-io]\n\
+         \treplace-with = \"vendored\"\n\
+         \t[source.vendored]\n\
+         \tdirectory = \"vendor\"\n\
+         \n\
+         in .cargo/config.toml, then build with `cargo build --offline`."
+    );
     Ok(())
 }
 

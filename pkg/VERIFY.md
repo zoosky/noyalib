@@ -84,6 +84,69 @@ cosign verify ghcr.io/sebastienrousseau/noyafmt:<tag> \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
+## Sigstore root-of-trust pinning
+
+`cosign verify-blob` consults the public Rekor + Fulcio
+endpoints by default. For most callers that's correct — sigstore
+is the public infrastructure noyalib pins to. When a packager
+wants to be **fully reproducible** (no live network query at
+verification time) the public keys can be pinned locally:
+
+```bash
+# Fetch and pin the current Fulcio + Rekor public keys.
+cosign initialize --root https://tuf-repo-cdn.sigstore.dev
+
+# Verify against the pinned trust root rather than the live
+# endpoint. Useful for hermetic / FIPS-bound build environments.
+cosign verify-blob \
+  --insecure-ignore-tlog=false \
+  --rekor-url=offline \
+  --certificate-identity-regexp 'https://github.com/sebastienrousseau/noyalib/' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate <artefact>.pem \
+  --signature   <artefact>.sig \
+  <artefact>
+```
+
+The keys rotate infrequently (Fulcio root: ~once per 6 months;
+Rekor: stable since 2022). Re-run `cosign initialize` whenever
+sigstore announces a rotation; otherwise the pinned trust root
+remains valid.
+
+## Building from a vendored tarball (offline / FIPS / RHEL)
+
+Some downstream environments cannot reach crates.io at build
+time — air-gapped enterprise networks, Fedora's `mock` builders,
+RHEL's `koji` + `osbuild`. noyalib publishes a
+`noyalib-<version>-vendor.tar.xz` artefact alongside every
+release that contains the entire dependency tree pre-fetched
+into a `vendor/` directory.
+
+```bash
+# 1. Extract the vendored tree alongside the source.
+tar -xJf noyalib-0.0.1-vendor.tar.xz   # produces vendor/
+
+# 2. Configure cargo to use the vendored sources instead of
+#    crates.io.
+mkdir -p .cargo
+cat > .cargo/config.toml <<'EOF'
+[source.crates-io]
+replace-with = "vendored"
+[source.vendored]
+directory = "vendor"
+EOF
+
+# 3. Build offline. cargo will refuse network access; if the
+#    vendored tree is incomplete the build fails at this step
+#    with a clear error.
+cargo build --release --offline --locked
+```
+
+The vendor tarball is produced by `cargo xtask vendor` (or
+`make vendor`) and is signed alongside every other release
+artefact via cosign keyless. The same `cosign verify-blob`
+invocation as for the source crate applies.
+
 ## Reporting a verification failure
 
 If any verification step fails for a published release, treat it

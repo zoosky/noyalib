@@ -328,6 +328,49 @@ jobs:
             --fail-under-lines 93 \
             --fail-under-regions 92
 
+  # ── `cargo vendor` + offline build (Phase 7.3) ──────────────────────
+  # Verifies that the dependency tree can be vendored and the
+  # workspace then built with `--offline --locked`. Critical for
+  # air-gapped, RHEL, and FIPS-bound deployments that cannot reach
+  # crates.io at build time.
+  vendor-build:
+    name: vendor + offline build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo vendor
+        run: cargo vendor --versioned-dirs vendor
+      - name: Configure cargo for offline build
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [source.crates-io]
+          replace-with = "vendored"
+          [source.vendored]
+          directory = "vendor"
+          EOF
+      - name: cargo build --offline
+        run: cargo build --workspace --all-features --offline --locked
+
+  # ── Per-crate MSRV (Phase 7.5) ──────────────────────────────────────
+  # The workspace gates on the lowest declared rust-version (1.75.0
+  # for the core lib). Satellite crates can declare higher floors.
+  # This job runs `cargo +<msrv> check` against every crate
+  # independently, so a satellite crate adopting a 1.85-only
+  # feature can never silently break a downstream user pinned to
+  # 1.75.
+  msrv-per-crate:
+    name: Per-crate MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Run scripts/msrv-per-crate.sh
+        run: ./scripts/msrv-per-crate.sh
+
   no-std:
     name: no_std (alloc-only) build
     # The README and CHANGELOG promise that `default-features = false`

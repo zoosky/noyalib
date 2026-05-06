@@ -1,0 +1,36 @@
+{{!--
+  Handlebars template for cargo-about. Produces NOTICE.
+
+  Format mirrors the FOSSology / SPDX style: one section per
+  unique license, listing every crate that ships under it,
+  followed by the license text itself.
+
+  Generated from `cargo about generate -c about.toml about.hbs`.
+--}}
+NOTICE
+======
+
+This file lists every third-party crate noyalib redistributes
+in its compiled binaries, grouped by license. Generated from
+the workspace Cargo.lock by `cargo about generate`.
+
+The licenses that appear here are limited to the accept-list in
+`about.toml`. Run `make notice` to regenerate after a dep change.
+
+{{#each licenses as |license|}}
+================================================================
+{{license.name}} ({{license.id}})
+================================================================
+
+Used by:
+{{#each license.used_by as |used|}}
+  - {{used.crate.name}} v{{used.crate.version}}
+    {{#if used.crate.repository}}<{{used.crate.repository}}>{{/if}}
+{{/each}}
+
+License text:
+----------------------------------------------------------------
+
+{{license.text}}
+
+{{/each}}

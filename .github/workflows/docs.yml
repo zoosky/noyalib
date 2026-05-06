@@ -29,7 +29,21 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - name: Build documentation
+      - name: Build documentation (strict)
+        # Strengthened RUSTDOCFLAGS catch broken intra-doc links,
+        # private intra-doc links surfaced through re-exports, bad
+        # codeblock fence attributes, malformed HTML, and bare
+        # URLs that should be wrapped in `<https://...>` autolinks.
+        # Phase 7.6 of PLAN.md — every broken `[`Type`]` reference
+        # in a doc comment now fails the docs build.
+        env:
+          RUSTDOCFLAGS: >-
+            -D warnings
+            -D rustdoc::broken_intra_doc_links
+            -D rustdoc::private_intra_doc_links
+            -D rustdoc::invalid_codeblock_attributes
+            -D rustdoc::invalid_html_tags
+            -D rustdoc::bare_urls
         run: |
           cargo doc --no-deps --all-features
           echo '<meta http-equiv="refresh" content="0; url=noyalib/index.html">' > target/doc/index.html
