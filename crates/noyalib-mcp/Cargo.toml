@@ -1,28 +1,28 @@
 [package]
-name = "noyalib-lsp"
+name = "noyalib-mcp"
 version = "0.0.1"
 edition = "2021"
 rust-version = "1.75.0"
 license = "MIT OR Apache-2.0"
-description = "Language Server Protocol implementation for noyalib — YAML formatting, validation, and hover-driven JSON Schema descriptions"
+description = "Model Context Protocol server exposing noyalib's lossless YAML editing to AI agents"
 repository = "https://github.com/sebastienrousseau/noyalib"
 homepage = "https://github.com/sebastienrousseau/noyalib"
-documentation = "https://docs.rs/noyalib-lsp"
+documentation = "https://docs.rs/noyalib-mcp"
 readme = "README.md"
-keywords = ["yaml", "lsp", "language-server", "editor", "noyalib"]
-categories = ["command-line-utilities", "development-tools"]
+keywords = ["yaml", "mcp", "ai", "claude", "tooling"]
+categories = ["command-line-utilities", "encoding"]
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
 
 [lib]
-name = "noyalib_lsp"
+name = "noyalib_mcp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "noyalib-lsp"
+name = "noyalib-mcp"
 path = "src/main.rs"
 
 [dependencies]
-noyalib = { path = "..", version = "0.0.1", features = ["std", "validate-schema"] }
+noyalib = { path = "../noyalib", version = "0.0.1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

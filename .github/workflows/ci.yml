@@ -323,7 +323,7 @@ jobs:
         # build.rs) fails to compile on stable.
         run: |
           cargo +nightly llvm-cov --workspace --all-features --no-fail-fast \
-            --ignore-filename-regex 'noyalib-wasm/src/lib\.rs|noyalib-(mcp|lsp)/tests/protocol' \
+            --ignore-filename-regex 'crates/noyalib-wasm/src/lib\.rs|crates/noyalib-(mcp|lsp)/tests/protocol' \
             --fail-under-functions 95 \
             --fail-under-lines 93 \
             --fail-under-regions 92

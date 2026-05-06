@@ -1,4 +1,4 @@
-/target
+target/
 
 # Editor artifacts
 .idea/
@@ -29,4 +29,4 @@ tarpaulin-report.html
 /patch_*.py
 /debug.rs
 /scratch.*
-noyalib-wasm/Cargo.lock
+crates/noyalib-wasm/Cargo.lock

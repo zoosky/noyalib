@@ -278,7 +278,7 @@ Built on top of the lossless CST:
 
   ```bash
   # Install the server binary into ~/.cargo/bin (preferred).
-  cargo install --path noyalib-lsp
+  cargo install --path crates/noyalib-lsp
   # …or build from a checkout without installing globally:
   cargo build -p noyalib-lsp --release  # → target/release/noyalib-lsp
   ```

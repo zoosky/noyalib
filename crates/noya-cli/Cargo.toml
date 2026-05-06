@@ -1,0 +1,37 @@
+[package]
+name = "noya-cli"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.75.0"
+license = "MIT OR Apache-2.0"
+description = "Command-line tools for noyalib (noyafmt, noyavalidate)"
+repository = "https://github.com/sebastienrousseau/noyalib"
+homepage = "https://github.com/sebastienrousseau/noyalib"
+documentation = "https://docs.rs/noya-cli"
+readme = "README.md"
+keywords = ["yaml", "cli", "formatter", "validator", "schema"]
+categories = ["command-line-utilities", "encoding"]
+authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
+publish = false
+
+[[bin]]
+name = "noyafmt"
+path = "src/bin/noyafmt.rs"
+required-features = ["noyafmt"]
+
+[[bin]]
+name = "noyavalidate"
+path = "src/bin/noyavalidate.rs"
+required-features = ["noyavalidate"]
+
+[dependencies]
+noyalib = { path = "../noyalib", default-features = false }
+miette  = { version = "7", optional = true, features = ["fancy"] }
+
+[features]
+# `noyavalidate` is the default so `cargo build` produces both
+# binaries out of the box. Users who only want `noyafmt` opt in
+# via `--no-default-features --features noyafmt`.
+default = ["noyavalidate"]
+noyafmt = ["noyalib/std"]
+noyavalidate = ["noyafmt", "noyalib/noyavalidate", "dep:miette"]
