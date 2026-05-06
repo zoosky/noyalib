@@ -71,6 +71,22 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "yaml-test-suite contributors"
 SPDX-License-Identifier = "MIT"
 
+# ── Generated CLI artefacts ───────────────────────────────────────
+# `complete/*` and `doc/*.1` are regenerated from the clap Command
+# tree by `cargo xtask {completions,manpages}` (and from the
+# build script when NOYA_GEN_ASSETS=1). Files are tracked because
+# distro packagers prefer pre-built artefacts; they remain
+# bit-reproducible from source.
+[[annotations]]
+path = [
+    "complete/**",
+    "doc/noyafmt.1",
+    "doc/noyavalidate.1",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # ── Fuzz corpora ──────────────────────────────────────────────────
 [[annotations]]
 path = [
@@ -86,12 +102,14 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 # ── Sub-workspaces (WASM / MCP / examples) ────────────────────────
 [[annotations]]
 path = [
+    ".cargo/config.toml",
     "crates/noya-cli/Cargo.toml",
     "crates/noyalib/Cargo.toml",
     "crates/noyalib-wasm/Cargo.toml",
     "crates/noyalib-wasm/index.html",
     "crates/noyalib-mcp/Cargo.toml",
     "crates/noyalib-lsp/Cargo.toml",
+    "crates/xtask/Cargo.toml",
     "crates/noyalib/examples/wasm/.gitignore",
     "crates/noyalib/examples/wasm/Cargo.toml",
     "crates/noyalib/examples/wasm/index.html",

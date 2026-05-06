@@ -110,9 +110,10 @@ fn check_and_write_are_mutually_exclusive() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8(out.stderr)
-        .unwrap()
-        .contains("mutually exclusive"));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    // clap reports mutually-exclusive flags as
+    // `the argument '--check' cannot be used with '--write'`.
+    assert!(stderr.contains("cannot be used with"));
 }
 
 #[test]
@@ -137,7 +138,9 @@ fn help_prints_usage_and_exits_zero() {
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("noyafmt"));
-    assert!(stdout.contains("USAGE:"));
+    // clap renders the usage section as `Usage:` (mixed case, no
+    // colon-prefix the way the hand-rolled USAGE block did).
+    assert!(stdout.contains("Usage:"));
 }
 
 #[test]

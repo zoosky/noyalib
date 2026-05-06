@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Noyalib
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# `cargo xtask <subcommand>` — runs the workspace's internal
+# release-pipeline tooling under `crates/xtask/`. Used to
+# regenerate man pages and shell completions; see the xtask
+# crate's main.rs for the full subcommand list.
+[alias]
+xtask = "run --quiet --package xtask --release --"

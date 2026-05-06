@@ -14,19 +14,9 @@
 //! quoting without changing semantics. When the input is stdin,
 //! the formatted output is written to stdout instead.
 //!
-//! # Usage
-//!
-//! ```text
-//! noyavalidate [OPTIONS] [FILE]
-//!
-//! Options:
-//!   -s, --schema <PATH>   Validate against JSON Schema at PATH (YAML or JSON).
-//!       --fix             Rewrite FILE in place via the CST formatter (or
-//!                         emit to stdout if reading from stdin).
-//!   -q, --quiet           Suppress success output.
-//!   -h, --help            Show this message.
-//!   -V, --version         Print version.
-//! ```
+//! The argv-parsing surface lives in [`noya_cli::NoyavalidateCli`]
+//! so the same Command tree feeds the binary, the build-time
+//! codegen, and the `cargo xtask` runner.
 //!
 //! # Exit codes
 //!
@@ -42,104 +32,9 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::Parser;
 use miette::{NamedSource, Report};
-
-const USAGE: &str = "\
-noyavalidate -- validate YAML syntax (and optional JSON Schema)
-
-USAGE:
-    noyavalidate [OPTIONS] [FILE]
-
-ARGS:
-    <FILE>    YAML file to validate. Use '-' or omit for stdin.
-
-OPTIONS:
-    -s, --schema <PATH>   Validate each document against JSON Schema 2020-12
-                          at PATH (the schema may itself be YAML or JSON).
-        --fix             Rewrite FILE in place via the CST formatter
-                          (lossless: byte-faithful for everything except
-                          normalised whitespace / line endings). With
-                          stdin input, the formatted bytes go to stdout.
-    -q, --quiet           Suppress success output.
-    -h, --help            Print this help.
-    -V, --version         Print version.
-
-EXIT CODES:
-    0    All documents valid (and fixed if --fix)
-    1    Parse error or schema violation
-    2    Usage error
-    3    I/O error";
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-enum Action {
-    Validate {
-        path: Option<PathBuf>,
-        schema: Option<PathBuf>,
-        fix: bool,
-        quiet: bool,
-    },
-    Help,
-    Version,
-    Error(String),
-}
-
-fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Action {
-    let mut path: Option<PathBuf> = None;
-    let mut schema: Option<PathBuf> = None;
-    let mut fix = false;
-    let mut quiet = false;
-    let mut stdin_explicit = false;
-
-    let mut iter = argv.into_iter().skip(1);
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "-h" | "--help" => return Action::Help,
-            "-V" | "--version" => return Action::Version,
-            "-q" | "--quiet" => quiet = true,
-            "--fix" => fix = true,
-            "-s" | "--schema" => match iter.next() {
-                Some(v) => schema = Some(PathBuf::from(v)),
-                None => return Action::Error("--schema requires a PATH argument".into()),
-            },
-            s if s.starts_with("--schema=") => {
-                schema = Some(PathBuf::from(&s["--schema=".len()..]));
-            }
-            "-" => stdin_explicit = true,
-            "--" => {
-                if let Some(rest) = iter.next() {
-                    if path.is_some() {
-                        return Action::Error("too many positional arguments".into());
-                    }
-                    path = Some(PathBuf::from(rest));
-                }
-                if iter.next().is_some() {
-                    return Action::Error("too many positional arguments".into());
-                }
-            }
-            a if a.starts_with('-') => {
-                return Action::Error(format!("unknown option: {a}"));
-            }
-            a => {
-                if path.is_some() {
-                    return Action::Error("too many positional arguments".into());
-                }
-                path = Some(PathBuf::from(a));
-            }
-        }
-    }
-
-    if stdin_explicit && path.is_some() {
-        return Action::Error("cannot combine '-' with a FILE argument".into());
-    }
-
-    Action::Validate {
-        path,
-        schema,
-        fix,
-        quiet,
-    }
-}
+use noya_cli::NoyavalidateCli;
 
 fn read_input(path: Option<&Path>) -> io::Result<(String, String)> {
     match path {
@@ -224,94 +119,79 @@ fn run_fix(path: Option<&Path>, source: &str) -> io::Result<()> {
 }
 
 fn run() -> ExitCode {
-    let argv: Vec<String> = std::env::args().collect();
-    match parse_args(argv) {
-        Action::Help => {
-            println!("{USAGE}");
-            ExitCode::from(0)
+    let args = NoyavalidateCli::parse();
+
+    // `-` as the positional means "explicitly read from stdin" — clap
+    // accepts it as a valid PathBuf, so normalise it back to None
+    // (the read path's None branch reads stdin).
+    let path: Option<PathBuf> = match args.file {
+        Some(ref p) if p.as_os_str() == "-" => None,
+        other => other,
+    };
+
+    let (name, source) = match read_input(path.as_deref()) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("error: reading input: {e}");
+            return ExitCode::from(3);
         }
-        Action::Version => {
-            println!("noyavalidate {VERSION}");
-            ExitCode::from(0)
+    };
+
+    // Phase 1: syntax check.
+    let docs = match noyalib::load_all_as::<noyalib::Value>(&source) {
+        Ok(d) => d,
+        Err(e) => {
+            let report = Report::new(e).with_source_code(NamedSource::new(name, source.clone()));
+            eprintln!("{report:?}");
+            return ExitCode::from(1);
         }
-        Action::Error(msg) => {
-            eprintln!("error: {msg}");
-            eprintln!();
-            eprintln!("{USAGE}");
-            ExitCode::from(2)
-        }
-        Action::Validate {
-            path,
-            schema,
-            fix,
-            quiet,
-        } => {
-            let (name, source) = match read_input(path.as_deref()) {
-                Ok(pair) => pair,
-                Err(e) => {
-                    eprintln!("error: reading input: {e}");
-                    return ExitCode::from(3);
-                }
-            };
+    };
 
-            // Phase 1: syntax check.
-            let docs = match noyalib::load_all_as::<noyalib::Value>(&source) {
-                Ok(d) => d,
-                Err(e) => {
-                    let report =
-                        Report::new(e).with_source_code(NamedSource::new(name, source.clone()));
-                    eprintln!("{report:?}");
-                    return ExitCode::from(1);
-                }
-            };
-
-            // Phase 2: optional schema check.
-            if let Some(schema_path) = schema.as_deref() {
-                let schema_text = match read_schema(schema_path) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!("error: reading schema {}: {e}", schema_path.display());
-                        return ExitCode::from(3);
-                    }
-                };
-                let label = schema_path.display().to_string();
-                let violations = run_schema_validation(&docs, &schema_text, &label, &name, &source);
-                if violations > 0 {
-                    return ExitCode::from(1);
-                }
+    // Phase 2: optional schema check.
+    if let Some(schema_path) = args.schema.as_deref() {
+        let schema_text = match read_schema(schema_path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("error: reading schema {}: {e}", schema_path.display());
+                return ExitCode::from(3);
             }
-
-            // Phase 3: optional fix.
-            if fix {
-                if let Err(e) = run_fix(path.as_deref(), &source) {
-                    eprintln!("error: applying --fix: {e}");
-                    let code = if e.kind() == io::ErrorKind::InvalidData {
-                        1
-                    } else {
-                        3
-                    };
-                    return ExitCode::from(code);
-                }
-            }
-
-            // Suppress the chatter when --fix is reading from stdin
-            // — stdout is reserved for the formatted bytes and any
-            // trailing message would corrupt downstream consumers.
-            let stdin_fix = fix && path.is_none();
-            if !quiet && !stdin_fix {
-                let n = docs.len();
-                let plural = if n == 1 { "document" } else { "documents" };
-                let suffix = match (schema.is_some(), fix) {
-                    (true, true) => " (schema-checked, fixed)",
-                    (true, false) => " (schema-checked)",
-                    (false, true) => " (fixed)",
-                    (false, false) => "",
-                };
-                println!("ok: {n} {plural} valid ({name}){suffix}");
-            }
-            ExitCode::from(0)
+        };
+        let label = schema_path.display().to_string();
+        let violations = run_schema_validation(&docs, &schema_text, &label, &name, &source);
+        if violations > 0 {
+            return ExitCode::from(1);
         }
     }
+
+    // Phase 3: optional fix.
+    if args.fix {
+        if let Err(e) = run_fix(path.as_deref(), &source) {
+            eprintln!("error: applying --fix: {e}");
+            let code = if e.kind() == io::ErrorKind::InvalidData {
+                1
+            } else {
+                3
+            };
+            return ExitCode::from(code);
+        }
+    }
+
+    // Suppress the chatter when --fix is reading from stdin
+    // — stdout is reserved for the formatted bytes and any
+    // trailing message would corrupt downstream consumers.
+    let stdin_fix = args.fix && path.is_none();
+    if !args.quiet && !stdin_fix {
+        let n = docs.len();
+        let plural = if n == 1 { "document" } else { "documents" };
+        let suffix = match (args.schema.is_some(), args.fix) {
+            (true, true) => " (schema-checked, fixed)",
+            (true, false) => " (schema-checked)",
+            (false, true) => " (fixed)",
+            (false, false) => "",
+        };
+        println!("ok: {n} {plural} valid ({name}){suffix}");
+    }
+    ExitCode::from(0)
 }
 
 fn main() -> ExitCode {

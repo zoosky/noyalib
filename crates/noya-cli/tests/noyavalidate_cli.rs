@@ -144,7 +144,8 @@ fn help_flag_short() {
     let output = bin().arg("-h").output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("USAGE:"));
+    // clap renders Usage: (mixed case) rather than the old USAGE: header.
+    assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--quiet"));
 }
 
@@ -179,8 +180,9 @@ fn unknown_flag_exits_2() {
     let output = bin().arg("--bogus").output().unwrap();
     assert_eq!(output.status.code().unwrap(), 2);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("unknown option"));
-    assert!(stderr.contains("USAGE:"));
+    // clap reports unknown args as "unexpected argument".
+    assert!(stderr.contains("unexpected argument"));
+    assert!(stderr.contains("Usage:"));
 }
 
 #[test]
@@ -188,15 +190,20 @@ fn too_many_files_exits_2() {
     let output = bin().args(["a.yaml", "b.yaml"]).output().unwrap();
     assert_eq!(output.status.code().unwrap(), 2);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("too many"));
+    // clap rejects extras as "unexpected argument 'b.yaml' found".
+    assert!(stderr.contains("unexpected argument"));
 }
 
 #[test]
 fn stdin_combined_with_file_exits_2() {
+    // clap accepts `-` as the positional, so the second argument
+    // collides as an unexpected positional. The old hand-rolled
+    // parser rejected the combination explicitly; clap does it via
+    // its standard "unexpected argument" path.
     let output = bin().args(["-", "a.yaml"]).output().unwrap();
     assert_eq!(output.status.code().unwrap(), 2);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("'-'"));
+    assert!(stderr.contains("unexpected argument"));
 }
 
 // ── I/O errors ───────────────────────────────────────────────────────────
@@ -231,7 +238,8 @@ fn schema_flag_with_no_path_exits_2() {
     let output = bin().arg("--schema").output().unwrap();
     assert_eq!(output.status.code().unwrap(), 2);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("--schema requires"));
+    // clap reports "a value is required for '--schema <PATH>'".
+    assert!(stderr.contains("--schema") && stderr.contains("value"));
 }
 
 #[test]

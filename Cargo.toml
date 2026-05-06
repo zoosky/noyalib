@@ -6,6 +6,7 @@ members = [
     "crates/noyalib-lsp",
     "crates/noyalib-mcp",
     "crates/noyalib-wasm",
+    "crates/xtask",
 ]
 exclude = ["crates/noyalib/examples/wasm", "fuzz"]
 
