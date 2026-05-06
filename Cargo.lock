@@ -1125,6 +1125,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "criterion",
  "miette",
  "noyalib",
 ]
@@ -1163,6 +1164,7 @@ dependencies = [
 name = "noyalib-lsp"
 version = "0.0.1"
 dependencies = [
+ "criterion",
  "noyalib",
  "serde",
  "serde_json",
@@ -1172,6 +1174,7 @@ dependencies = [
 name = "noyalib-mcp"
 version = "0.0.1"
 dependencies = [
+ "criterion",
  "noyalib",
  "serde",
  "serde_json",

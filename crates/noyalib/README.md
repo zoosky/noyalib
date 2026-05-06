@@ -219,7 +219,7 @@ let s: Server = from_str("host: api\nport: 8080\n")?;
 ```rust
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Cfg { port: u16, host: String }
 
 let yaml = "port: 8080\nhost: api\nporrt: 9090\n";   // typo

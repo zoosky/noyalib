@@ -130,6 +130,15 @@
 #![cfg_attr(noyalib_coverage, allow(unstable_features))]
 #![cfg_attr(noyalib_coverage, feature(coverage_attribute))]
 
+// README doctest coverage: every ```rust block in
+// crates/noyalib/README.md is exercised by `cargo test --doc`.
+// The hidden module exists only when doctesting so the README
+// content does not leak into the docs.rs page (the lib's own
+// crate-level docs above are the canonical surface there).
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
+
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 

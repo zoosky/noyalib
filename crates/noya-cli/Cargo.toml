@@ -41,6 +41,13 @@ clap          = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 clap_mangen   = "0.2"
 
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "cli_dispatch"
+harness = false
+
 [features]
 # `noyavalidate` is the default so `cargo build` produces both
 # binaries out of the box. Users who only want `noyafmt` opt in
