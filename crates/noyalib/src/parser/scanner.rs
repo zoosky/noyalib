@@ -2489,7 +2489,14 @@ impl<'a> Scanner<'a> {
                             string.push(ch);
                         }
                         b'u' => {
-                            let ch = self.scan_hex_escape(4)?;
+                            // JSON-style UTF-16 surrogate pair escape:
+                            // `𝄞` encodes U+1D11E (𝄞). When
+                            // we see a high surrogate, peek for a
+                            // following `\uXXXX` low surrogate and pair
+                            // them. Lone or reversed surrogates fall
+                            // through to `scan_hex_escape_pair`'s
+                            // existing rejection path.
+                            let ch = self.scan_unicode_4()?;
                             string.push(ch);
                         }
                         b'U' => {
@@ -2623,6 +2630,89 @@ impl<'a> Scanner<'a> {
         let code =
             u32::from_str_radix(hex_str, 16).map_err(|_| self.error("invalid hex escape"))?;
         char::from_u32(code).ok_or_else(|| ScanError {
+            message: Cow::Owned(format!("invalid Unicode code point U+{code:04X}")),
+            index: start,
+        })
+    }
+
+    /// `\uXXXX` escape with JSON-style UTF-16 surrogate pairing.
+    ///
+    /// Reads four hex digits. If the value is a high surrogate
+    /// (`U+D800..=U+DBFF`), peeks for an immediately-following
+    /// `\uXXXX` low-surrogate (`U+DC00..=U+DFFF`) and combines the
+    /// pair into a single supplementary-plane code point per the
+    /// UTF-16 algorithm. A lone or reversed surrogate is rejected
+    /// with the same error shape as a single bad `\uD800`.
+    ///
+    /// Lifted out of `scan_hex_escape` so the 2-digit (`\xXX`),
+    /// 8-digit (`\UXXXXXXXX`), and tag-decode call sites keep the
+    /// strict "no surrogate halves" invariant.
+    fn scan_unicode_4(&mut self) -> ScanResult<char> {
+        let start = self.pos;
+        for _ in 0..4 {
+            if self.is_eof() || !self.peek().is_ascii_hexdigit() {
+                return Err(ScanError {
+                    message: Cow::Owned("expected 4 hex digits in escape sequence".into()),
+                    index: start,
+                });
+            }
+            self.advance();
+        }
+        let hex_str = self.slice_str(start, self.pos);
+        let code =
+            u32::from_str_radix(hex_str, 16).map_err(|_| self.error("invalid hex escape"))?;
+
+        // Fast path: not a surrogate at all.
+        if let Some(ch) = char::from_u32(code) {
+            return Ok(ch);
+        }
+
+        // Surrogate territory (U+D800..=U+DFFF).
+        const HIGH_LO: u32 = 0xD800;
+        const HIGH_HI: u32 = 0xDBFF;
+        const LOW_LO: u32 = 0xDC00;
+        const LOW_HI: u32 = 0xDFFF;
+
+        if (HIGH_LO..=HIGH_HI).contains(&code) && self.peek() == b'\\' && self.peek_at(1) == b'u' {
+            // Tentatively consume `\u`. If the following 4 digits do
+            // not pair, error out at the original `\uD8XX` position.
+            let pair_start = self.pos;
+            self.advance_by(2);
+            let low_start = self.pos;
+            for _ in 0..4 {
+                if self.is_eof() || !self.peek().is_ascii_hexdigit() {
+                    return Err(ScanError {
+                        message: Cow::Owned(
+                            "high surrogate must be followed by a `\\uXXXX` low surrogate".into(),
+                        ),
+                        index: pair_start,
+                    });
+                }
+                self.advance();
+            }
+            let low_hex = self.slice_str(low_start, self.pos);
+            let low =
+                u32::from_str_radix(low_hex, 16).map_err(|_| self.error("invalid hex escape"))?;
+            if !(LOW_LO..=LOW_HI).contains(&low) {
+                return Err(ScanError {
+                    message: Cow::Owned(format!(
+                        "high surrogate U+{code:04X} not followed by a low surrogate (got U+{low:04X})"
+                    )),
+                    index: pair_start,
+                });
+            }
+            let combined = 0x10000 + ((code - HIGH_LO) << 10) + (low - LOW_LO);
+            return char::from_u32(combined).ok_or_else(|| ScanError {
+                message: Cow::Owned(format!(
+                    "surrogate pair encodes invalid Unicode code point U+{combined:04X}"
+                )),
+                index: start,
+            });
+        }
+
+        // Lone surrogate (high without follow-up, or low surrogate
+        // appearing first) — reject with the canonical error shape.
+        Err(ScanError {
             message: Cow::Owned(format!("invalid Unicode code point U+{code:04X}")),
             index: start,
         })
