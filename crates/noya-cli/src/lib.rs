@@ -248,9 +248,8 @@ mod tests {
 
     #[test]
     fn noyavalidate_fix_quiet_flags() {
-        let cli =
-            NoyavalidateCli::try_parse_from(["noyavalidate", "--fix", "--quiet", "in.yaml"])
-                .unwrap();
+        let cli = NoyavalidateCli::try_parse_from(["noyavalidate", "--fix", "--quiet", "in.yaml"])
+            .unwrap();
         assert!(cli.fix);
         assert!(cli.quiet);
     }

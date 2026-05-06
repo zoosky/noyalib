@@ -99,9 +99,9 @@ fn write_manpages(root: &Path) -> std::io::Result<()> {
     ] {
         let path = out.join(format!("{name}.1"));
         let mut buffer: Vec<u8> = Vec::with_capacity(4096);
-        clap_mangen::Man::new(cmd).render(&mut buffer).map_err(|e| {
-            std::io::Error::other(format!("clap_mangen::Man::render failed: {e}"))
-        })?;
+        clap_mangen::Man::new(cmd)
+            .render(&mut buffer)
+            .map_err(|e| std::io::Error::other(format!("clap_mangen::Man::render failed: {e}")))?;
         fs::write(&path, buffer)?;
         eprintln!("→ {}", path.display());
     }

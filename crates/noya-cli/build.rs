@@ -77,6 +77,5 @@ fn gen_manpage(out_dir: &Path, name: &str, cmd: clap::Command) {
     clap_mangen::Man::new(cmd)
         .render(&mut buffer)
         .expect("clap_mangen::Man::render must succeed in build.rs");
-    std::fs::write(&path, buffer)
-        .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+    std::fs::write(&path, buffer).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
 }
