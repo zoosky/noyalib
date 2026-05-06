@@ -1,0 +1,774 @@
+# SPDX-FileCopyrightText: 2026 Noyalib
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Multi-platform binary release pipeline (Phase 4 of PLAN.md).
+#
+# Status: Phase 4.1.a — `workflow_dispatch` only with `dry_run`
+# defaulting to true. After a clean dry-run end-to-end against an
+# existing tag, the trigger expands to include `push.tags`. Until
+# then this workflow can be exercised manually without affecting
+# the existing crates.io-only `release.yml`.
+#
+# Pipeline shape (mirrors ripgrep's release.yml + the satellite
+# packaging channels added in PLAN.md):
+#
+#   create-release ─┬─► build-release  ─► lipo-universal ─┐
+#                   │   (matrix × 14)                       │
+#                   ├──► .deb  (gnu legs)                   ├─► github-release
+#                   ├──► .rpm  (gnu legs)                   │       │
+#                   ├──► .msi  (win legs)                   │       │
+#                   └──► verify-reproducible ───────────────┘       │
+#                                                                   ▼
+#         ┌─────┬─────┬───────────┬──────────────┬────────────┐
+#         ▼     ▼     ▼           ▼              ▼            ▼
+#     homebrew aur  scoop  vscode-extension  npm-publish  container-publish
+#
+# Every artefact is signed with cosign keyless and carries a SLSA
+# L3 build provenance attestation. Per-channel jobs are gated on
+# `inputs.dry_run` so a dry-run produces every artefact without
+# pushing to any external registry.
+#
+# Required repo secrets (no-ops on dry-run):
+#   HOMEBREW_TAP_TOKEN   → mislav/bump-homebrew-formula-action
+#   AUR_SSH_PRIVATE_KEY  → KSXGitHub/github-actions-deploy-aur
+#   SCOOP_BUCKET_TOKEN   → ScoopInstaller/GithubActions
+#   VSCODE_MARKETPLACE_PAT  → vsce publish
+#   OPEN_VSX_PAT         → ovsx publish
+#   NPM_TOKEN            → npm publish --provenance
+#   GITHUB_TOKEN         → provided automatically (release upload, GHCR push)
+
+name: Release binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to package (e.g. v0.0.1). Must already exist on origin.'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build artefacts only; skip every publish + bump step.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  # ── Tag-gated release skeleton ──────────────────────────────────────
+  create-release:
+    name: Create GitHub Release skeleton
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      source_date_epoch: ${{ steps.parse.outputs.source_date_epoch }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Parse version + commit timestamp
+        id: parse
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          VER="${TAG#v}"
+          SDE=$(git log -1 --format=%ct "$TAG")
+          echo "version=${VER}"             >> "$GITHUB_OUTPUT"
+          echo "source_date_epoch=${SDE}"   >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VER}"
+          echo "SOURCE_DATE_EPOCH: ${SDE}"
+
+      - name: Verify tag matches every workspace Cargo.toml
+        run: |
+          set -euo pipefail
+          VER="${{ steps.parse.outputs.version }}"
+          fail=0
+          for manifest in crates/noyalib/Cargo.toml crates/noya-cli/Cargo.toml; do
+            CARGO_VER=$(grep -E '^version *=' "$manifest" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            if [ "$VER" != "$CARGO_VER" ]; then
+              echo "::error file=${manifest}::Tag version (${VER}) does not match version (${CARGO_VER})"
+              fail=1
+            fi
+          done
+          [ $fail -eq 0 ] || exit 1
+
+  # ── Per-target binary build ─────────────────────────────────────────
+  build-release:
+    name: Build (${{ matrix.target }})
+    needs: create-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux glibc
+          - { target: x86_64-unknown-linux-gnu,         runner: ubuntu-latest,    cross: false, deb: true,  rpm: true,  archive: tar.gz }
+          - { target: aarch64-unknown-linux-gnu,        runner: ubuntu-24.04-arm, cross: false, deb: true,  rpm: true,  archive: tar.gz }
+          - { target: armv7-unknown-linux-gnueabihf,    runner: ubuntu-latest,    cross: true,  deb: true,  rpm: false, archive: tar.gz }
+          - { target: arm-unknown-linux-gnueabihf,      runner: ubuntu-latest,    cross: true,  deb: true,  rpm: false, archive: tar.gz }
+          - { target: powerpc64le-unknown-linux-gnu,    runner: ubuntu-latest,    cross: true,  deb: true,  rpm: false, archive: tar.gz }
+          - { target: s390x-unknown-linux-gnu,          runner: ubuntu-latest,    cross: true,  deb: true,  rpm: false, archive: tar.gz }
+          - { target: riscv64gc-unknown-linux-gnu,      runner: ubuntu-latest,    cross: true,  deb: true,  rpm: false, archive: tar.gz }
+          # Linux musl (statically linked)
+          - { target: x86_64-unknown-linux-musl,        runner: ubuntu-latest,    cross: true,  deb: false, rpm: false, archive: tar.gz }
+          - { target: aarch64-unknown-linux-musl,       runner: ubuntu-24.04-arm, cross: false, deb: false, rpm: false, archive: tar.gz }
+          # macOS
+          - { target: x86_64-apple-darwin,              runner: macos-15-intel,   cross: false, deb: false, rpm: false, archive: tar.gz }
+          - { target: aarch64-apple-darwin,             runner: macos-14,         cross: false, deb: false, rpm: false, archive: tar.gz }
+          # Windows
+          - { target: x86_64-pc-windows-msvc,           runner: windows-latest,   cross: false, deb: false, rpm: false, archive: zip, ext: .exe, msi: true }
+          - { target: i686-pc-windows-msvc,             runner: windows-latest,   cross: false, deb: false, rpm: false, archive: zip, ext: .exe, msi: false }
+          - { target: aarch64-pc-windows-msvc,          runner: windows-latest,   cross: false, deb: false, rpm: false, archive: zip, ext: .exe, msi: false }
+
+    env:
+      VERSION:           ${{ needs.create-release.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.create-release.outputs.source_date_epoch }}
+      ARCHIVE_BASE:      noyalib-${{ needs.create-release.outputs.version }}-${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+          targets:   ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked --version 0.2.5
+
+      # ── Reproducible-build flags ──────────────────────────────
+      - name: Configure reproducible build env
+        shell: bash
+        run: |
+          {
+            echo "RUSTFLAGS=--remap-path-prefix=$HOME=~ --remap-path-prefix=${{ github.workspace }}=/build"
+            echo "NOYA_GEN_ASSETS=1"
+          } >> "$GITHUB_ENV"
+
+      # ── Compile ───────────────────────────────────────────────
+      - name: Build (cargo)
+        if: ${{ !matrix.cross }}
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} \
+              --manifest-path crates/noya-cli/Cargo.toml \
+              --bin noyafmt --bin noyavalidate
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: |
+          cross build --release --locked --target ${{ matrix.target }} \
+              --manifest-path crates/noya-cli/Cargo.toml \
+              --bin noyafmt --bin noyavalidate
+
+      # ── Debug-symbol split (Linux gnu only) ────────────────────
+      - name: Strip + extract debug symbols
+        if: matrix.deb && !matrix.cross
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bin in noyafmt noyavalidate; do
+            BIN="target/${{ matrix.target }}/release/${bin}"
+            llvm-objcopy --only-keep-debug "${BIN}" "${BIN}.debug"
+            llvm-objcopy --strip-debug --strip-unneeded "${BIN}"
+            llvm-objcopy --add-gnu-debuglink="${BIN}.debug" "${BIN}"
+            file "${BIN}"
+          done
+
+      # ── Stage release tarball / zip ────────────────────────────
+      - name: Stage archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)/${ARCHIVE_BASE}"
+          mkdir -p "$STAGE/doc" "$STAGE/complete"
+          EXT='${{ matrix.ext }}'
+          cp "target/${{ matrix.target }}/release/noyafmt${EXT}"      "$STAGE/"
+          cp "target/${{ matrix.target }}/release/noyavalidate${EXT}" "$STAGE/"
+          cp README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT        "$STAGE/"
+          cp doc/noyafmt.1 doc/noyavalidate.1                         "$STAGE/doc/"
+          cp -r complete/. "$STAGE/complete/"
+          cd "$(dirname "$STAGE")"
+          if [[ '${{ matrix.archive }}' == 'zip' ]]; then
+            7z a "${ARCHIVE_BASE}.zip" "$(basename "$STAGE")"
+            mv "${ARCHIVE_BASE}.zip" "${{ github.workspace }}/"
+          else
+            tar -czf "${ARCHIVE_BASE}.tar.gz" "$(basename "$STAGE")"
+            mv "${ARCHIVE_BASE}.tar.gz" "${{ github.workspace }}/"
+          fi
+
+      # ── Stage debuginfo tarball (Linux gnu only) ──────────────
+      - name: Stage debuginfo tarball
+        if: matrix.deb && !matrix.cross
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)/${ARCHIVE_BASE}-debuginfo"
+          mkdir -p "$STAGE"
+          cp "target/${{ matrix.target }}/release/noyafmt.debug"      "$STAGE/"
+          cp "target/${{ matrix.target }}/release/noyavalidate.debug" "$STAGE/"
+          cp LICENSE-APACHE LICENSE-MIT                                "$STAGE/"
+          cd "$(dirname "$STAGE")"
+          tar -czf "${ARCHIVE_BASE}-debuginfo.tar.gz" "$(basename "$STAGE")"
+          mv "${ARCHIVE_BASE}-debuginfo.tar.gz" "${{ github.workspace }}/"
+
+      # ── .deb (Linux gnu legs only) ─────────────────────────────
+      - name: Build .deb
+        if: matrix.deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-deb --locked --version 2.4.0
+          cargo deb --target ${{ matrix.target }} \
+              --manifest-path crates/noya-cli/Cargo.toml \
+              --no-build --no-strip \
+              --output "${{ github.workspace }}/${ARCHIVE_BASE}.deb"
+
+      # ── .rpm (x86_64-gnu, aarch64-gnu only) ────────────────────
+      - name: Build .rpm
+        if: matrix.rpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-generate-rpm --locked --version 0.16.0
+          cargo generate-rpm --target ${{ matrix.target }} \
+              --package noya-cli \
+              --output "${{ github.workspace }}/${ARCHIVE_BASE}.rpm"
+
+      # ── .msi (Windows MSVC legs only) ──────────────────────────
+      - name: Build .msi
+        if: matrix.msi
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-wix --locked --version 0.3.9
+          # Render WiX source with the resolved version number, then
+          # invoke cargo-wix using the rendered file.
+          mkdir -p target/wix
+          sed "s/__VERSION__/${VERSION}/g" pkg/windows/wix/noyalib.wxs \
+              > target/wix/noyalib.wxs
+          cargo wix --target ${{ matrix.target }} \
+              --package noya-cli \
+              --no-build \
+              --include target/wix/noyalib.wxs \
+              --output "${{ github.workspace }}/${ARCHIVE_BASE}.msi"
+
+      # ── Checksums + sigstore ──────────────────────────────────
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ github.workspace }}"
+          for f in ${ARCHIVE_BASE}.tar.gz ${ARCHIVE_BASE}.zip \
+                   ${ARCHIVE_BASE}.deb ${ARCHIVE_BASE}.rpm \
+                   ${ARCHIVE_BASE}.msi ${ARCHIVE_BASE}-debuginfo.tar.gz; do
+            [[ -f "$f" ]] || continue
+            shasum -a 256 "$f" > "${f}.sha256"
+            shasum -a 512 "$f" > "${f}.sha512"
+          done
+
+      - name: Attest build provenance (SLSA L3)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.tar.gz
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.zip
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.deb
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.rpm
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.msi
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}-debuginfo.tar.gz
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign artefacts (keyless)
+        env:
+          COSIGN_YES: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ github.workspace }}"
+          for f in ${ARCHIVE_BASE}.tar.gz ${ARCHIVE_BASE}.zip \
+                   ${ARCHIVE_BASE}.deb ${ARCHIVE_BASE}.rpm \
+                   ${ARCHIVE_BASE}.msi ${ARCHIVE_BASE}-debuginfo.tar.gz; do
+            [[ -f "$f" ]] || continue
+            cosign sign-blob \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+
+      # ── Upload paths ───────────────────────────────────────────
+      - name: Upload to GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ github.workspace }}"
+          gh release upload "${{ inputs.tag }}" \
+            ${ARCHIVE_BASE}.tar.gz* ${ARCHIVE_BASE}.zip* \
+            ${ARCHIVE_BASE}.deb*    ${ARCHIVE_BASE}.rpm* \
+            ${ARCHIVE_BASE}.msi*    ${ARCHIVE_BASE}-debuginfo.tar.gz* \
+            --clobber 2>/dev/null || true
+
+      - name: Upload artefact (always; dry-run consumes it)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARCHIVE_BASE }}
+          path: |
+            ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.*
+          retention-days: 7
+
+  # ── macOS Universal Binary (x86_64 + aarch64 → fat) ─────────────────
+  lipo-universal:
+    name: macOS Universal Binary
+    needs: [create-release, build-release]
+    runs-on: macos-14
+    env:
+      VERSION:      ${{ needs.create-release.outputs.version }}
+      ARCHIVE_BASE: noyalib-${{ needs.create-release.outputs.version }}-universal-apple-darwin
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path:           dl
+          merge-multiple: false
+          pattern:        noyalib-${{ env.VERSION }}-*-apple-darwin
+
+      - name: Lipo + stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$(mktemp -d)/${ARCHIVE_BASE}"
+          mkdir -p "$STAGE/doc" "$STAGE/complete"
+          # Each downloaded artefact directory contains the per-arch
+          # tarball; extract both and lipo the resulting binaries.
+          for arch in x86_64 aarch64; do
+            tar -xzf "dl/noyalib-${VERSION}-${arch}-apple-darwin/noyalib-${VERSION}-${arch}-apple-darwin.tar.gz" \
+                -C "dl/"
+          done
+          for bin in noyafmt noyavalidate; do
+            lipo -create \
+              "dl/noyalib-${VERSION}-x86_64-apple-darwin/${bin}" \
+              "dl/noyalib-${VERSION}-aarch64-apple-darwin/${bin}" \
+              -output "$STAGE/${bin}"
+            lipo -info "$STAGE/${bin}"
+          done
+          cp README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT  "$STAGE/"
+          cp doc/noyafmt.1 doc/noyavalidate.1                   "$STAGE/doc/"
+          cp -r complete/. "$STAGE/complete/"
+          cd "$(dirname "$STAGE")"
+          tar -czf "${ARCHIVE_BASE}.tar.gz" "$(basename "$STAGE")"
+          mv "${ARCHIVE_BASE}.tar.gz" "${{ github.workspace }}/"
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd "${{ github.workspace }}"
+          shasum -a 256 "${ARCHIVE_BASE}.tar.gz" > "${ARCHIVE_BASE}.tar.gz.sha256"
+          shasum -a 512 "${ARCHIVE_BASE}.tar.gz" > "${ARCHIVE_BASE}.tar.gz.sha512"
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.tar.gz
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign
+        env:
+          COSIGN_YES: 'true'
+        run: |
+          cd "${{ github.workspace }}"
+          cosign sign-blob \
+            --output-signature "${ARCHIVE_BASE}.tar.gz.sig" \
+            --output-certificate "${ARCHIVE_BASE}.tar.gz.pem" \
+            "${ARCHIVE_BASE}.tar.gz"
+
+      - name: Upload to GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "${{ github.workspace }}"
+          gh release upload "${{ inputs.tag }}" \
+            ${ARCHIVE_BASE}.tar.gz*  --clobber 2>/dev/null || true
+
+      - name: Upload artefact (dry-run)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARCHIVE_BASE }}
+          path: ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.*
+          retention-days: 7
+
+  # ── Reproducible-build verification ─────────────────────────────────
+  verify-reproducible:
+    name: Reproducible build
+    needs: [create-release, build-release]
+    runs-on: ubuntu-latest
+    env:
+      TARGET:            x86_64-unknown-linux-gnu
+      VERSION:           ${{ needs.create-release.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.create-release.outputs.source_date_epoch }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+          targets:   ${{ env.TARGET }}
+
+      - name: Rebuild on a clean runner
+        env:
+          RUSTFLAGS: '--remap-path-prefix=$HOME=~ --remap-path-prefix=${{ github.workspace }}=/build'
+          NOYA_GEN_ASSETS: '1'
+        run: |
+          cargo build --release --locked --target ${{ env.TARGET }} \
+              --manifest-path crates/noya-cli/Cargo.toml \
+              --bin noyafmt --bin noyavalidate
+
+      - name: Compute local SHA256
+        id: local
+        run: |
+          set -euo pipefail
+          for bin in noyafmt noyavalidate; do
+            DIGEST=$(sha256sum "target/${TARGET}/release/${bin}" | cut -d' ' -f1)
+            echo "${bin}=${DIGEST}" >> "$GITHUB_OUTPUT"
+            echo "local ${bin}: ${DIGEST}"
+          done
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: noyalib-${{ env.VERSION }}-${{ env.TARGET }}
+          path: dl
+
+      - name: Compare to published artefact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dl
+          tar -xzf "noyalib-${VERSION}-${TARGET}.tar.gz"
+          for bin in noyafmt noyavalidate; do
+            PUBLISHED=$(sha256sum "noyalib-${VERSION}-${TARGET}/${bin}" | cut -d' ' -f1)
+            LOCAL='${{ steps.local.outputs.noyafmt }}'
+            if [ "$bin" = "noyavalidate" ]; then LOCAL='${{ steps.local.outputs.noyavalidate }}'; fi
+            echo "published ${bin}: ${PUBLISHED}"
+            echo "local     ${bin}: ${LOCAL}"
+            if [ "$PUBLISHED" != "$LOCAL" ]; then
+              echo "::error::SHA256 mismatch for ${bin}"
+              exit 1
+            fi
+          done
+
+  # ── GitHub Release notes finalisation ───────────────────────────────
+  github-release:
+    name: GitHub Release
+    needs: [create-release, build-release, lipo-universal, verify-reproducible]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          PREV=$(git tag --sort=-version:refname | grep -v "^${TAG}\$" | head -1 || true)
+          RANGE="${PREV:+${PREV}..}${TAG}"
+          {
+            echo "## What's Changed"
+            echo
+            git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges
+            echo
+            echo
+            echo "## Verification"
+            echo
+            echo "Every artefact is signed with cosign keyless and carries a SLSA L3 attestation."
+            echo "See \`pkg/VERIFY.md\` for the verification cookbook."
+          } > RELEASE_NOTES.md
+          gh release edit "${TAG}" --notes-file RELEASE_NOTES.md
+
+  # ── Homebrew tap PR ─────────────────────────────────────────────────
+  homebrew-bump:
+    name: Bump Homebrew tap
+    needs: [create-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bump formula
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name:    noyalib
+          formula-path:    Formula/noyalib.rb
+          homebrew-tap:    sebastienrousseau/homebrew-tap
+          download-url:    https://github.com/sebastienrousseau/noyalib/archive/refs/tags/${{ inputs.tag }}.tar.gz
+          commit-message: |
+            noyalib ${{ inputs.tag }}
+
+            Created via release-binaries.yml workflow.
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  # ── AUR PKGBUILD update ─────────────────────────────────────────────
+  aur-bump:
+    name: Bump AUR
+    needs: [create-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Compute SHA256s
+        id: sha
+        run: |
+          set -euo pipefail
+          VER="${{ needs.create-release.outputs.version }}"
+          for arch in x86_64 aarch64; do
+            URL="https://github.com/sebastienrousseau/noyalib/releases/download/${{ inputs.tag }}/noyalib-${VER}-${arch}-unknown-linux-gnu.tar.gz"
+            DIGEST=$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)
+            echo "${arch}=${DIGEST}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Render PKGBUILD
+        run: |
+          sed -e "s/__VERSION__/${{ needs.create-release.outputs.version }}/g" \
+              -e "s/__SHA256_X86_64__/${{ steps.sha.outputs.x86_64 }}/g" \
+              -e "s/__SHA256_AARCH64__/${{ steps.sha.outputs.aarch64 }}/g" \
+              pkg/arch/PKGBUILD.template > /tmp/PKGBUILD
+
+      - name: Push to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname:        noyalib-bin
+          pkgbuild:       /tmp/PKGBUILD
+          commit_username: github-actions[bot]
+          commit_email:    github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: 'Update to v${{ needs.create-release.outputs.version }}'
+
+  # ── Scoop bucket update ─────────────────────────────────────────────
+  scoop-bump:
+    name: Bump Scoop bucket
+    needs: [create-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Render manifest
+        id: render
+        run: |
+          set -euo pipefail
+          VER="${{ needs.create-release.outputs.version }}"
+          BASE="https://github.com/sebastienrousseau/noyalib/releases/download/${{ inputs.tag }}"
+          SHA_X64=$(curl -fsSL "${BASE}/noyalib-${VER}-x86_64-pc-windows-msvc.zip" | sha256sum | cut -d' ' -f1)
+          SHA_ARM=$(curl -fsSL "${BASE}/noyalib-${VER}-aarch64-pc-windows-msvc.zip" | sha256sum | cut -d' ' -f1)
+          sed -e "s/__VERSION__/${VER}/g" \
+              -e "s/__SHA256_X64__/${SHA_X64}/g" \
+              -e "s/__SHA256_ARM64__/${SHA_ARM}/g" \
+              pkg/windows/scoop/noyalib.json > /tmp/noyalib.json
+
+      - name: Push to Scoop bucket
+        uses: ScoopInstaller/GithubActions@v2
+        with:
+          token:    ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          bucket:   sebastienrousseau/scoop-bucket
+          manifest: /tmp/noyalib.json
+
+  # ── VS Code Marketplace + Open VSX ──────────────────────────────────
+  vscode-extension:
+    name: Publish VS Code extension
+    needs: [create-release, build-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.create-release.outputs.version }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache:        'npm'
+          cache-dependency-path: pkg/vscode/package.json
+
+      # Pull the bundled noyalib-lsp binaries from this run's
+      # build-release artefacts so the extension carries them.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path:    dl
+          pattern: noyalib-${{ env.VERSION }}-*-apple-darwin
+
+      - name: Build + package .vsix
+        working-directory: pkg/vscode
+        run: |
+          set -euo pipefail
+          npm install
+          mkdir -p bin
+          # The ext bundle includes only the host's noyalib-lsp; the
+          # `noyalib.path` setting lets users point at a system one.
+          cp ../../target/release/noyalib-lsp bin/ 2>/dev/null || true
+          npx --yes @vscode/vsce package --out "../../noyalib-${{ env.VERSION }}.vsix"
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCODE_MARKETPLACE_PAT }}
+        working-directory: pkg/vscode
+        run: |
+          npx --yes @vscode/vsce publish --packagePath "../../noyalib-${{ env.VERSION }}.vsix"
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OPEN_VSX_PAT }}
+        working-directory: pkg/vscode
+        run: |
+          npx --yes ovsx publish "../../noyalib-${{ env.VERSION }}.vsix"
+
+      - name: Upload .vsix to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+              "noyalib-${{ env.VERSION }}.vsix" --clobber 2>/dev/null || true
+
+  # ── npm publish (wasm-pack) ─────────────────────────────────────────
+  npm-publish:
+    name: Publish @noyalib/noyalib-wasm to npm
+    needs: [create-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+          targets:   wasm32-unknown-unknown
+
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Build (wasm-pack)
+        run: |
+          wasm-pack build --release \
+              --target bundler \
+              --scope noyalib \
+              crates/noyalib-wasm
+
+      - name: Publish (with provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd crates/noyalib-wasm/pkg
+          npm publish --provenance --access public
+
+  # ── npm publish — MCP wrapper ───────────────────────────────────────
+  npm-publish-mcp:
+    name: Publish noyalib-mcp wrapper to npm
+    needs: [create-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Sync version from tag
+        run: |
+          cd pkg/npm-mcp-wrapper
+          npm version "${{ needs.create-release.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Publish (with provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd pkg/npm-mcp-wrapper
+          npm publish --provenance --access public
+
+  # ── Container images (multi-arch via buildx) ────────────────────────
+  container-publish:
+    name: Container ${{ matrix.image.name }}
+    needs: [create-release, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: noyafmt,      dockerfile: pkg/docker/Dockerfile     }
+          - { name: noyalib,      dockerfile: pkg/docker/Dockerfile.full }
+          - { name: noyalib-mcp,  dockerfile: pkg/docker/Dockerfile.mcp }
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (multi-arch)
+        uses: docker/build-push-action@v6
+        with:
+          context:    .
+          file:       ${{ matrix.image.dockerfile }}
+          platforms:  linux/amd64,linux/arm64
+          push:       true
+          provenance: mode=max
+          sbom:       true
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ needs.create-release.outputs.source_date_epoch }}
+          tags: |
+            ghcr.io/sebastienrousseau/${{ matrix.image.name }}:${{ needs.create-release.outputs.version }}
+            ghcr.io/sebastienrousseau/${{ matrix.image.name }}:latest
