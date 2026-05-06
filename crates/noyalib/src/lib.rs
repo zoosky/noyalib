@@ -261,9 +261,9 @@ pub use anchors::{
 };
 pub use comments::{load_comments, Comment, CommentKind};
 #[cfg(feature = "std")]
-pub use de::{
-    from_reader, from_reader_strict, from_reader_with_config, from_slice_strict, from_str_strict,
-};
+pub use de::{from_reader, from_reader_with_config};
+#[cfg(all(feature = "std", feature = "strict-deserialise"))]
+pub use de::{from_reader_strict, from_slice_strict, from_str_strict};
 pub use de::{
     from_slice, from_slice_with_config, from_str, from_str_with_config, from_value, Deserializer,
     DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig,

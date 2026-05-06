@@ -11,7 +11,12 @@
 //!   a typed error that lists every offending path.
 //! - Source-located parse errors carry exact `(line, column)`
 //!   tuples that an editor / CI gutter can highlight directly.
+//!
+//! The `strict-deserialise` feature gates the typo-detection half
+//! of this file; under the `minimal` profile (no default features)
+//! the strict helpers are absent and the file compiles to nothing.
 
+#![cfg(feature = "strict-deserialise")]
 #![allow(missing_docs)]
 
 use noyalib::{from_reader_strict, from_slice_strict, from_str, from_str_strict, Error};

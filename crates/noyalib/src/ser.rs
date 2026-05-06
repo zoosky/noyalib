@@ -537,8 +537,15 @@ fn write_value(
         Value::Null => output.push_str("null"),
         Value::Bool(b) => output.push_str(if *b { "true" } else { "false" }),
         Value::Number(Number::Integer(n)) => {
-            let mut buf = itoa::Buffer::new();
-            output.push_str(buf.format(*n));
+            #[cfg(feature = "fast-int")]
+            {
+                let mut buf = itoa::Buffer::new();
+                output.push_str(buf.format(*n));
+            }
+            #[cfg(not(feature = "fast-int"))]
+            {
+                let _ = write!(output, "{n}");
+            }
         }
         Value::Number(Number::Float(n)) => {
             if n.is_nan() {
@@ -550,8 +557,20 @@ fn write_value(
                     output.push_str("-.inf");
                 }
             } else {
-                let mut buf = ryu::Buffer::new();
-                output.push_str(buf.format(*n));
+                #[cfg(feature = "fast-float")]
+                {
+                    let mut buf = ryu::Buffer::new();
+                    output.push_str(buf.format(*n));
+                }
+                #[cfg(not(feature = "fast-float"))]
+                {
+                    // `{:?}` preserves float-ness for whole numbers
+                    // (`1.0` not `1`) so the YAML round-trips back as
+                    // `Number::Float`. Slower than ryu and emits
+                    // expanded decimal form for very large magnitudes,
+                    // but correct.
+                    let _ = write!(output, "{n:?}");
+                }
             }
         }
         Value::String(s) => write_string(output, s, indent, config),

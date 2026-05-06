@@ -249,8 +249,8 @@ required-features = ["robotics"]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 indexmap = { version = ">=2, <2.11", features = ["serde"] }
 rustc-hash = ">=2, <2.1"
-itoa = "1"
-ryu = "1"
+itoa = { version = "1", optional = true }
+ryu = { version = "1", optional = true }
 memchr = "2.7"
 smallvec = { version = "1.13", default-features = false }
 miette = { version = "7", optional = true }
@@ -295,10 +295,11 @@ serde-saphyr = { version = "0.0", optional = true }
 # `noyalib` runtime call sites stay `#![forbid(unsafe_code)]`.
 rayon = { version = "1.10", optional = true }
 # `serde_ignored` powers `from_str_strict<T>` — surfaces any keys
-# in the input that `T` does not declare. Tiny (no transitive
-# deps) and used unconditionally by the strict-deserialise helper,
-# so kept as a regular dep rather than feature-gated.
-serde_ignored = "0.1"
+# in the input that `T` does not declare. Tiny (no transitive deps),
+# but feature-gated behind `strict-deserialise` so the `minimal`
+# profile (and FIPS / embedded users with strict dep policies) can
+# turn it off.
+serde_ignored = { version = "0.1", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -312,6 +313,11 @@ rust-yaml = "0.0.5"
 # `Deserializer<'de>` works with the standard serde wrappers
 # without any custom integration code.
 serde_path_to_error = "0.1"
+# `serde_ignored` is feature-gated as a runtime dep (powers
+# `strict-deserialise`); duplicating it as a dev-dep keeps the
+# `serde_ecosystem` interop test compiling under
+# `--no-default-features` builds.
+serde_ignored = "0.1"
 
 [[bench]]
 name = "benchmarks"
@@ -355,7 +361,30 @@ name = "numeric_parse"
 harness = false
 
 [features]
-default = ["std"]
+default = ["std", "fast-int", "fast-float", "strict-deserialise"]
+# Branchless integer formatting via `itoa` (~10× faster than
+# `Display::fmt` on integer scalars). Disabling drops the dep and
+# falls back to `core::fmt`; output is identical, only the
+# serializer hot path slows down.
+fast-int = ["dep:itoa"]
+# Branchless float formatting via `ryu` (Grisu-style algorithm).
+# Disabling drops the dep and falls back to Rust's `{:?}` Debug
+# format, which preserves float-ness (`1.0` stays `1.0`) but emits
+# expanded decimal form for very large magnitudes (`{:?}` does not
+# auto-switch to scientific notation the way ryu does).
+fast-float = ["dep:ryu"]
+# `from_str_strict` / `from_slice_strict` / `from_reader_strict`
+# — surface YAML keys that the target struct does not declare as
+# typed `Error::UnknownField`. Backed by `serde_ignored`. Off in
+# the `minimal` profile for FIPS / embedded users with strict
+# dep-budget policies; the regular `from_str` path is unaffected.
+strict-deserialise = ["dep:serde_ignored"]
+# Meta-feature: alias for "std-only, no formatting accelerators,
+# no strict-deserialise helper" — for users with strict dep
+# budgets (FIPS, embedded, audit-heavy environments) who want one
+# explicit opt-in. Equivalent to
+# `default-features = false, features = ["std"]`.
+minimal = ["std"]
 # Synchronise serde's std mode with ours so the `serde::de::Error`
 # trait's `StdError` super-trait resolves consistently. With this
 # wired, `cargo build --no-default-features` truly compiles in

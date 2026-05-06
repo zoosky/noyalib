@@ -60,6 +60,15 @@ the streaming deserialiser run without the standard library.
 (uses thread-local storage), and the CST module require the
 `std` feature, which is enabled by default.
 
+**Lean / FIPS / embedded profile** — for users with strict
+dependency budgets, `default-features = false, features =
+["std"]` (or the equivalent `features = ["minimal"]` alias) drops
+`itoa`, `ryu`, and `serde_ignored`. Numeric formatting falls back
+to `core::fmt` (slower, output remains valid YAML); the
+`from_str_strict` / `from_slice_strict` / `from_reader_strict`
+typo-detection helpers are absent. Re-enable individually with
+`features = ["fast-int", "fast-float", "strict-deserialise"]`.
+
 **MSRV: Rust 1.75.0**, enforced by the `msrv-1-75-core` CI job.
 
 ---

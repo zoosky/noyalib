@@ -69,7 +69,10 @@ impl TryFrom<f64> for StrictFloat {
             return Err(StrictFloatError(value));
         }
         // Check round-trip: format and re-parse to verify no precision loss.
+        #[cfg(feature = "fast-float")]
         let repr = ryu::Buffer::new().format(value).to_owned();
+        #[cfg(not(feature = "fast-float"))]
+        let repr = format!("{value:?}");
         let roundtrip: f64 = repr.parse().unwrap_or(f64::NAN);
         if roundtrip != value {
             return Err(StrictFloatError(value));

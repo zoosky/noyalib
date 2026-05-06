@@ -795,8 +795,29 @@ fn value_to_key_string(value: Value) -> Option<String> {
         Value::String(s) => Some(s),
         Value::Bool(b) => Some(if b { "true".into() } else { "false".into() }),
         Value::Null => Some("null".into()),
-        Value::Number(Number::Integer(n)) => Some(itoa::Buffer::new().format(n).to_owned()),
-        Value::Number(Number::Float(n)) => Some(ryu::Buffer::new().format(n).to_owned()),
+        Value::Number(Number::Integer(n)) => {
+            #[cfg(feature = "fast-int")]
+            {
+                Some(itoa::Buffer::new().format(n).to_owned())
+            }
+            #[cfg(not(feature = "fast-int"))]
+            {
+                Some(n.to_string())
+            }
+        }
+        Value::Number(Number::Float(n)) => {
+            #[cfg(feature = "fast-float")]
+            {
+                Some(ryu::Buffer::new().format(n).to_owned())
+            }
+            #[cfg(not(feature = "fast-float"))]
+            {
+                // `{:?}` keeps `1.0` printable as `1.0` (not `1`)
+                // so the resulting key string is unambiguously a
+                // float on round-trip.
+                Some(format!("{n:?}"))
+            }
+        }
         Value::Tagged(t) => value_to_key_string(t.value().clone()),
         Value::Sequence(seq) => {
             let mut s = String::from("[");

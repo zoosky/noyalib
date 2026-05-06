@@ -530,7 +530,7 @@ where
 /// assert!(noyalib::from_str::<Config>(yaml).is_ok());
 /// assert!(noyalib::from_str_strict::<Config>(yaml).is_err());
 /// ```
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "strict-deserialise"))]
 pub fn from_str_strict<T>(s: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -592,7 +592,7 @@ where
 /// assert!(noyalib::from_slice::<Config>(yaml).is_ok());
 /// assert!(noyalib::from_slice_strict::<Config>(yaml).is_err());
 /// ```
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "strict-deserialise"))]
 pub fn from_slice_strict<T>(b: &[u8]) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -628,7 +628,7 @@ where
 /// assert!(noyalib::from_reader::<_, Config>(&yaml[..]).is_ok());
 /// assert!(noyalib::from_reader_strict::<_, Config>(&yaml[..]).is_err());
 /// ```
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "strict-deserialise"))]
 pub fn from_reader_strict<R, T>(mut reader: R) -> Result<T>
 where
     R: io::Read,

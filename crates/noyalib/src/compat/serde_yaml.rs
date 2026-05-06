@@ -150,6 +150,59 @@ use serde::Serialize;
 pub use crate::error::{Error, Location, Result};
 pub use crate::value::{Mapping, Number, Sequence, Tag, TaggedValue, Value};
 
+// ── `serde_yaml` low-level types ─────────────────────────────────────
+//
+// `serde_yaml` 0.9 publishes its `Deserializer` / `Serializer` types
+// at the crate root for callers that bypass the convenience helpers
+// (`from_str`, `to_string`, …). We expose noyalib's own types under
+// the same names so existing `serde_yaml::Deserializer` /
+// `::Serializer` references compile without modification.
+
+pub use crate::de::Deserializer;
+pub use crate::ser::Serializer;
+
+// ── Sub-module namespacing ───────────────────────────────────────────
+//
+// `serde_yaml` publishes `mapping`, `value`, and `with` sub-modules
+// alongside its top-level functions. Migrating code commonly imports
+// items via these paths (`use serde_yaml::value::Tag;`,
+// `#[serde(with = "serde_yaml::with::singleton_map")]`). We mirror
+// the layout so those `use` paths continue to resolve.
+
+/// Sub-module mirroring `serde_yaml::value`.
+///
+/// `serde_yaml::value::{Value, Mapping, Number, Sequence, Tag,
+/// TaggedValue}` are also re-exported at the crate root, but code
+/// that imports them via the `value` path keeps working.
+pub mod value {
+    pub use crate::value::{Mapping, Number, Sequence, Tag, TaggedValue, Value};
+}
+
+/// Sub-module mirroring `serde_yaml::mapping`.
+///
+/// In `serde_yaml` 0.9 this housed the `Mapping` type plus its
+/// iterator types. The most common import is `Mapping` itself; we
+/// re-export the full set noyalib exposes so user code using the
+/// path-form import still resolves.
+pub mod mapping {
+    pub use crate::value::Mapping;
+}
+
+/// Sub-module mirroring `serde_yaml::with`.
+///
+/// `serde_yaml::with::singleton_map` and its variants are the
+/// idiomatic way to control enum representation in `#[serde(with =
+/// "...")]` attributes. noyalib's own implementations live under
+/// [`crate::with`]; this re-export gives migrants the `serde_yaml`
+/// path-form so existing `#[serde(with = "serde_yaml::with::…")]`
+/// attributes only need a search-and-replace on the prefix.
+pub mod with {
+    pub use crate::with::{
+        nested_singleton_map, singleton_map, singleton_map_optional, singleton_map_recursive,
+        singleton_map_with,
+    };
+}
+
 // ── Deserialization ──────────────────────────────────────────────────
 
 /// Deserialize a YAML document into the target type.
@@ -401,6 +454,57 @@ mod tests {
         fn _identity(e: super::Error) -> crate::error::Error {
             e
         }
+    }
+
+    #[test]
+    fn deserializer_type_re_exports_under_serde_yaml_name() {
+        // Compile-time check: `serde_yaml::Deserializer` resolves to
+        // noyalib's own `Deserializer<'_>` so existing call sites
+        // that explicitly name the type compile unchanged.
+        let v = Value::from(7_i64);
+        let de: Deserializer<'_> = Deserializer::new(&v);
+        let n: i32 = Deserialize::deserialize(de).unwrap();
+        assert_eq!(n, 7);
+    }
+
+    #[test]
+    fn serializer_type_re_exports_under_serde_yaml_name() {
+        // Compile-time check: `serde_yaml::Serializer` resolves to
+        // noyalib's own `Serializer`. The full streaming-serializer
+        // surface is documented on `crate::ser::Serializer`; here we
+        // just verify the type is reachable via the compat path.
+        let _ = Serializer;
+    }
+
+    #[test]
+    fn value_submodule_path_resolves() {
+        // `use serde_yaml::value::{Value, Mapping, Number};` is a
+        // common idiom; verify the path-form import resolves to the
+        // same types as the crate-root re-exports.
+        use super::value::{Mapping as MappingV, Number as NumberV, Value as ValueV};
+        let mut m = MappingV::new();
+        let _ = m.insert("k", ValueV::Number(NumberV::Integer(1)));
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn mapping_submodule_path_resolves() {
+        use super::mapping::Mapping as MappingAlias;
+        let m: MappingAlias = MappingAlias::new();
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn with_submodule_path_resolves() {
+        // Compile-time check: every helper documented on
+        // `serde_yaml::with::*` is reachable via
+        // `noyalib::compat::serde_yaml::with::*`. No runtime
+        // assertion — the import itself is the test.
+        #[allow(unused_imports)]
+        use super::with::{
+            nested_singleton_map, singleton_map, singleton_map_optional, singleton_map_recursive,
+            singleton_map_with,
+        };
     }
 
     #[test]
