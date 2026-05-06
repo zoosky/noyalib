@@ -61,3 +61,24 @@ path = "fuzz_targets/fuzz_diff.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_borrowed_alias"
+path = "fuzz_targets/fuzz_borrowed_alias.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_yaml_v1_1"
+path = "fuzz_targets/fuzz_yaml_v1_1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_double_quoted"
+path = "fuzz_targets/fuzz_double_quoted.rs"
+test = false
+doc = false
+bench = false

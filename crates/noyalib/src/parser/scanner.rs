@@ -1627,7 +1627,20 @@ impl<'a> Scanner<'a> {
                 // simple key's actual end; trimming its trailing
                 // whitespace strips the `\n` the multi-line plain
                 // scalar reader consumes during termination.
-                let key_end = self.tokens.last().map(|t| t.span.end).unwrap_or(sk.index);
+                // Clamp `key_end` to be at least `sk.index` — degenerate
+                // streams (`:\n*\n…`) can leave the simple-key tracker
+                // ahead of every emitted token's span end, in which
+                // case `tokens.last().span.end < sk.index` and the
+                // slice below would panic with "starts at X but ends
+                // at Y (X > Y)". An empty slice is the correct content
+                // for "no key seen yet" — the implicit-key-spans-newline
+                // check below will see an empty buffer and fall through.
+                let key_end = self
+                    .tokens
+                    .last()
+                    .map(|t| t.span.end)
+                    .unwrap_or(sk.index)
+                    .max(sk.index);
                 let key_end_trimmed = {
                     let mut e = key_end;
                     while e > sk.index
