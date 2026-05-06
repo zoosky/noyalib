@@ -24,7 +24,13 @@ jobs:
       run-clippy: true
       run-fmt: true
       run-audit: true
-      run-coverage: true
+      # Coverage runs in the dedicated `coverage-gate` job below,
+      # which uses `cargo +nightly llvm-cov` so the
+      # `feature(coverage_attribute)` annotations work. The
+      # reusable workflow's coverage step uses stable rustc and
+      # fails on those annotations, so we keep it disabled here
+      # to avoid duplicate work and red runs.
+      run-coverage: false
     secrets: inherit
 
   test-matrix:
@@ -71,7 +77,11 @@ jobs:
     # supply-chain interaction surface fails fast.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Local wall-clock is ~32 min on a fresh Miri sysroot; GitHub
+    # ubuntu-latest runners are typically slower, so we give the
+    # focused suite 45 min before treating a hang as a real
+    # cancellation.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Install Rust nightly with Miri
