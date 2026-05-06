@@ -72,10 +72,13 @@ for manifest in "${MANIFESTS[@]}"; do
 
     echo "── ${crate_name}: rustc ${msrv} ──"
 
-    # Install the toolchain if it's not already present. `--quiet`
-    # suppresses the "info: downloading…" lines when it's a no-op.
-    if ! rustup toolchain list | grep -q "^${msrv}-"; then
-        rustup toolchain install "$msrv" --profile minimal --quiet
+    # Install the toolchain if it's not already present. The
+    # `--quiet` flag isn't accepted as a positional after the
+    # `install` subcommand on every rustup version we ship to,
+    # so let the install banner through and let CI's grep
+    # scrollback hide it.
+    if ! rustup toolchain list | grep -qE "(^|/)${msrv}(-|$)"; then
+        rustup toolchain install "$msrv" --profile minimal --no-self-update
     fi
 
     # `cargo +<msrv> check` — typecheck only, no codegen, fast.
