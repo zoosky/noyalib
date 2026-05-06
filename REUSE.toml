@@ -87,6 +87,18 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Noyalib"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# ── Distro packaging templates (pkg/) ─────────────────────────────
+# Hand-written per-channel packaging metadata consumed by
+# `.github/workflows/release-binaries.yml` (Phase 4 of PLAN.md).
+# Files in this tree are templates — `__VERSION__` / `__SHA256__`
+# placeholders rewritten per release — or inert config files
+# without inline SPDX headers.
+[[annotations]]
+path = "pkg/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # ── Fuzz corpora ──────────────────────────────────────────────────
 [[annotations]]
 path = [
