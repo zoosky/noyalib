@@ -120,6 +120,47 @@ fn lone_low_surrogate_errors() {
     );
 }
 
+#[test]
+fn high_surrogate_with_truncated_low_surrogate_errors() {
+    // High surrogate, then `\u` started but only 3 hex digits provided
+    // before the closing quote — the pair-validation loop must
+    // surface the error path.
+    let yaml = "bad: \"\\uD834\\uDD1\"";
+    let err = from_str::<Value>(yaml).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("low surrogate") || msg.contains("hex"),
+        "expected low-surrogate truncation error, got: {msg}"
+    );
+}
+
+#[test]
+fn high_surrogate_with_non_hex_after_backslash_u_errors() {
+    // `\uD834\uDDXY` — the second `\u` parses but its third hex digit
+    // is non-hex.
+    let yaml = "bad: \"\\uD834\\uDDXY\"";
+    let err = from_str::<Value>(yaml).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("hex") || msg.contains("low surrogate"),
+        "expected hex-digit / low-surrogate error, got: {msg}"
+    );
+}
+
+#[test]
+fn surrogate_high_at_eof_errors() {
+    // High surrogate is the last thing in the document — no chance
+    // for a low surrogate. Hits the lone-surrogate fall-through
+    // branch (peek != `\\`).
+    let yaml = "x: \"\\uD834";
+    let err = from_str::<Value>(yaml).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("D834") || msg.contains("surrogate") || msg.contains("quote"),
+        "expected surrogate-or-string error, got: {msg}"
+    );
+}
+
 // ── Round-trip preserves supplementary-plane characters ─────────────
 
 #[test]

@@ -2701,13 +2701,13 @@ impl<'a> Scanner<'a> {
                     index: pair_start,
                 });
             }
+            // High in [D800, DBFF] and low in [DC00, DFFF] yields
+            // combined in [0x10000, 0x10FFFF] — always a valid
+            // supplementary-plane code point, so `from_u32` cannot
+            // return `None` here. `expect` documents the invariant.
             let combined = 0x10000 + ((code - HIGH_LO) << 10) + (low - LOW_LO);
-            return char::from_u32(combined).ok_or_else(|| ScanError {
-                message: Cow::Owned(format!(
-                    "surrogate pair encodes invalid Unicode code point U+{combined:04X}"
-                )),
-                index: start,
-            });
+            return Ok(char::from_u32(combined)
+                .expect("surrogate pair math always yields a valid supplementary code point"));
         }
 
         // Lone surrogate (high without follow-up, or low surrogate
