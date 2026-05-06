@@ -25,6 +25,7 @@
 
 - [Install](#install) — Cargo, source
 - [Quick Start](#quick-start) — parse and serialise in ten lines
+- [One-minute migration from `serde_yaml`](#one-minute-migration-from-serde_yaml) — name-for-name mapping
 - [Why this approach?](#why-this-approach) — design rationale
 - [Capabilities in 0.0.1](#capabilities-in-001) — release inventory
 - [Two APIs, one parser](#two-apis-one-parser) — data binding vs. tooling
@@ -184,6 +185,57 @@ features:
     Ok(())
 }
 ```
+
+---
+
+## One-minute migration from `serde_yaml`
+
+Most call sites are mechanical to update. The full guide is
+[`doc/MIGRATION-FROM-SERDE-YAML.md`](doc/MIGRATION-FROM-SERDE-YAML.md);
+the headline mapping:
+
+```diff
+-[dependencies]
+-serde_yaml = "0.9"
++[dependencies]
++noyalib = "0.0"
+```
+
+```diff
+-use serde_yaml::Value;
+-let v: Value = serde_yaml::from_str(input)?;
+-let s        = serde_yaml::to_string(&v)?;
++use noyalib::Value;
++let v: Value = noyalib::from_str(input)?;
++let s        = noyalib::to_string(&v)?;
+```
+
+| `serde_yaml` 0.9 | `noyalib` |
+|---|---|
+| `serde_yaml::from_str::<T>` | `noyalib::from_str::<T>` |
+| `serde_yaml::from_slice::<T>` | `noyalib::from_slice::<T>` |
+| `serde_yaml::from_reader::<R, T>` | `noyalib::from_reader::<R, T>` |
+| `serde_yaml::to_string` | `noyalib::to_string` |
+| `serde_yaml::to_writer` | `noyalib::to_writer` |
+| `serde_yaml::to_value` | `noyalib::to_value` |
+| `serde_yaml::Value` | `noyalib::Value` (adds a 7th `Tagged` variant) |
+| `serde_yaml::Mapping` | `noyalib::Mapping` |
+| `serde_yaml::Number` | `noyalib::Number` |
+| `serde_yaml::Error` | `noyalib::Error` |
+| `serde_yaml::with::singleton_map*` | `noyalib::with::singleton_map*` |
+| (n/a) | `noyalib::from_str_strict::<T>` — error on unknown keys |
+| (n/a) | `noyalib::Spanned<T>` — source-location wrapper |
+| (n/a) | `noyalib::cst::Document` — lossless byte-faithful edits |
+
+If your call sites can't change at all, enable
+`features = ["compat-serde-yaml"]` and replace `use serde_yaml`
+with `use noyalib::compat::serde_yaml` — every type is
+noyalib-native, no transitive dep on the archived upstream.
+
+The three behavioural differences worth knowing about
+(YAML 1.2 strict booleans, `Tagged` variant, multi-doc API):
+[`MIGRATION-FROM-SERDE-YAML.md`](doc/MIGRATION-FROM-SERDE-YAML.md)
+covers each in detail.
 
 ---
 
