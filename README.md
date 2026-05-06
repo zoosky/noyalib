@@ -1180,24 +1180,28 @@ disagreement on priorities.
   tooling path, but `from_str::<T>` → `to_string(&T)` does not.
   No Rust YAML library currently round-trips comments through a
   typed deserialise / serialise pair.
-- **You need YAML 1.1-only behaviour, top to bottom.** noyalib
-  defaults to YAML 1.2 strict semantics. The `legacy_booleans`
-  opt-in covers the most common 1.1 idiom (`yes` / `no` / `on` /
-  `off`), but a document that depends on the 1.1 type-resolution
-  rules in deeper ways may not parse identically to a 1.1
-  implementation. Use a 1.1 parser if that matches your contract.
-- **You need a dependency-free YAML parser.** noyalib has eight
-  required dependencies. `yaml-rust2` is a smaller surface if you
-  do not need serde integration.
+- **You need a different YAML 1.1 resolver behaviour than the
+  three forms the spec actually disagrees with 1.2 on.**
+  `ParserConfig::version(YamlVersion::V1_1)` flips the bundle of
+  resolver-table differences (`yes` / `no` / `on` / `off`
+  booleans, bare-`0` octal `0644`, sexagesimal `60:00`) on as a
+  single preset; fine-grained `legacy_*` flags remain for mix and
+  match. Other 1.1-isms (mandatory `!!` tag prefix, broader
+  timestamp parsing) are not version-gated in either direction.
+- **You have a hard dependency budget that cannot tolerate a
+  Grisu / Ryu float formatter and a hash-randomised lookup
+  table.** Default profile carries 8 runtime deps. `noyalib =
+  { version = "0.0.1", default-features = false, features =
+  ["std"] }` (or the equivalent `features = ["minimal"]`) drops
+  to 5 — `itoa`, `ryu`, and `serde_ignored` become opt-in via
+  the `fast-int` / `fast-float` / `strict-deserialise` features.
+  Numeric formatting falls back to `core::fmt` (slower; output
+  remains valid YAML); the `from_str_strict` typo-detection
+  helpers go away.
 - **You need flow-style aliases on the borrowed path.**
   `BorrowedValue<'a>` borrows scalar bytes from the input but does
   not resolve YAML aliases (`*name`). Use the owned `Value` path
   when the document uses anchors.
-- **You're paste-replacing `serde_yaml` 0.9 today and cannot edit
-  any types.** The `compat-serde-yaml` shim covers the common
-  surface, but a few rarely-used items (e.g. full coverage parity
-  on `with::*`) may still need a small migration. See
-  `examples/bridge.rs`.
 
 If you hit a case that should be on this list, please open an
 issue — that's how it gets fixed or moved into the supported set.
