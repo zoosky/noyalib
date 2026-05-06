@@ -266,7 +266,7 @@ pub use de::{from_reader, from_reader_with_config};
 pub use de::{from_reader_strict, from_slice_strict, from_str_strict};
 pub use de::{
     from_slice, from_slice_with_config, from_str, from_str_with_config, from_value, Deserializer,
-    DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig,
+    DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig, YamlVersion,
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
 pub use error::{Error, Location, Result};

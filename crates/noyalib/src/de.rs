@@ -22,6 +22,43 @@ use serde::Deserialize;
 #[cfg(feature = "std")]
 use std::io;
 
+/// Which version of the YAML specification the resolver follows.
+///
+/// YAML 1.2 (the default) and 1.1 differ in their plain-scalar
+/// resolution table:
+///
+/// | Form | 1.2 (core schema) | 1.1 |
+/// |---|---|---|
+/// | `yes` / `no` / `on` / `off` | string | bool |
+/// | `0644` | int 644 (decimal) | int 420 (octal) |
+/// | `60:00` | string | int 3 600 (sexagesimal) |
+/// | `.nan` / `.inf` | float | float (same) |
+/// | `true` / `false` | bool | bool (same) |
+///
+/// Selecting a version is a preset over the three `legacy_*` flags;
+/// see [`ParserConfig::version`] for the full mapping.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str_with_config, ParserConfig, Value, YamlVersion};
+///
+/// let cfg = ParserConfig::new().version(YamlVersion::V1_1);
+/// let v: Value = from_str_with_config("yes", &cfg).unwrap();
+/// assert_eq!(v, Value::Bool(true));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum YamlVersion {
+    /// YAML 1.2 (2009) core schema. Default. Strict `true` / `false`
+    /// booleans; no bare octal; no sexagesimal.
+    #[default]
+    V1_2,
+    /// YAML 1.1 (2005). Broad resolver: `yes` / `no` / `on` / `off`
+    /// are booleans; `0644` is octal; `60:00` is sexagesimal.
+    V1_1,
+}
+
 /// Deserialization configuration.
 ///
 /// # Examples
@@ -33,6 +70,20 @@ use std::io;
 /// ```
 #[derive(Debug, Clone)]
 pub struct ParserConfig {
+    /// Which YAML specification version to honour during plain-scalar
+    /// resolution.
+    ///
+    /// YAML 1.2 (default) follows the **core schema** — strict
+    /// `true`/`false` booleans, no bare `0`-prefix octal, no
+    /// sexagesimal `60:00` integers. YAML 1.1 broadens the resolver
+    /// to accept all of those legacy forms.
+    ///
+    /// Setting this to [`YamlVersion::V1_1`] is equivalent to flipping
+    /// every `legacy_*` flag (`legacy_booleans`, `legacy_octal_numbers`,
+    /// `legacy_sexagesimal`) on at once. The `legacy_*` flags remain
+    /// available for fine-grained overrides — version selection sets a
+    /// preset, individual flags refine it.
+    pub yaml_version: YamlVersion,
     /// Maximum recursion depth allowed during parsing (default: 128).
     pub max_depth: usize,
     /// Maximum length of a single YAML document in bytes (default: 64 MB).
@@ -109,6 +160,7 @@ pub struct ParserConfig {
 impl Default for ParserConfig {
     fn default() -> Self {
         ParserConfig {
+            yaml_version: YamlVersion::V1_2,
             max_depth: 128,
             max_document_length: 1024 * 1024 * 64, // 64 MB
             max_alias_expansions: 1024,
@@ -156,6 +208,7 @@ impl ParserConfig {
     #[must_use]
     pub fn strict() -> Self {
         ParserConfig {
+            yaml_version: YamlVersion::V1_2,
             max_depth: 64,
             max_document_length: 1024 * 1024, // 1 MB
             max_alias_expansions: 100,
@@ -172,6 +225,61 @@ impl ParserConfig {
             legacy_sexagesimal: false,
             policies: Vec::new(),
         }
+    }
+
+    /// Select the YAML specification version the resolver should
+    /// honour.
+    ///
+    /// Selecting [`YamlVersion::V1_1`] is a *preset* over the three
+    /// `legacy_*` flags — equivalent to:
+    ///
+    /// ```text
+    /// cfg.legacy_booleans      = true;  // yes / no / on / off
+    /// cfg.legacy_octal_numbers = true;  // 0644 → octal
+    /// cfg.legacy_sexagesimal   = true;  // 60:00 → 3600
+    /// ```
+    ///
+    /// Selecting [`YamlVersion::V1_2`] resets those three flags to
+    /// `false` so callers can revert to strict 1.2 mode without
+    /// re-creating the config from scratch. Other fields (limits,
+    /// policies, merge-key behaviour) are unaffected.
+    ///
+    /// Fine-grained overrides (e.g. "1.1 booleans but reject octal
+    /// `0644`") work as expected: call `version` first, then flip
+    /// individual flags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str_with_config, ParserConfig, Value, YamlVersion};
+    ///
+    /// let cfg = ParserConfig::new().version(YamlVersion::V1_1);
+    /// // YAML 1.1 booleans
+    /// let v: Value = from_str_with_config("on", &cfg).unwrap();
+    /// assert_eq!(v, Value::Bool(true));
+    /// // YAML 1.1 octal
+    /// let v: Value = from_str_with_config("0644", &cfg).unwrap();
+    /// assert_eq!(v, Value::from(420_i64));
+    /// // YAML 1.1 sexagesimal
+    /// let v: Value = from_str_with_config("1:30", &cfg).unwrap();
+    /// assert_eq!(v, Value::from(90_i64));
+    /// ```
+    #[must_use]
+    pub fn version(mut self, version: YamlVersion) -> Self {
+        self.yaml_version = version;
+        match version {
+            YamlVersion::V1_1 => {
+                self.legacy_booleans = true;
+                self.legacy_octal_numbers = true;
+                self.legacy_sexagesimal = true;
+            }
+            YamlVersion::V1_2 => {
+                self.legacy_booleans = false;
+                self.legacy_octal_numbers = false;
+                self.legacy_sexagesimal = false;
+            }
+        }
+        self
     }
 
     /// Register a [`Policy`](crate::policy::Policy) to enforce

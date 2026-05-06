@@ -342,12 +342,15 @@ stdlib `from_str`.
   `to_string(&T)` does not. No Rust YAML library currently
   round-trips comments through a typed deserialise / serialise
   pair.
-- **You need YAML 1.1-only behaviour, top to bottom.** noyalib
-  defaults to YAML 1.2 strict semantics. The `legacy_booleans`
-  opt-in covers the most common 1.1 idiom (`yes` / `no` / `on`
-  / `off`), but a document that depends on the 1.1
-  type-resolution rules in deeper ways may not parse identically
-  to a 1.1 implementation.
+- **You need a different YAML 1.1 resolution rule than the three
+  the spec actually disagrees with 1.2 on.** noyalib defaults to
+  YAML 1.2 strict semantics; opt in via
+  `ParserConfig::version(YamlVersion::V1_1)` to flip the three
+  resolver-table differences (`yes` / `no` / `on` / `off`
+  booleans, bare-`0` octal `0644`, sexagesimal `60:00`) on as a
+  bundle. Other 1.1-isms (mandatory `!!` tag prefix, broader
+  timestamp parsing) are not currently version-gated; both 1.1
+  and 1.2 mode accept the relaxed forms.
 - **You need flow-style aliases on the borrowed path.**
   `BorrowedValue<'a>` borrows scalar bytes from input but does
   not resolve YAML aliases (`*name`). Use the owned `Value`
