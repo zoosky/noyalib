@@ -7,6 +7,100 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — JSON-style UTF-16 surrogate pair pairing in `\uXXXX` escapes
+
+- Double-quoted YAML scalars now accept `𝄞` (high + low
+  surrogate) and combine the two halves into the corresponding
+  supplementary-plane code point via the UTF-16 algorithm.
+  Previously these escapes errored as "invalid Unicode code point
+  U+D834" because `char::from_u32` rejects surrogate halves
+  outright. JSON-emitting YAML producers commonly emit pair form,
+  so the rejection was a real interop hit.
+- Lone, reversed, and truncated surrogates remain rejected with
+  the same error shape — the change is additive, not relaxed.
+- 13 integration tests in `tests/json_surrogate_escape.rs` cover
+  musical G clef (U+1D11E), grinning face emoji (U+1F600),
+  multiple pairs in sequence, BMP-escape interleaving, and every
+  rejection path.
+
+### Added — Borrowed-path alias resolution
+
+- **`BorrowedValue<'a>`** now eagerly resolves YAML anchors
+  (`&name`) and aliases (`*name`). The anchored value is stored
+  in a side-table; each alias clones it into the tree. String
+  fields stay `Cow::Borrowed` so the clone is mostly free —
+  only sequences and mappings actually duplicate, matching the
+  owned `Value` path's behaviour.
+- Alias-bomb defence: total expansions are capped by
+  `ParserConfig::max_alias_expansions`, the same limit the owned
+  path enforces.
+- Aliases used as mapping keys coerce scalars to `Cow<'a, str>`
+  (string / bool / number / null); non-scalar key aliases error
+  rather than silently coercing — keeps the `Mapping` key type
+  honest.
+- Anchor namespace resets on `DocumentEnd` per spec.
+- Previously the borrowed path errored with "aliases not
+  supported in borrowed mode"; that message is gone. API surface
+  is unchanged — the `BorrowedValue` enum and constructors are
+  byte-identical.
+- 12 integration tests in `tests/borrowed_alias_resolution.rs`
+  cover scalar / sequence / mapping anchors, alias-as-key,
+  multi-doc namespace isolation, unknown-anchor errors,
+  expansion-cap defence, and round-trip parity with the owned
+  path.
+
+### Added — YAML 1.1 mode toggle
+
+- **`ParserConfig::version(YamlVersion::V1_1)`** — single-call
+  preset that flips the three resolver-table differences between
+  YAML 1.2 (default) and 1.1 on as a bundle: `yes`/`no`/`on`/`off`
+  booleans, bare-`0` octal `0644`, sexagesimal `60:00`. Selecting
+  `V1_2` resets the trio so a config can be reverted without
+  rebuilding from scratch.
+- The fine-grained `legacy_booleans` / `legacy_octal_numbers` /
+  `legacy_sexagesimal` flags remain available for callers who
+  want to mix and match (e.g. "1.1 booleans but reject octal
+  `0644`"). `version()` sets the preset; individual flags refine.
+- New public type **`noyalib::YamlVersion`** with `V1_1` /
+  `V1_2` variants. `Default::default()` is `V1_2`.
+- 11 integration tests in `tests/yaml_version.rs` cover default
+  behaviour, the 1.1 preset, the 1.2 reset, override-after-preset
+  composability, and a Kubernetes-flavoured mixed-1.1-isms
+  document round-trip.
+
+### Added — `compat-serde-yaml` symbol parity
+
+- **`Deserializer`** and **`Serializer`** types now re-export
+  under `noyalib::compat::serde_yaml`. Existing
+  `serde_yaml::Deserializer` / `Serializer` references compile
+  unchanged after the prefix swap.
+- New **`compat::serde_yaml::{value, mapping, with}`**
+  sub-modules mirror the upstream layout. Migrating code that
+  imports via the path form (`serde_yaml::value::Tag`,
+  `#[serde(with = "serde_yaml::with::singleton_map")]`) only
+  needs a search-and-replace on the prefix.
+- The `with` sub-module re-exports all four
+  `singleton_map_*` helpers + `nested_singleton_map`.
+- 5 new tests in `compat/serde_yaml.rs` — the compat suite is
+  now 13/13 green.
+
+### Added — Lean / minimal dependency profile
+
+- New **`fast-int`**, **`fast-float`**, and
+  **`strict-deserialise`** Cargo features make `itoa`, `ryu`,
+  and `serde_ignored` optional. All three are on by default —
+  the lean profile is opt-out.
+- New **`minimal`** meta-feature alias — equivalent to
+  `default-features = false, features = ["std"]` — drops the
+  three deps for FIPS / embedded / audit-heavy environments.
+  Numeric formatting falls back to `core::fmt` (slower; output
+  remains valid YAML); the `from_str_strict` /
+  `from_slice_strict` / `from_reader_strict` typo-detection
+  helpers are absent.
+- Default profile: 8 runtime deps. Lean profile: 5 — drops
+  `itoa`, `ryu`, `serde_ignored`. Verified via `cargo tree`.
+- README's Install section documents the trade-off.
+
 ### Added — Strict deserialise on every input shape
 
 - **`noyalib::from_slice_strict<T>`** and
