@@ -77,11 +77,14 @@ jobs:
     # supply-chain interaction surface fails fast.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Local wall-clock is ~32 min on a fresh Miri sysroot; GitHub
-    # ubuntu-latest runners are typically slower, so we give the
-    # focused suite 45 min before treating a hang as a real
-    # cancellation.
-    timeout-minutes: 45
+    # Wall-clock measurements:
+    #   - Local M-series Mac (aarch64 NEON): ~32 min on a fresh sysroot.
+    #   - GitHub ubuntu-latest (x86_64, 2 vCPU): ~45+ min — hits the
+    #     prior 45-min cap. Bumping to 60 leaves headroom for runner
+    #     contention without letting a real hang sit forever; the
+    #     scheduled `miri-full` (90 min) still covers the deeper
+    #     sweep plus big-endian.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Install Rust nightly with Miri
@@ -89,6 +92,19 @@ jobs:
         with:
           toolchain: nightly
           components: miri
+      # Amortise the Miri sysroot build (≈12 min on a fresh runner)
+      # across PRs by caching `~/.cache/miri` and the Cargo Miri
+      # target dir. The sysroot is pinned to the nightly toolchain
+      # version so the cache key includes the resolved compiler hash.
+      - name: Cache Miri sysroot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/miri
+            target/miri
+          key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            miri-${{ runner.os }}-
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
