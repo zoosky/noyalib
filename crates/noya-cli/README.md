@@ -245,6 +245,10 @@ Full cookbook including the offline / FIPS-bound flow:
 
 ## Documentation
 
+- **CLI flag reference**:
+  [`doc/cli-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noya-cli/doc/cli-reference.md)
+- **Recipes (CI gates, pre-commit, editor integration)**:
+  [`doc/recipes.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noya-cli/doc/recipes.md)
 - **Workspace README**:
   <https://github.com/sebastienrousseau/noyalib#readme>
 - **Per-channel install + verify**:

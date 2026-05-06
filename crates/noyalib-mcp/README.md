@@ -244,6 +244,10 @@ Full cookbook: [`pkg/VERIFY.md`](https://github.com/sebastienrousseau/noyalib/bl
 ## Documentation
 
 - **API reference**: <https://docs.rs/noyalib-mcp>
+- **Tools reference (input schemas + error codes)**:
+  [`doc/tools-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-mcp/doc/tools-reference.md)
+- **Agent integration (Claude Desktop, Cursor, Continue.dev)**:
+  [`doc/agent-integration.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-mcp/doc/agent-integration.md)
 - **MCP specification**: <https://modelcontextprotocol.io>
 - **Workspace README**:
   <https://github.com/sebastienrousseau/noyalib#readme>

@@ -368,6 +368,10 @@ checklist) is
 ## Documentation
 
 - **API reference**: <https://docs.rs/noyalib>
+- **Internals (module map, hot paths)**:
+  [`doc/internals.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib/doc/internals.md)
+- **Error reference**:
+  [`doc/errors.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib/doc/errors.md)
 - **User guide**:
   [`doc/USER-GUIDE.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/USER-GUIDE.md)
 - **Architecture overview**:

@@ -238,6 +238,10 @@ python3 -m http.server     # or any static-file server
 
 ## Documentation
 
+- **JS API reference**:
+  [`doc/js-api.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-wasm/doc/js-api.md)
+- **Bundling (Vite, Webpack, Next.js, Cloudflare Workers, Deno, Bun)**:
+  [`doc/bundling.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-wasm/doc/bundling.md)
 - **npm package**:
   <https://www.npmjs.com/package/@noyalib/noyalib-wasm>
 - **API reference (rustdoc)**: <https://docs.rs/noyalib-wasm>
