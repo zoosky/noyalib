@@ -25,7 +25,7 @@ use crate::path::{parse_query_path, QuerySegment};
 use crate::prelude::*;
 use core::hash::{Hash, Hasher};
 use indexmap::IndexMap;
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::Serialize;
 
 /// A zero-copy YAML value that borrows strings from the input.
@@ -461,8 +461,17 @@ pub fn from_str_borrowed(input: &str) -> Result<BorrowedValue<'_>> {
 /// # Errors
 ///
 /// Returns an error when the input exceeds `max_document_length`, when
-/// the parser encounters invalid YAML, or when an unsupported construct
-/// (anchors/aliases on the borrowed path) is seen.
+/// the parser encounters invalid YAML, or when alias expansion exceeds
+/// [`ParserConfig::max_alias_expansions`](crate::ParserConfig::max_alias_expansions).
+///
+/// # Aliases
+///
+/// Anchors (`&name`) and aliases (`*name`) are eagerly resolved on the
+/// borrowed path. The anchored value is stored in a side-table keyed
+/// by name; each alias clones the value into the tree (string fields
+/// stay `Cow::Borrowed`, so the clone is mostly free — only sequences
+/// and mappings actually duplicate). Total expansions are bounded by
+/// `max_alias_expansions` to neutralise YAML bombs.
 ///
 /// # Examples
 ///
@@ -506,11 +515,15 @@ enum BuilderState {
 }
 
 enum Frame<'a> {
-    Sequence(Vec<BorrowedValue<'a>>),
-    MappingKey(IndexMap<Cow<'a, str>, BorrowedValue<'a>, FxBuildHasher>),
+    Sequence(Vec<BorrowedValue<'a>>, Option<String>),
+    MappingKey(
+        IndexMap<Cow<'a, str>, BorrowedValue<'a>, FxBuildHasher>,
+        Option<String>,
+    ),
     MappingValue(
         IndexMap<Cow<'a, str>, BorrowedValue<'a>, FxBuildHasher>,
         Cow<'a, str>,
+        Option<String>,
     ),
 }
 
@@ -520,6 +533,18 @@ struct BorrowedBuilder<'a> {
     max_depth: usize,
     depth: usize,
     in_document: bool,
+    /// Anchor → value table. Eager resolution: when an `Alias`
+    /// event arrives we clone the anchored value into the tree.
+    /// String fields are `Cow::Borrowed` so a clone is mostly
+    /// cheap — only sequences and mappings duplicate, and that
+    /// matches the owned-`Value` path's behaviour.
+    anchors: FxHashMap<String, BorrowedValue<'a>>,
+    /// Cumulative count of aliases expanded so far. Capped by
+    /// `max_alias_expansions` to neutralise YAML bomb / billion
+    /// laughs payloads on the borrowed path the same way the
+    /// owned path does.
+    alias_expansions: usize,
+    max_alias_expansions: usize,
 }
 
 impl<'a> BorrowedBuilder<'a> {
@@ -530,6 +555,9 @@ impl<'a> BorrowedBuilder<'a> {
             max_depth: config.max_depth,
             depth: 0,
             in_document: false,
+            anchors: FxHashMap::default(),
+            alias_expansions: 0,
+            max_alias_expansions: config.max_alias_expansions,
         }
     }
 
@@ -575,25 +603,33 @@ impl<'a> BorrowedBuilder<'a> {
 
     fn push_value(&mut self, value: BorrowedValue<'a>) {
         match self.stack.last_mut() {
-            Some(Frame::Sequence(seq)) => seq.push(value),
-            Some(Frame::MappingValue(map, key)) => {
+            Some(Frame::Sequence(seq, _)) => seq.push(value),
+            Some(Frame::MappingValue(map, key, _)) => {
                 let k = core::mem::replace(key, Cow::Borrowed(""));
                 let _ = map.insert(k, value);
                 // Transition back to key state
-                let map = match self.stack.pop() {
-                    Some(Frame::MappingValue(m, _)) => m,
+                let (map, anchor) = match self.stack.pop() {
+                    Some(Frame::MappingValue(m, _, a)) => (m, a),
                     _ => crate::error::invariant_violated(
                         "stack frame must be MappingValue immediately after value emit",
                     ),
                 };
-                self.stack.push(Frame::MappingKey(map));
+                self.stack.push(Frame::MappingKey(map, anchor));
             }
-            Some(Frame::MappingKey(_)) => {
+            Some(Frame::MappingKey(_, _)) => {
                 // This shouldn't happen — keys should transition to MappingValue
             }
             None => {
                 self.result = Some(value);
             }
+        }
+    }
+
+    /// Register `value` under `anchor` so a later `*anchor` event can
+    /// resolve to a clone of it. No-op when `anchor` is `None`.
+    fn record_anchor(&mut self, anchor: Option<String>, value: &BorrowedValue<'a>) {
+        if let Some(name) = anchor {
+            let _ = self.anchors.insert(name, value.clone());
         }
     }
 
@@ -607,71 +643,124 @@ impl<'a> BorrowedBuilder<'a> {
             }
             Event::DocumentEnd => {
                 self.in_document = false;
+                // Per YAML spec each document has its own anchor
+                // namespace. Reset between documents to match.
+                self.anchors.clear();
                 Ok(BuilderState::Continue)
             }
-            Event::Scalar { value, style, .. } => {
+            Event::Scalar {
+                value,
+                style,
+                anchor,
+                ..
+            } => {
                 // Check if this is a mapping key
-                if let Some(Frame::MappingKey(_)) = self.stack.last_mut() {
+                if let Some(Frame::MappingKey(_, _)) = self.stack.last_mut() {
                     let key = value;
-                    let map = match self.stack.pop() {
-                        Some(Frame::MappingKey(m)) => m,
+                    let (map, frame_anchor) = match self.stack.pop() {
+                        Some(Frame::MappingKey(m, a)) => (m, a),
                         _ => crate::error::invariant_violated(
                             "stack frame must be MappingKey when consuming a mapping key",
                         ),
                     };
-                    self.stack.push(Frame::MappingValue(map, key));
+                    self.stack.push(Frame::MappingValue(map, key, frame_anchor));
                     return Ok(BuilderState::Continue);
                 }
 
                 let resolved = self.resolve_scalar(value, style);
+                self.record_anchor(anchor, &resolved);
                 self.push_value(resolved);
                 Ok(BuilderState::Continue)
             }
-            Event::SequenceStart { .. } => {
-                self.depth += 1;
-                if self.depth > self.max_depth {
-                    return Err(Error::RecursionLimitExceeded { depth: self.depth });
-                }
-                self.stack.push(Frame::Sequence(Vec::with_capacity(4)));
-                Ok(BuilderState::Continue)
-            }
-            Event::SequenceEnd { .. } => {
-                self.depth = self.depth.saturating_sub(1);
-                let seq = match self.stack.pop() {
-                    Some(Frame::Sequence(s)) => s,
-                    _ => return Err(Error::Invalid("unexpected sequence end".to_string())),
-                };
-                self.push_value(BorrowedValue::Sequence(seq));
-                Ok(BuilderState::Continue)
-            }
-            Event::MappingStart { .. } => {
+            Event::SequenceStart { anchor, .. } => {
                 self.depth += 1;
                 if self.depth > self.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 self.stack
-                    .push(Frame::MappingKey(IndexMap::with_capacity_and_hasher(
-                        4,
-                        FxBuildHasher,
-                    )));
+                    .push(Frame::Sequence(Vec::with_capacity(4), anchor));
+                Ok(BuilderState::Continue)
+            }
+            Event::SequenceEnd { .. } => {
+                self.depth = self.depth.saturating_sub(1);
+                let (seq, anchor) = match self.stack.pop() {
+                    Some(Frame::Sequence(s, a)) => (s, a),
+                    _ => return Err(Error::Invalid("unexpected sequence end".to_string())),
+                };
+                let value = BorrowedValue::Sequence(seq);
+                self.record_anchor(anchor, &value);
+                self.push_value(value);
+                Ok(BuilderState::Continue)
+            }
+            Event::MappingStart { anchor, .. } => {
+                self.depth += 1;
+                if self.depth > self.max_depth {
+                    return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
+                self.stack.push(Frame::MappingKey(
+                    IndexMap::with_capacity_and_hasher(4, FxBuildHasher),
+                    anchor,
+                ));
                 Ok(BuilderState::Continue)
             }
             Event::MappingEnd { .. } => {
                 self.depth = self.depth.saturating_sub(1);
-                let map = match self.stack.pop() {
-                    Some(Frame::MappingKey(m)) => m,
-                    Some(Frame::MappingValue(m, _)) => m,
+                let (map, anchor) = match self.stack.pop() {
+                    Some(Frame::MappingKey(m, a)) => (m, a),
+                    Some(Frame::MappingValue(m, _, a)) => (m, a),
                     _ => return Err(Error::Invalid("unexpected mapping end".to_string())),
                 };
-                self.push_value(BorrowedValue::Mapping(map));
+                let value = BorrowedValue::Mapping(map);
+                self.record_anchor(anchor, &value);
+                self.push_value(value);
                 Ok(BuilderState::Continue)
             }
-            Event::Alias { .. } => {
-                // Aliases not supported in borrowed mode — would require cloning
-                Err(Error::Invalid(
-                    "aliases not supported in borrowed mode; use from_str::<Value> instead"
-                        .to_string(),
-                ))
+            Event::Alias { anchor, .. } => {
+                // Bound expansion to neutralise YAML bombs the same
+                // way the owned path does.
+                self.alias_expansions += 1;
+                if self.alias_expansions > self.max_alias_expansions {
+                    return Err(Error::Parse(format!(
+                        "alias expansions exceeded limit of {}",
+                        self.max_alias_expansions
+                    )));
+                }
+                let referent = self
+                    .anchors
+                    .get(&anchor)
+                    .cloned()
+                    .ok_or_else(|| Error::Parse(format!("unknown anchor: '{anchor}'")))?;
+                // Special-case: alias used as a mapping key. We need
+                // the alias's resolved value to be a string for it to
+                // function as one, mirroring how YAML 1.2 treats key
+                // aliases on the owned path.
+                if let Some(Frame::MappingKey(_, _)) = self.stack.last_mut() {
+                    let key = match referent {
+                        BorrowedValue::String(s) => s,
+                        // For any other shape, fall back to a debug
+                        // rendering — matches the owned path's
+                        // mapping-key coercion behaviour.
+                        BorrowedValue::Bool(b) => Cow::Owned(b.to_string()),
+                        BorrowedValue::Number(n) => Cow::Owned(n.to_string()),
+                        BorrowedValue::Null => Cow::Borrowed("null"),
+                        BorrowedValue::Sequence(_) | BorrowedValue::Mapping(_) => {
+                            return Err(Error::Invalid(
+                                "alias resolved to a non-scalar cannot be used as a mapping key"
+                                    .to_string(),
+                            ));
+                        }
+                    };
+                    let (map, frame_anchor) = match self.stack.pop() {
+                        Some(Frame::MappingKey(m, a)) => (m, a),
+                        _ => crate::error::invariant_violated(
+                            "stack frame must be MappingKey when consuming an alias key",
+                        ),
+                    };
+                    self.stack.push(Frame::MappingValue(map, key, frame_anchor));
+                    return Ok(BuilderState::Continue);
+                }
+                self.push_value(referent);
+                Ok(BuilderState::Continue)
             }
         }
     }

@@ -351,10 +351,6 @@ stdlib `from_str`.
   bundle. Other 1.1-isms (mandatory `!!` tag prefix, broader
   timestamp parsing) are not currently version-gated; both 1.1
   and 1.2 mode accept the relaxed forms.
-- **You need flow-style aliases on the borrowed path.**
-  `BorrowedValue<'a>` borrows scalar bytes from input but does
-  not resolve YAML aliases (`*name`). Use the owned `Value`
-  path when the document uses anchors.
 
 ---
 

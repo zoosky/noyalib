@@ -326,17 +326,17 @@ fn borrowed_parses_nan() {
     assert_eq!(v.as_str(), None);
 }
 
-// ── Aliases are rejected in the borrowed path ───────────────────────────
+// ── Aliases are eagerly resolved on the borrowed path ───────────────────
 
 #[test]
-fn borrowed_rejects_aliases() {
+fn borrowed_resolves_simple_alias() {
+    // Anchors and aliases are now resolved on the borrowed path —
+    // the alias clones the anchored value into the tree.
     let yaml = "anchor: &a hello\nalias: *a\n";
-    let err = from_str_borrowed(yaml).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("alias") || msg.contains("Invalid"),
-        "got: {msg}"
-    );
+    let v: BorrowedValue<'_> = from_str_borrowed(yaml).unwrap();
+    let map = v.as_mapping().expect("top-level must be a mapping");
+    assert_eq!(map.get("anchor").and_then(|v| v.as_str()), Some("hello"));
+    assert_eq!(map.get("alias").and_then(|v| v.as_str()), Some("hello"));
 }
 
 // ── Round-trip equivalence with owned path ──────────────────────────────

@@ -1198,10 +1198,6 @@ disagreement on priorities.
   Numeric formatting falls back to `core::fmt` (slower; output
   remains valid YAML); the `from_str_strict` typo-detection
   helpers go away.
-- **You need flow-style aliases on the borrowed path.**
-  `BorrowedValue<'a>` borrows scalar bytes from the input but does
-  not resolve YAML aliases (`*name`). Use the owned `Value` path
-  when the document uses anchors.
 
 If you hit a case that should be on this list, please open an
 issue — that's how it gets fixed or moved into the supported set.
