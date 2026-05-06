@@ -23,6 +23,7 @@ ecosystem artefacts.
 | [`docker/`](docker/) | GHCR container images | `Dockerfile` (distroless), `Dockerfile.full`, `Dockerfile.mcp` | `container-publish` job, multi-arch via buildx |
 | [`vscode/`](vscode/) | VS Code Marketplace + Open VSX | `.vsix` extension that bundles `noyalib-lsp` | `vscode-extension` job |
 | [`npm-mcp-wrapper/`](npm-mcp-wrapper/) | npm | `noyalib-mcp` package — `npx`-runnable wrapper that bootstraps the binary from a GitHub Release on first run | `npm-publish` job |
+| [`PUBLISH.md`](PUBLISH.md) | — | Per-channel runbook: bootstrap, secrets, first publish, ongoing maintenance for every distribution channel above | — |
 | [`VERIFY.md`](VERIFY.md) | — | cosign + SLSA verification cookbook for every artefact above | — |
 
 Every template carries `__VERSION__` / `__SHA256__` /

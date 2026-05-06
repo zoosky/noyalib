@@ -540,6 +540,12 @@ Documented in `pkg/README.md` for new maintainers.
 
 **Phase 5 deliverables:** ad-hoc, multi-week. Each distro tracked separately as it lands. **Effort: months of intermittent maintainer work.**
 
+> **Runbook:** `pkg/PUBLISH.md` is the per-channel runbook
+> covering bootstrap (account creation, secret population),
+> first publish, and ongoing maintenance for every channel in
+> the table above. The maintainer follows it sequentially as
+> distros come online.
+
 ## Phase 6 — Documentation
 
 | File | Content | Effort |
