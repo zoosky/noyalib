@@ -5,7 +5,7 @@
 //!
 //! The same [`clap::Command`] builders the binaries use to parse
 //! their argv at runtime are also consumed by the build script
-//! ([`build.rs`]) and the `cargo xtask` runner — so the binaries,
+//! (`build.rs`) and the `cargo xtask` runner — so the binaries,
 //! the man pages, and the shell completions can never drift.
 //!
 //! # Surface

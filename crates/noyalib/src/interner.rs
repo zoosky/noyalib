@@ -10,7 +10,8 @@
 //! brand-new `String` for every key. For a 10 000-record stream
 //! that's tens of thousands of identical heap allocations.
 //!
-//! [`KeyInterner`] is the primitive that lets a caller dedupe
+//! [`KeyInterner`](crate::interner::KeyInterner) is the primitive
+//! that lets a caller dedupe
 //! those allocations. The intern table maps each unique key text
 //! to a shared `Arc<str>`; subsequent calls with the same key
 //! return a clone of the existing `Arc` instead of allocating.

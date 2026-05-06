@@ -2343,7 +2343,7 @@ impl Value {
     /// On success this method is identical to
     /// `interpolate_properties`. On failure the error reads
     /// `interpolate_properties: unknown placeholder
-    /// `${<redacted>}`` instead of including the original name.
+    /// ${"<redacted>"}` instead of including the original name.
     /// Substituted *values* (the contents of the property map)
     /// are never echoed to errors — that's the responsibility of
     /// the caller's downstream validators.

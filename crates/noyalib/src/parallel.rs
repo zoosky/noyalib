@@ -54,10 +54,10 @@
 //!
 //! # API shape
 //!
-//! - [`parse`] — typed deserialise into `Vec<T>`.
-//! - [`values`] — dynamic-tree variant returning `Vec<Value>`.
-//! - [`split`] — standalone document-boundary pre-scanner for
-//!   callers driving their own concurrency primitives.
+//! - [`parse`](crate::parallel::parse) — typed deserialise into `Vec<T>`.
+//! - [`values`](crate::parallel::values) — dynamic-tree variant returning `Vec<Value>`.
+//! - [`split`](crate::parallel::split) — standalone document-boundary
+//!   pre-scanner for callers driving their own concurrency primitives.
 //!
 //! Names are kept short on purpose — the `parallel` namespace
 //! already encodes the concurrency contract, so the function
