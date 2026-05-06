@@ -100,18 +100,29 @@ cd noyalib
 make          # check + clippy + test
 ```
 
-Requires **Rust 1.75.0+** for the core feature set (`default-features
-= false` and the standard `std` default). Optional features pull in
-ergonomics deps that have themselves bumped past 1.75 — `miette`
-→ backtrace 1.82+, `garde` → 1.84+, `validate-schema` /
-`figment` → ICU chain 1.86+, `parallel` → rayon-core 1.80+. Use
-those with a current stable toolchain; the core lib stays
-buildable on the Ubuntu 24.04 LTS rustc-1.75 floor.
+**MSRV by crate.** Each workspace crate carries its own
+`rust-version`; CI's `msrv-per-crate` job (Phase 7) gates each
+crate independently so a satellite never silently breaks
+downstream users pinned to the core's floor.
+
+| Crate | MSRV | Why |
+|---|---|---|
+| `noyalib` (core lib) | **1.75.0** | The committed floor for `default-features = false` + the standard `std` default. Enforced by the dedicated `msrv-1-75-core` CI job. |
+| `noyalib-mcp` | 1.75.0 | Same floor; small dep tree, no edition-2024 transitives. |
+| `noya-cli` (binaries) | 1.85.0 | `clap_builder 4.6` (a transitive of `clap = "4.5"`) ships in edition 2024. |
+| `noyalib-lsp` | 1.85.0 | LSP transport-stack transitives (`litemap`, `uuid`) require recent stables. |
+
+Optional core-lib features pull in ergonomics deps that have
+themselves bumped past 1.75 — `miette` → backtrace 1.82+,
+`garde` → 1.84+, `validate-schema` / `figment` → ICU chain
+1.86+, `parallel` → rayon-core 1.80+. Use those with a current
+stable toolchain; the core lib stays buildable on the Ubuntu
+24.04 LTS rustc-1.75 floor.
 
 `rust-toolchain.toml` itself selects `stable` for local
-development; the 1.75.0 floor on the core surface is enforced by
-the dedicated `msrv-1-75-core` CI job (Ubuntu, no-default-features
-+ default-features build paths).
+development; the 1.75.0 floor on the core surface is enforced
+by the dedicated `msrv-1-75-core` CI job (Ubuntu,
+no-default-features + default-features build paths).
 
 ### Cargo features
 

@@ -2,7 +2,10 @@
 name = "noya-cli"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.75.0"
+# clap 4.5 transitively pulls clap_builder 4.6 (edition 2024),
+# which requires rustc 1.85+. Library users still build the
+# noyalib core on 1.75; only the CLI binaries need the bump.
+rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
 description = "Command-line tools for noyalib (noyafmt, noyavalidate)"
 repository = "https://github.com/sebastienrousseau/noyalib"
