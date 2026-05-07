@@ -140,6 +140,39 @@
 //! let round: Config = syml::from_str(&back).unwrap();
 //! assert_eq!(cfg, round);
 //! ```
+//!
+//! # Behavioural divergences from upstream `serde_yaml` 0.9
+//!
+//! The shim exposes the same surface but is backed by noyalib's
+//! deserialiser. Two behaviours differ from upstream — both
+//! changes that noyalib intentionally ships with safer defaults:
+//!
+//! - **Custom-tag scalars surface as [`Value::Tagged`]**
+//!   instead of being
+//!   silently coerced to the inner string. `from_str::<Value>`
+//!   on `!Custom 'hello'` returns
+//!   `Value::Tagged(Tag("!Custom"), Value::String("hello"))`,
+//!   not `Value::String("hello")`. Migrants who previously
+//!   exhaustive-matched the six-variant `serde_yaml::Value`
+//!   need to either add a `Value::Tagged(_)` arm or call
+//!   [`Value::untag`](crate::Value::untag) /
+//!   [`Value::untag_ref`](crate::Value::untag_ref) before the
+//!   match. See
+//!   [`doc/MIGRATION-FROM-SERDE-YAML.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/MIGRATION-FROM-SERDE-YAML.md#1-valuetagged-is-a-7th-variant--and-noyalib-preserves-scalar-tags-too)
+//!   §1 for the recipe.
+//! - **YAML 1.2 strict booleans by default.** `country: NO`
+//!   stays `"NO"` (the YAML 1.2 fix to the "Norway problem")
+//!   instead of becoming `false`. Opt back into YAML 1.1
+//!   resolver semantics via
+//!   [`ParserConfig::version`](crate::ParserConfig::version)`(`[`YamlVersion::V1_1`](crate::YamlVersion)`)`
+//!   if your existing pipeline depended on the legacy boolean
+//!   recognition.
+//!
+//! Both of these are documented under "Things `noyalib` adds"
+//! and "Behavioural differences worth knowing" in the migration
+//! guide. Neither is reachable via the existing `serde_yaml`
+//! API surface — they are extra information / safer defaults
+//! that flow through unchanged for the typed-deserialise path.
 
 use crate::prelude::*;
 use serde::de::DeserializeOwned;

@@ -1330,6 +1330,13 @@ fn entry_value(
 ) -> Option<(SyntaxKind, (usize, usize), Option<&GreenNode>)> {
     let mut pos = base;
     let mut after_colon = false;
+    // First-property-token start: when a value is preceded by an
+    // [`SyntaxKind::AnchorMark`] / [`SyntaxKind::TagMark`] (or a
+    // combination), the conceptual value span covers the entire
+    // property prefix plus the scalar / node that follows.
+    // Capture that earliest property start here so the returned
+    // `(start, end)` stretches across the whole prefixed value.
+    let mut prefix_start: Option<usize> = None;
     for child in entry.children() {
         let len = child.text_len();
         let child_start = pos;
@@ -1340,29 +1347,43 @@ fn entry_value(
                     if *kind == SyntaxKind::ColonIndicator {
                         after_colon = true;
                     }
+                } else if is_value_property_kind(*kind) {
+                    // `!Tag` / `&anchor` / `*alias` prefix —
+                    // remember the earliest start and keep
+                    // scanning for the scalar that follows.
+                    let _ = prefix_start.get_or_insert(child_start);
                 } else if !is_trivia_kind(*kind) {
-                    return Some((*kind, (child_start, child_end), None));
+                    let start = prefix_start.unwrap_or(child_start);
+                    return Some((*kind, (start, child_end), None));
                 }
             }
             GreenChild::Node(inner) => {
                 if after_colon {
-                    return Some((inner.kind(), (child_start, child_end), Some(inner)));
+                    let start = prefix_start.unwrap_or(child_start);
+                    return Some((inner.kind(), (start, child_end), Some(inner)));
                 }
             }
         }
         pos += len;
     }
-    None
+    // Fall-through: the entry has a tag/anchor prefix but nothing
+    // followed it before EOF — surface the prefix span so callers
+    // see a meaningful range rather than `None`.
+    prefix_start.map(|start| (SyntaxKind::PlainScalar, (start, pos), None))
 }
 
 /// Inside a `SequenceItem`, walk past the DashIndicator and return
-/// the first non-trivia "value" child.
+/// the first non-trivia "value" child. Mirrors [`entry_value`]'s
+/// tag/anchor-prefix handling: the returned span covers any
+/// `!Tag` / `&anchor` / `*alias` property tokens **plus** the
+/// scalar / node that follows.
 fn item_value(
     item: &GreenNode,
     base: usize,
 ) -> Option<(SyntaxKind, (usize, usize), Option<&GreenNode>)> {
     let mut pos = base;
     let mut after_dash = false;
+    let mut prefix_start: Option<usize> = None;
     for child in item.children() {
         let len = child.text_len();
         let child_start = pos;
@@ -1373,19 +1394,23 @@ fn item_value(
                     if *kind == SyntaxKind::DashIndicator {
                         after_dash = true;
                     }
+                } else if is_value_property_kind(*kind) {
+                    let _ = prefix_start.get_or_insert(child_start);
                 } else if !is_trivia_kind(*kind) {
-                    return Some((*kind, (child_start, child_end), None));
+                    let start = prefix_start.unwrap_or(child_start);
+                    return Some((*kind, (start, child_end), None));
                 }
             }
             GreenChild::Node(inner) => {
                 if after_dash {
-                    return Some((inner.kind(), (child_start, child_end), Some(inner)));
+                    let start = prefix_start.unwrap_or(child_start);
+                    return Some((inner.kind(), (start, child_end), Some(inner)));
                 }
             }
         }
         pos += len;
     }
-    None
+    prefix_start.map(|start| (SyntaxKind::PlainScalar, (start, pos), None))
 }
 
 fn is_trivia_kind(k: SyntaxKind) -> bool {
@@ -1396,6 +1421,22 @@ fn is_trivia_kind(k: SyntaxKind) -> bool {
             | SyntaxKind::Comment
             | SyntaxKind::Bom
             | SyntaxKind::Directive
+    )
+}
+
+/// Tokens that are part of a YAML *value* by attaching properties
+/// (anchor, alias, tag) but are not themselves the value content.
+/// The CST span resolver treats these as a *prefix* of the value
+/// span — `entry_value` / `item_value` stretch their returned
+/// `(start, end)` to cover the prefix plus the scalar / node that
+/// follows, so `Document::span_at("name")` on
+/// `name: !Custom 'app-1'` returns `6..21` (covering both the
+/// tag and the quoted scalar) rather than `6..13` (the tag
+/// alone, which was the pre-fix behaviour).
+fn is_value_property_kind(k: SyntaxKind) -> bool {
+    matches!(
+        k,
+        SyntaxKind::AnchorMark | SyntaxKind::TagMark | SyntaxKind::AliasMark
     )
 }
 

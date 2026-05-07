@@ -112,6 +112,29 @@ hurt for editor and tooling workloads:
    YAML 1.2 strict semantics; only `true` / `false` are
    booleans.
 
+### Custom YAML tags
+
+`parse(yaml)` surfaces YAML tags as plain JS object keys:
+`!Color '#ff8800'` deserialises into `{ "!Color": "#ff8800" }`.
+This matches the serde-bridge convention every other
+`serde-wasm-bindgen` consumer uses (the `Value::Tagged` variant
+serialises as a single-entry map for cross-format interop).
+Round-tripping via `stringify` does **not** restore the
+YAML-tag prefix — the JS object's tag-as-key shape becomes a
+quoted mapping key in the emitted YAML.
+
+For editor / tooling workloads where the YAML-tag wire form
+must survive a parse → emit cycle, use the `WasmDocument`
+class instead. Its `set` / `setValue` are surgical edits
+through the CST, so untouched tag prefixes round-trip
+verbatim:
+
+```js
+const doc = new WasmDocument("color: !Color '#ff8800'\n");
+doc.set("color", "!Color '#00aaff'");           // tag survives
+console.log(doc.toString());                    // "color: !Color '#00aaff'\n"
+```
+
 Other differences worth knowing about:
 
 - **JSON Schema 2020-12 validation built in.** Same engine as
