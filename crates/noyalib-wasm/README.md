@@ -80,7 +80,7 @@ console.log(obj.host); // "api.example.com"
 const yaml = stringify(obj);
 
 // Indexed read without going through `parse`.
-const port = getPath("port: 8080\n", "port"); // 8080
+const port = getPath("host: api.example.com\nport: 8080\n", "port"); // 8080
 
 // JSON-compatible YAML 1.2 schema check.
 validateJson("a: 1\nb: [2, 3]\n"); // true

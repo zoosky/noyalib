@@ -100,8 +100,10 @@ assert_eq!(cfg, round);
 noyalib targets the niche `serde_yaml` / `serde_yml` / `libyml`
 occupy — read YAML into typed Rust structs, write Rust structs
 back as YAML — and is written from scratch against the YAML 1.2
-spec. The implementation passes the official YAML test suite at
-**406/406** with zero skips. It is not a fork of `serde_yaml`;
+spec. The implementation runs the official YAML test suite to
+**100% strict compliance — 387/387 attempted cases pass, 0
+failures**; 19 cases are deliberately skipped (tracked in
+`tests/yaml_compliance_report.rs`). It is not a fork of `serde_yaml`;
 the parser, scanner, serialiser, and CST are independent code.
 
 Two architectural choices motivate the rewrite:
@@ -160,11 +162,13 @@ and `thiserror` are all absent. `cargo audit`, `cargo deny`, and
 
 ## YAML 1.2 conformance
 
-Validated against
-[406 / 406 cases](https://github.com/yaml/yaml-test-suite) of
-the official YAML test suite, **zero skips**. The conformance
-report rebuilds on every CI run via
-`cargo test --test yaml_compliance_report`.
+Validated against the
+[official YAML test suite](https://github.com/yaml/yaml-test-suite)
+at **100% strict compliance — 387 / 387 attempted cases pass, 0
+failures, 19 deliberately skipped**. The skip list is tracked in
+`tests/yaml_compliance_report.rs` so the gap is explicit and
+audit-friendly. The conformance report rebuilds on every CI run
+via `cargo test --test yaml_compliance_report`.
 
 The same suite also exercises:
 

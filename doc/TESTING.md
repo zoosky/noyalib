@@ -14,7 +14,7 @@ graph TD
     D --> E[Fuzz · libfuzzer<br/>9 targets]
     F[Miri · UB detection] -.parallel.-> C
     G[Bench · Criterion<br/>13 harnesses] -.parallel.-> C
-    H[Spec compliance<br/>406/406 yaml-test-suite] -.parallel.-> C
+    H[Spec compliance<br/>387/387 strict yaml-test-suite] -.parallel.-> C
 ```
 
 Each layer catches a different bug class. None replaces another —
@@ -141,13 +141,20 @@ merge.
 
 **Run:** `cargo bench --workspace`
 
-## Spec compliance: 406/406
+## Spec compliance: 387/387 strict
 
-The `yaml-test-suite` is the canonical 1.2 conformance corpus
-(~400 cases covering every productive rule in the spec). noyalib
-passes 406/406, locked by `tests/official_suite.rs`. Each new
-correctness fix lands with the corresponding suite case
-unblocked, so regression == suite drop.
+The `yaml-test-suite` is the canonical 1.2 conformance corpus.
+noyalib's compliance harness reports **387/387 strict-pass, 0
+failures, and 19 deliberate skips out of 406 total cases** (each
+case directory yields one or more variant assertions; the totals
+reflect those variant counts). The full breakdown — including
+which tags each skipped case carries — rebuilds on every CI run
+into `target/yaml-compliance-report.md`.
+
+The strict-pass set is locked by `tests/official_suite.rs` so a
+regression — any case dropping from pass to skip / fail — fails
+CI immediately. Each new correctness fix lands with the
+corresponding suite case unblocked.
 
 ## Coverage gate
 

@@ -184,22 +184,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   preserve their `usize` return type — the narrower storage is
   widened at the API boundary so existing callers continue to
   compile.
-- 406/406 YAML 1.2 spec compliance preserved; full test suite +
-  doctest sweep green.
+- 387/387 strict YAML 1.2 test-suite pass preserved (0 failures,
+  19 deliberate skips out of 406 variant assertions); full test
+  suite + doctest sweep green.
 
 ### Added — Parallel multi-document parsing
 
-- **`noyalib::load_all_as_parallel<T>(yaml) -> Result<Vec<T>>`**
-  and **`noyalib::load_all_parallel(yaml) -> Result<Vec<Value>>`**
-  — pre-scan `---` document boundaries on a single thread, then
+- **`noyalib::parallel::parse<T>(input) -> Result<Vec<T>>`** and
+  **`noyalib::parallel::values(input) -> Result<Vec<Value>>`** —
+  pre-scan `---` document boundaries on a single thread, then
   deserialise each document in parallel via Rayon. Targets
   multi-document streams (telemetry logs, audit exports,
   Kubernetes-resource snapshots) where single-thread parsing is
   CPU-bound.
-- **`noyalib::parallel::split_documents(input) -> Vec<&str>`** —
-  the standalone document-boundary pre-scanner. Useful when the
-  caller wants to drive their own concurrency primitives (async
-  tasks, custom thread pools).
+- **`noyalib::parallel::split(input) -> Vec<&str>`** — the
+  standalone document-boundary pre-scanner. Useful when the caller
+  wants to drive their own concurrency primitives (async tasks,
+  custom thread pools).
 - Gated behind the `parallel` Cargo feature (off by default —
   pulls in `rayon` only when the user asks for it).
 - 10 unit tests covering boundary detection edge cases (no
@@ -231,7 +232,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 11 unit tests including baseline equivalence against
   `<u64 as FromStr>::from_str` across 19 representative values
   (covers `i64::MIN`, `i64::MAX`, `u64::MAX`, sign handling).
-- 406/406 YAML 1.2 spec compliance preserved.
+- 387/387 strict YAML 1.2 test-suite pass preserved (0 failures,
+  19 deliberate skips out of 406 variant assertions).
 
 ### Added — Canonical scanner needle constants
 
@@ -411,7 +413,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The launch release. Sections below catalogue every capability the
 library ships at launch, grouped by theme. See
-[`docs/design/`](docs/design/) for the architecture rationale and
+[`doc/design/`](doc/design/) for the architecture rationale and
 the commit history on `main` for per-change context.
 
 ### Added — Property interpolation
@@ -579,9 +581,12 @@ spec behaviour (zero impact on existing callers):
 
 - **Native YAML 1.2 scanner and parser**, written entirely in safe
   Rust — `#![forbid(unsafe_code)]` at the crate root.
-- **100% YAML Test Suite compliance — literal**: 406/406 cases
-  pass with **zero skips**. The skip list — used during
-  development to bound the work — is empty.
+- **100% YAML Test Suite strict compliance**: 387/387 attempted
+  variant assertions pass, 0 failures, 19 deliberate skips out
+  of 406 total. The skip list is tracked alongside the harness in
+  `tests/yaml_compliance_report.rs` so the gap is explicit and
+  audit-friendly; each new correctness fix lands with the
+  corresponding suite case unblocked.
 - Full serde `Serialize` and `Deserialize` support including
   `#[serde(flatten)]`, `#[serde(default)]`, `#[serde(rename)]`,
   enum representations (externally-tagged, internally-tagged,
@@ -857,8 +862,8 @@ single-key edits):
 
 ### Added — Examples
 
-- **45 branded examples** under `examples/`, each with the
-  animated spinner UI from `examples/support.rs`.
+- **60 branded examples** under `crates/noyalib/examples/`, each
+  with the animated spinner UI from `examples/support.rs`.
 - Categorised into Core, Spec, Logic & Security, DX, Advanced,
   Future-Proof, Deep Rust, Final, Platform, and Competitive
   Features.
@@ -869,7 +874,11 @@ single-key edits):
   property-based tests (`proptest`), competitor parity tests
   (`yaml-rust2`, `serde-saphyr`, `yaml_lib`, `rust-yaml`,
   `serde_yaml_ng`), and edge cases.
-- **5 fuzz targets** (`cargo fuzz`) with seed corpus committed
+- **9 fuzz targets** (`cargo fuzz`) — five generic
+  (`fuzz_parse`, `fuzz_roundtrip`, `fuzz_from_value`,
+  `fuzz_multi_doc`, `fuzz_strict`) plus four targeted regression
+  fuzzers (`fuzz_borrowed_alias`, `fuzz_diff`,
+  `fuzz_double_quoted`, `fuzz_yaml_v1_1`). Seed corpus committed
   under `fuzz/corpus/seed/`.
 - **Differential fuzz smoke** in CI (10 s per push).
 - **Soak fuzz** (weekly, 1 hour per target) under
@@ -918,18 +927,31 @@ single-key edits):
 
 ### Added — Cargo feature matrix
 
+The full `[features]` block of `crates/noyalib/Cargo.toml`. Three
+default-on optional features (`fast-int`, `fast-float`,
+`strict-deserialise`) opt out via `default-features = false`; all
+other optional features opt in.
+
 | Feature | Default | Pulls in |
 |---|---|---|
 | `std` | yes | (none — gates std-only items) |
-| `miette` | no | `miette` rich diagnostics |
+| `fast-int` | yes | `itoa` 1 (branchless integer formatting) |
+| `fast-float` | yes | `ryu` 1 (branchless float formatting) |
+| `strict-deserialise` | yes | `serde_ignored` 0.1 (`from_*_strict`) |
+| `minimal` | no | meta-alias for `std` only — drops the three above |
+| `miette` | no | `miette` 7 rich diagnostics |
 | `garde` | no | `garde` 0.22 derive-based validation |
 | `validator` | no | `validator` 0.19 derive-based validation |
-| `compat-serde-yaml` | no | `serde_yaml` 0.9 (drop-in shim) |
+| `compat-serde-yaml` | no | name-for-name shim (no upstream dep) |
 | `schema` | no | `schemars` 1.2 + `serde_json` (codegen) |
 | `validate-schema` | no | implies `schema` + `jsonschema` 0.33 |
+| `figment` | no | `figment` 0.10 `Yaml` Provider |
+| `parallel` | no | `rayon` 1.10 (`parallel::parse` / `values` / `split`) |
+| `simd` | no | `noyalib::simd::*` primitives + parser hot path |
+| `nightly-simd` | no | nightly rustc — 32-byte `StructuralIter` (implies `simd`) |
+| `compare-saphyr` | no | dev-only — `serde-saphyr` for cross-library benches |
+| `robotics` | no | `Degrees` / `Radians` / `StrictFloat` newtypes |
 | `noyavalidate` | no | binary feature: `std` + `miette` + `validate-schema` |
-| `simd` | no | currently a no-op (forward-reserved) |
-| `robotics` | no | numeric helpers for robotics workloads |
 | `wasm-opt` | no | size-tuned WASM build profile |
 
 [Unreleased]: https://github.com/sebastienrousseau/noyalib/compare/v0.0.1...HEAD

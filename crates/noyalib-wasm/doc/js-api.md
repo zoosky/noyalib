@@ -53,23 +53,23 @@ const yaml = stringify({ name: "noyalib", port: 8080 });
 // "name: noyalib\nport: 8080\n"
 ```
 
-### `validate_json(yaml: string): boolean`
+### `validateJson(yaml: string): boolean`
 
 Returns `true` if the YAML parses successfully and contains only
 JSON-compatible values (no tags, no anchors, no non-string
 mapping keys). Used for "is this YAML safe to round-trip through
 `JSON.stringify`?" checks.
 
-### `get_path(yaml: string, path: string): unknown | null`
+### `getPath(yaml: string, path: string): unknown | null`
 
 Fetch a single value from a YAML string by dotted path. Returns
 `null` if the path doesn't exist.
 
 ```ts
-import { get_path } from "noyalib-wasm";
+import { getPath } from "noyalib-wasm";
 
-const host = get_path(yamlString, "server.host");
-const firstItem = get_path(yamlString, "items[0].name");
+const host = getPath(yamlString, "server.host");
+const firstItem = getPath(yamlString, "items[0].name");
 ```
 
 ### `merge(base: string, override: string): string`
@@ -129,25 +129,25 @@ const host = doc.get("server.host");        // "api.example.com"
 const missing = doc.get("server.missing");  // null
 ```
 
-#### `doc.get_source(path: string): string | null`
+#### `doc.getSource(path: string): string | null`
 
 Read the **raw source slice** for the value at a dotted path —
 no re-quoting, no canonicalisation. Useful when you need to know
 exactly what the user typed.
 
 ```ts
-const raw = doc.get_source("server.host");
+const raw = doc.getSource("server.host");
 // "api.example.com" (the bytes from the source, including any quoting)
 ```
 
-#### `doc.span_at(path: string): { start: number; end: number } | null`
+#### `doc.spanAt(path: string): { start: number; end: number } | null`
 
 Return the byte range `[start, end)` of the value at a dotted
 path within the source string. Useful for editor integrations
 that need to highlight the value the cursor is over.
 
 ```ts
-const span = doc.span_at("server.host");
+const span = doc.spanAt("server.host");
 // { start: 38, end: 53 }
 ```
 
@@ -167,7 +167,7 @@ After `doc.toString()`, only the bytes for the changed value
 have moved — comments, blank lines, indent style, sibling
 entries are byte-identical.
 
-#### `doc.set_value(path: string, value: unknown): void`
+#### `doc.setValue(path: string, value: unknown): void`
 
 Set the value at a dotted path using a **JS object**. Internally
 serialises the JS value through `noyalib::Value` and applies the
@@ -175,22 +175,22 @@ result. Equivalent to `doc.set(path, stringify(value))` but
 slightly more direct.
 
 ```ts
-doc.set_value("server", {
+doc.setValue("server", {
   host: "api.example.com",
   port: 9090,
   tls: { enabled: true }
 });
 ```
 
-#### `doc.replace_span(start: number, end: number, replacement: string): void`
+#### `doc.replaceSpan(start: number, end: number, replacement: string): void`
 
 Replace the bytes in `[start, end)` with `replacement`. The
 lower-level escape hatch — used when you have a span from
-`span_at` and want to do something the structured API doesn't
+`spanAt` and want to do something the structured API doesn't
 cover. The replacement is not validated for parseability; you
 get what you write.
 
-#### `doc.comments_at(path: string): { before: string[]; inline: string | null }`
+#### `doc.commentsAt(path: string): { before: string[]; inline: string | null }`
 
 Read the YAML comments associated with the node at `path`.
 Returns the leading-comments array (the `# ...` lines
@@ -200,7 +200,7 @@ the demo that motivates the entire CST architecture — comments
 survive the round-trip and are queryable.
 
 ```ts
-const { before, inline } = doc.comments_at("server.host");
+const { before, inline } = doc.commentsAt("server.host");
 // before: ["# public-facing"]  (depending on layout)
 // inline: " public-facing"     (if there's a same-line comment)
 ```
@@ -237,11 +237,11 @@ is not currently exposed (file an issue if you need it).
 |---|---|
 | Parse YAML → JS object → done | `parse()` |
 | JS object → YAML string | `stringify()` |
-| Quick value lookup, no edit | `get_path(yaml, path)` |
+| Quick value lookup, no edit | `getPath(yaml, path)` |
 | Merge two configs | `merge(base, override)` |
 | Edit a value, preserve comments / formatting | `WasmDocument.set` |
-| Cursor-aware editor integration | `WasmDocument.span_at` + `replace_span` |
-| Surface comments to the user | `WasmDocument.comments_at` |
+| Cursor-aware editor integration | `WasmDocument.spanAt` + `replaceSpan` |
+| Surface comments to the user | `WasmDocument.commentsAt` |
 | Round-trip with byte-faithfulness | `new WasmDocument(s).toString()` (no edits → identity) |
 
 ## Related

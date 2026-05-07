@@ -302,7 +302,7 @@ unambiguous.
 | Integration | `crates/noyalib/tests/` | Cross-module surfaces (~30 files) |
 | Doc-tests | every `///` block with a code-fence | Public-API examples |
 | Property | `crates/noyalib/tests/proptest_*.rs` | Roundtrip invariants via `proptest` |
-| Official YAML 1.2 suite | `crates/noyalib/tests/yaml-test-suite/**` | 406/406 pass, 0 skips |
+| Official YAML 1.2 suite | `crates/noyalib/tests/yaml-test-suite/**` | 387/387 strict-pass, 0 failures, 19 deliberate skips |
 | CLI smoke | `crates/noya-cli/tests/` | End-to-end `noyafmt` / `noyavalidate` runs |
 
 Total: ~4100 tests. Runtime: ~110 s for `cargo test --workspace

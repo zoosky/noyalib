@@ -253,8 +253,11 @@ covers each in detail.
 noyalib targets the niche `serde_yaml` / `serde_yml` / `libyml`
 occupy — read YAML into typed Rust structs, write Rust structs back
 as YAML — and is written from scratch against the YAML 1.2 spec.
-The implementation passes the official YAML test suite at 406/406
-with zero skips. It is not a fork of `serde_yaml`; the parser,
+The implementation runs the official YAML test suite to **100%
+strict compliance — 387/387 attempted cases pass, 0 failures**;
+19 cases are deliberately skipped (tracked alongside the suite in
+[`tests/yaml_compliance_report.rs`](crates/noyalib/tests/yaml_compliance_report.rs)
+so the gap is explicit). It is not a fork of `serde_yaml`; the parser,
 scanner, serialiser, and CST are independent code.
 
 Two architectural choices motivate the rewrite:
@@ -314,7 +317,7 @@ table below groups the inventory by capability theme.
 
 | Theme | Headline deliverables |
 | :--- | :--- |
-| Spec compliance | YAML 1.2 official test suite at 100% literal (406/406 pass, zero skips); YAML 1.1 opt-in compatibility for the "Norway problem"; multi-document streams |
+| Spec compliance | YAML 1.2 official test suite at 100% strict (387/387 attempted, 0 failures, 19 deliberately skipped — gap tracked in `tests/yaml_compliance_report.rs`); YAML 1.1 opt-in compatibility for the "Norway problem"; multi-document streams |
 | Migration from `serde_yaml` | `compat-serde-yaml` feature with name-for-name re-exports; `From`/`TryFrom` parity for `Value`/`Mapping`/`Number`; `Document::validate`; comment-aware reads via `load_comments` |
 | Binary scalars | First-class `!!binary` tag; RFC 4648 base64 round-trip with `serde_bytes::ByteBuf`/`Bytes`; non-UTF-8 payloads supported |
 | Flatten guard | `Spanned<Value>` in `#[serde(flatten)]` returns an actionable error pointing at the working alternative |
@@ -420,7 +423,7 @@ crates.io release of each); corrections welcome via PR.
 
 | | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **YAML Test Suite** | 100% (406/406) | — | — | — | — | — |
+| **YAML Test Suite** | 100% strict (387/387) | — | — | — | — | — |
 | **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes | Yes |
 | **Zero `unsafe`** | Yes | No | No | Yes | Yes | Yes |
 | **Serde integration** | Yes | Yes | Yes | Yes | No | Yes |
@@ -559,7 +562,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | :--- | :--- |
 | **Source** | 26,000+ lines across the workspace |
 | **Test suite** | 3,600+ tests + doc-tests + CLI smoke |
-| **YAML Test Suite** | 100% literal compliance: 406/406 cases pass with zero skips |
+| **YAML Test Suite** | 100% strict compliance: 387/387 attempted cases pass, 0 failures, 19 deliberate skips |
 | **Examples** | 50+ runnable examples + WASM demo |
 | **Coverage** | 95%+ line coverage |
 | **Dependencies** | 5 unconditional + 3 default-on optional (`itoa`, `ryu`, `serde_ignored`) + 12 opt-in optional (`miette`, `garde`, `validator`, `schemars`, `serde_json`, `jsonschema`, `figment`, `rayon`, `serde-saphyr`, plus the three default-on opt-outs) |
