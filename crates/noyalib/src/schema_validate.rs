@@ -135,7 +135,7 @@ pub fn validate_against_schema_str(yaml: &str, schema_yaml: &str) -> Result<()> 
 /// non-string keys) become JSON-incompatible at this boundary —
 /// JSON Schema does not have semantics for them either, so the
 /// validator would reject them downstream regardless.
-fn value_to_json(v: &Value) -> core::result::Result<serde_json::Value, String> {
+pub(crate) fn value_to_json(v: &Value) -> core::result::Result<serde_json::Value, String> {
     serde_json::to_value(v).map_err(|e| e.to_string())
 }
 

@@ -51,6 +51,25 @@ use crate::value::Value;
 /// [`JsonSchema`] on your Rust type is what makes
 /// [`schema_for`] / [`schema_for_yaml`] produce a schema for it.
 ///
+/// # Downstream `Cargo.toml`
+///
+/// The proc-macro that powers `#[derive(JsonSchema)]` expands to
+/// code that references `::schemars::...` paths in the *call
+/// site's* dep graph. That means downstream crates that derive
+/// [`JsonSchema`] must add `schemars` to their own
+/// `Cargo.toml` alongside `noyalib`:
+///
+/// ```toml
+/// [dependencies]
+/// noyalib = { version = "0.0.1", features = ["schema"] }
+/// schemars = "1.2"
+/// ```
+///
+/// (Same precedent as `serde::Deserialize` — derive macros that
+/// re-export through a wrapper crate cannot rewrite the
+/// generated paths without an explicit
+/// `#[schemars(crate = "...")]` attribute on every type.)
+///
 /// # Examples
 ///
 /// ```

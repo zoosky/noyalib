@@ -44,9 +44,63 @@
 
 use noyalib_mcp::{handle_message, HandleOutcome};
 use std::io::{self, BufRead, Write};
+use std::process::ExitCode;
+
+const HELP: &str = "\
+noyalib-mcp — Model Context Protocol server for noyalib's lossless
+              YAML editing.
+
+USAGE:
+  noyalib-mcp                   Start the JSON-RPC stdio loop (the
+                                normal mode an MCP client invokes).
+  noyalib-mcp --version | -V    Print version and exit.
+  noyalib-mcp --help | -h       Print this help and exit.
+
+NOTES:
+  This binary speaks newline-delimited JSON-RPC 2.0 over stdio per
+  the MCP 2025-06 spec. It is not designed for interactive use —
+  configure your MCP-aware client (Claude, Cursor, Zed, …) to spawn
+  it instead. Example for Claude:
+
+    claude mcp add noyalib /usr/local/bin/noyalib-mcp
+
+REPORTING BUGS:
+  https://github.com/sebastienrousseau/noyalib/issues
+";
 
 #[cfg_attr(noyalib_coverage, coverage(off))]
-fn main() -> io::Result<()> {
+fn main() -> ExitCode {
+    // Honour the conventional `--version` / `--help` flags before
+    // falling into the stdio JSON-RPC loop. Without these, a user
+    // running `noyalib-mcp` to verify the install just sees a hung
+    // process; printing version / help is the standard CLI hygiene.
+    if let Some(arg) = std::env::args().nth(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("noyalib-mcp {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            "--help" | "-h" => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("noyalib-mcp: unknown argument `{other}`");
+                eprintln!("Run `noyalib-mcp --help` for usage.");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("noyalib-mcp: {e}");
+            ExitCode::from(3)
+        }
+    }
+}
+
+fn run() -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     let mut line = String::new();

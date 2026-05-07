@@ -369,7 +369,45 @@ fn schema_and_fix_combine() {
         .unwrap();
     assert_eq!(output.status.code().unwrap(), 0);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("schema-checked, fixed"));
+    // Already-valid input — `--fix` runs the formatter only and the
+    // success message reports zero coercions.
+    assert!(
+        stdout.contains("schema-checked, no fixes needed"),
+        "got: {stdout}"
+    );
+    let after = std::fs::read_to_string(&yaml).unwrap();
+    assert_eq!(after, "port: 8080\n");
+}
+
+#[test]
+fn schema_and_fix_coerces_quoted_integer() {
+    // Headline `coerce_to_schema` use case: `port: "8080"` is a
+    // string in YAML 1.2, but the schema says it must be an
+    // integer. With `--schema --fix`, the CLI rewrites the file
+    // through `noyalib::coerce_to_schema` so re-validation passes.
+    let schema = tmp(
+        "coerce_s",
+        "type: object\nrequired: [port]\nproperties:\n  port: { type: integer }\n",
+    );
+    let yaml = tmp("coerce_d", "port: \"8080\"\n");
+    let output = bin()
+        .arg("--schema")
+        .arg(&schema)
+        .arg("--fix")
+        .arg(&yaml)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code().unwrap(),
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("1 fix(es) applied"),
+        "got: {stdout}"
+    );
     let after = std::fs::read_to_string(&yaml).unwrap();
     assert_eq!(after, "port: 8080\n");
 }

@@ -69,6 +69,8 @@
 mod anchor;
 mod annotated;
 mod builder;
+#[cfg(feature = "validate-schema")]
+mod coerce;
 mod document;
 mod entry;
 mod format;
@@ -77,6 +79,9 @@ mod syntax;
 
 pub use anchor::{AliasInfo, AnchorInfo};
 pub use annotated::CommentBundle;
+#[cfg(feature = "validate-schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
+pub use coerce::coerce_to_schema;
 pub use document::{parse_document, parse_stream, Document, RepairScope};
 pub use entry::Entry;
 pub use format::{format, format_with_config, FormatConfig};

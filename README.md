@@ -143,7 +143,7 @@ the application needs.
 | :--- | :--- | :--- | :--- |
 | `std` *(default)* | — | `from_reader`, `to_writer`, `Spanned<T>`, CST module | [Install](#install) |
 | `miette` | `miette` 7 | Rich terminal diagnostics with source spans | [Library Usage](#library-usage), `examples/diagnostic.rs` |
-| `schema` | `schemars`, `serde_json` | `JsonSchema` derive + `schema_for::<T>()` | [Capabilities in 0.0.1](#capabilities-in-001) |
+| `schema` | `schemars`, `serde_json` | `JsonSchema` derive + `schema_for::<T>()`. **Downstream callers that derive `JsonSchema` must add `schemars = "1.2"` to their own `Cargo.toml`** — the proc-macro emits `::schemars::*` paths that need to resolve in the call-site dep graph. | [Capabilities in 0.0.1](#capabilities-in-001) |
 | `validate-schema` | `schema` + `jsonschema` | `validate_against_schema`, `coerce_to_schema` | [Governance: schema-driven autofix](#governance-schema-driven-autofix) |
 | `figment` | `figment` 0.10 | `noyalib::figment::Yaml` provider | `examples/figment.rs` |
 | `garde` | `garde` 0.22 | `Validated<T>` wrapper | `examples/validation_garde.rs` |

@@ -187,7 +187,7 @@
 //! | `strict-deserialise` | ✅ | `serde_ignored` | `from_*_strict` family | `std` |
 //! | `minimal` | ⛔ | — | meta-alias for `std` only (drops the three above) | `std` |
 //! | `miette` | ⛔ | `miette 7` | rich terminal diagnostics | — |
-//! | `schema` | ⛔ | `schemars`, `serde_json` | [`schema_for`] / [`schema_for_yaml`] | — |
+//! | `schema` | ⛔ | `schemars`, `serde_json` | [`schema_for`] / [`schema_for_yaml`] **+** consumer must also depend on `schemars = "1.2"` to derive [`JsonSchema`] | — |
 //! | `validate-schema` | ⛔ | `schema` + `jsonschema` | [`validate_against_schema`], [`coerce_to_schema`] | `schema` |
 //! | `figment` | ⛔ | `figment 0.10` | [`figment::Yaml`](crate::figment) Provider | `std` |
 //! | `garde` | ⛔ | `garde 0.22` | [`Validated<T>`] | — |

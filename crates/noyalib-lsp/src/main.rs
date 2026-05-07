@@ -14,8 +14,68 @@
 
 use noyalib_lsp::Server;
 use std::io::{self, Read, Write};
+use std::process::ExitCode;
 
-fn main() -> io::Result<()> {
+const HELP: &str = "\
+noyalib-lsp — Language Server Protocol implementation for noyalib.
+
+USAGE:
+  noyalib-lsp                   Start the LSP stdio server (the
+                                normal mode an editor invokes).
+  noyalib-lsp --version | -V    Print version and exit.
+  noyalib-lsp --help | -h       Print this help and exit.
+
+NOTES:
+  This binary speaks the standard LSP wire format with
+  `Content-Length` framing over stdio. It is not designed for
+  interactive use — configure your editor to spawn it. Example for
+  Neovim with `lspconfig`:
+
+    require('lspconfig.configs').noyalib = {
+      default_config = {
+        cmd = { 'noyalib-lsp' },
+        filetypes = { 'yaml' },
+        root_dir = require('lspconfig.util').find_git_ancestor,
+      },
+    }
+    require('lspconfig').noyalib.setup {}
+
+REPORTING BUGS:
+  https://github.com/sebastienrousseau/noyalib/issues
+";
+
+fn main() -> ExitCode {
+    // Honour the conventional `--version` / `--help` flags before
+    // falling into the LSP stdio loop. Without these, a user
+    // running `noyalib-lsp` to verify the install just sees a hung
+    // process; printing version / help is the standard CLI hygiene.
+    if let Some(arg) = std::env::args().nth(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("noyalib-lsp {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            "--help" | "-h" => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("noyalib-lsp: unknown argument `{other}`");
+                eprintln!("Run `noyalib-lsp --help` for usage.");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("noyalib-lsp: {e}");
+            ExitCode::from(3)
+        }
+    }
+}
+
+fn run() -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     let mut server = Server::new();
