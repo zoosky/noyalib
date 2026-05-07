@@ -512,8 +512,9 @@ pub use schema_codegen::{schema_for, schema_for_yaml, JsonSchema};
 pub use schema_validate::{coerce_to_schema, validate_against_schema, validate_against_schema_str};
 pub use ser::{
     to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,
-    to_string_multi_with_config, to_string_with_config, to_value, FlowStyle, ScalarStyle,
-    Serializer, SerializerConfig,
+    to_string_multi_with_config, to_string_value, to_string_value_with_config,
+    to_string_with_config, to_value, FlowStyle, ScalarStyle, Serializer,
+    SerializerConfig,
 };
 #[cfg(feature = "std")]
 pub use ser::{
@@ -521,7 +522,10 @@ pub use ser::{
     to_writer_tracking_shared_with_config,
 };
 #[cfg(feature = "std")]
-pub use ser::{to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_with_config};
+pub use ser::{
+    to_writer, to_writer_multi, to_writer_multi_with_config, to_writer_value,
+    to_writer_value_with_config, to_writer_with_config,
+};
 pub use spanned::Spanned;
 pub use streaming::StreamingDeserializer;
 pub use tag_registry::TagRegistry;

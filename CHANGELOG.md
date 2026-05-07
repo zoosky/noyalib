@@ -7,6 +7,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — `to_string_value` / `to_writer_value` for lossless `Value::Tagged` emit
+
+- **`noyalib::to_string_value(&Value) -> Result<String>`** and
+  the `_with_config` variant emit a `Value` directly via the
+  YAML-tag-aware writer, skipping the `Serialize` pipeline.
+  Required when the input may contain `Value::Tagged(...)` and
+  the caller wants the YAML-tag wire form to survive on emit.
+- **`noyalib::to_writer_value<W: io::Write>(W, &Value) -> Result<()>`**
+  and the `_with_config` variant — same contract, writing into
+  any `io::Write`.
+- **Why these are separate from `to_string` / `to_writer`**: the
+  generic family routes `Value::Tagged` through
+  `Serializer::serialize_map` (which is the right shape for
+  `serde_json` and other serde-bridge consumers) and that
+  flattens the tag into a single-entry map on emit. Exposing the
+  YAML-tag-aware path under a distinct name keeps the
+  `Serialize`-trait contract clean while giving `Value` users a
+  lossless emit option.
+
 ### Migration notice (pre-launch — applies before v0.0.1 is tagged)
 
 Two source-level changes ship in `[Unreleased]` that downstream

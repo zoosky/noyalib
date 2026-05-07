@@ -508,6 +508,15 @@ where
 /// (`Value::merge`, `Value::interpolate_properties`, …) before a
 /// final emit.
 ///
+/// **Note**: when `value` is itself a [`Value`] containing
+/// [`Value::Tagged`], the round-trip through `serialize` →
+/// `Value` is *lossy* on the tag — the standard `Serialize`
+/// pipeline routes `Tagged` through `serialize_map` (which is
+/// the right shape for serde-bridge interop with `serde_json`
+/// etc.) and the YAML-tag wire form is lost. Use
+/// [`to_string_value`] / [`to_writer_value`] for tag-preserving
+/// emission of a `Value` that may contain `Tagged`.
+///
 /// # Errors
 ///
 /// - `Error::Serialize` — `T`'s `Serialize` impl returned an
@@ -518,7 +527,99 @@ pub fn to_value<T>(value: &T) -> Result<Value>
 where
     T: ?Sized + Serialize,
 {
+    // No tag-preserving fast-path here: the public `to_value` /
+    // `to_string` family keeps `T: ?Sized + Serialize` so callers
+    // can serialise structs holding borrowed references. Users
+    // holding a [`Value`] who want lossless `Value::Tagged`
+    // round-trip should call [`to_string_value`] /
+    // [`to_string_value_with_config`] / [`to_writer_value`] —
+    // those skip the `Serialize` pipeline entirely.
     value.serialize(Serializer)
+}
+
+/// Serialize a [`Value`] directly to a YAML `String`, preserving
+/// [`Value::Tagged`] shape losslessly.
+///
+/// Going through the generic `to_string<T: Serialize>` path
+/// routes `Value::Tagged(...)` through `Serializer::serialize_map`
+/// (which emits a single-entry mapping for serde-bridge interop),
+/// which loses the YAML-tag wire form. This function bypasses the
+/// `Serialize` pipeline and writes the YAML-tag prefix directly.
+///
+/// Use this whenever you hold a `Value` that may contain
+/// `Value::Tagged` and want the emitted YAML to round-trip back
+/// into an equivalent `Value::Tagged`.
+///
+/// # Errors
+///
+/// All variants documented on [`to_string`].
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str, to_string_value, Value};
+/// let v: Value = from_str("!Color '#ff8800'\n").unwrap();
+/// assert!(matches!(v, Value::Tagged(_)));
+/// let s = to_string_value(&v).unwrap();
+/// // Re-parsing yields an equivalent `Value::Tagged`.
+/// let back: Value = from_str(&s).unwrap();
+/// assert!(matches!(back, Value::Tagged(_)));
+/// ```
+pub fn to_string_value(value: &Value) -> Result<String> {
+    value_to_string(value, &SerializerConfig::default())
+}
+
+/// Serialize a [`Value`] to a YAML `String` with a custom
+/// [`SerializerConfig`], preserving [`Value::Tagged`] shape
+/// losslessly. See [`to_string_value`] for the rationale.
+///
+/// # Errors
+///
+/// All variants documented on [`to_string_with_config`].
+pub fn to_string_value_with_config(
+    value: &Value,
+    config: &SerializerConfig,
+) -> Result<String> {
+    value_to_string(value, config)
+}
+
+/// Write a [`Value`] to an [`std::io::Write`] sink, preserving
+/// [`Value::Tagged`] shape losslessly. See [`to_string_value`]
+/// for the rationale.
+///
+/// # Errors
+///
+/// - `Error::Io` — the underlying writer returned an I/O error.
+/// - All variants documented on [`to_string`].
+#[cfg(feature = "std")]
+pub fn to_writer_value<W>(writer: W, value: &Value) -> Result<()>
+where
+    W: std::io::Write,
+{
+    to_writer_value_with_config(writer, value, &SerializerConfig::default())
+}
+
+/// Write a [`Value`] to an [`std::io::Write`] sink with a custom
+/// [`SerializerConfig`], preserving [`Value::Tagged`] shape
+/// losslessly. See [`to_string_value`] for the rationale.
+///
+/// # Errors
+///
+/// - `Error::Io` — the underlying writer returned an I/O error.
+/// - All variants documented on [`to_string_with_config`].
+#[cfg(feature = "std")]
+pub fn to_writer_value_with_config<W>(
+    writer: W,
+    value: &Value,
+    config: &SerializerConfig,
+) -> Result<()>
+where
+    W: std::io::Write,
+{
+    let s = to_string_value_with_config(value, config)?;
+    let mut writer = writer;
+    writer.write_all(s.as_bytes())?;
+    Ok(())
 }
 
 fn value_to_string(value: &Value, config: &SerializerConfig) -> Result<String> {

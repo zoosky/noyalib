@@ -812,6 +812,22 @@ Three escape hatches when the wrapper isn't what you want:
 | Strip a known tag inline on the streaming path (no AST detour) | [`TagRegistry::with`] |
 | Reject any document carrying a non-core tag at parse time | [`policy::DenyTags`] |
 
+For lossless **emit**, use [`to_string_value`] / [`to_writer_value`]:
+
+```rust
+use noyalib::{from_str, to_string_value, Value};
+let v: Value = from_str("!Color '#ff8800'\n").unwrap();
+let yaml = to_string_value(&v).unwrap();           // "!Color '#ff8800'\n"
+let back: Value = from_str(&yaml).unwrap();
+assert!(matches!(back, Value::Tagged(_)));         // round-trips
+```
+
+The generic [`to_string`] (and the rest of the `Serialize`-trait
+family) routes `Value::Tagged` through `serialize_map` for
+serde-bridge interop with `serde_json` etc., which is lossy on
+the YAML-tag wire form. The dedicated `*_value` variants short-
+circuit the `Serialize` pipeline.
+
 Typed targets (`#[derive(Deserialize)] struct Foo { ... }`) see
 through tags transparently — `from_str::<Foo>("!Foo {x: 1}")`
 yields `Foo { x: 1 }` regardless of the tag. The tag wrapper is
@@ -823,6 +839,9 @@ detected at the entry point via `TypeId`.
 [`Value::untag`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#method.untag
 [`TagRegistry::with`]: https://docs.rs/noyalib/latest/noyalib/struct.TagRegistry.html#method.with
 [`policy::DenyTags`]: https://docs.rs/noyalib/latest/noyalib/policy/struct.DenyTags.html
+[`to_string`]: https://docs.rs/noyalib/latest/noyalib/fn.to_string.html
+[`to_string_value`]: https://docs.rs/noyalib/latest/noyalib/fn.to_string_value.html
+[`to_writer_value`]: https://docs.rs/noyalib/latest/noyalib/fn.to_writer_value.html
 
 ---
 

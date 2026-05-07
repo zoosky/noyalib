@@ -421,6 +421,33 @@ let bad: Result<Value, _> = from_str_with_config("k: !Foo 1\n", &cfg);
 assert!(bad.is_err());
 ```
 
+**Round-trip a Tagged value back to YAML.** The generic
+[`to_string`](https://docs.rs/noyalib/latest/noyalib/fn.to_string.html)
+serialises through serde, which routes `Value::Tagged(...)` as
+a single-entry map (the right shape for `serde_json` interop)
+— losing the YAML-tag wire form. For lossless emit, the
+dedicated [`to_string_value`](https://docs.rs/noyalib/latest/noyalib/fn.to_string_value.html)
+/ [`to_writer_value`](https://docs.rs/noyalib/latest/noyalib/fn.to_writer_value.html)
+family bypasses the serde pipeline:
+
+```rust
+# use noyalib::{from_str, to_string_value, Value};
+let v: Value = from_str("!Color '#ff8800'\n")?;
+let yaml = to_string_value(&v)?;
+// `yaml` re-parses into an equivalent `Value::Tagged`.
+assert!(matches!(noyalib::from_str::<Value>(&yaml)?, Value::Tagged(_)));
+# Ok::<(), noyalib::Error>(())
+```
+
+**Known limitation**: the tag-preserving fast path on the
+deserialise side is engaged only when the target is exactly
+`T = Value` (detected via [`std::any::TypeId`]). Wrapper targets
+like `Spanned<Value>`, `Vec<Value>`, `Option<Value>`,
+`HashMap<_, Value>` route the inner deserialise through the
+standard transparent-unwrap path. If you need both spans and
+tag preservation, parse twice (once into `Value` for tag-aware
+queries, once into `Spanned<T>` for the span-aware view).
+
 ## 10. Multi-document streams + parallel parse
 
 YAML's `---` document separator lets one file carry many
