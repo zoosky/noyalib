@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo install noyalib
+      - run: cargo install noya-cli --locked
       - run: noyafmt --check $(git ls-files '*.yaml' '*.yml')
 ```
 
@@ -28,7 +28,7 @@ jobs:
 yaml-fmt:
   image: rust:1.85-bookworm
   before_script:
-    - cargo install noyalib
+    - cargo install noya-cli --locked
   script:
     - noyafmt --check $(git ls-files '*.yaml' '*.yml')
 ```
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo install noyalib
+      - run: cargo install noya-cli --locked
       - name: Validate Kubernetes manifests
         run: |
           for f in k8s/**/*.yaml; do

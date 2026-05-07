@@ -154,7 +154,7 @@ Pre-generated completion scripts ship in the release tarball under
 | PowerShell | `complete/_noyafmt.ps1`, `complete/_noyavalidate.ps1` |
 
 System packages install them to the right location automatically.
-For local install (`cargo install noyalib`), regenerate via
+For local install (`cargo install noya-cli`), regenerate via
 `cargo xtask completions`.
 
 ## Man pages

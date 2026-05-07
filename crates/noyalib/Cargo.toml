@@ -435,11 +435,15 @@ simd = []
 # 2024 edition (Cargo 1.85+). Enabling this feature pulls saphyr in
 # as a dev-dep and gates the comparison bench arms on its presence.
 compare-saphyr = ["dep:serde-saphyr"]
-# Parallel multi-document deserialisation via Rayon. Adds
-# `noyalib::load_all_as_parallel<T>` and
-# `noyalib::load_all_parallel`, which pre-scan `---` document
-# boundaries on a single thread then deserialise each document
-# in parallel. Off by default to keep the runtime dep list lean
+# Parallel multi-document deserialisation via Rayon. Adds the
+# `noyalib::parallel` module:
+#   - `parallel::parse<T>(&str) -> Result<Vec<T>>` — typed deserialise.
+#   - `parallel::values(&str) -> Result<Vec<Value>>` — dynamic-tree variant.
+#   - `parallel::split(&str) -> Vec<&str>` — exposed boundary scanner
+#     for callers driving their own concurrency primitives.
+# All three pre-scan `---` document boundaries on a single thread
+# then deserialise each document in parallel via Rayon's global
+# thread pool. Off by default to keep the runtime dep list lean
 # for users that only parse single-document inputs.
 parallel = ["dep:rayon", "std"]
 # Portable-SIMD (`std::simd`) structural scanner. Builds a 16/32/

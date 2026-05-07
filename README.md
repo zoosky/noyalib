@@ -54,12 +54,16 @@ noyalib = "0.0.1"
 
 ### As a CLI tool
 
-The `noyafmt` and `noyavalidate` binaries ship through every
-mainstream package channel.
+The `noyafmt` and `noyavalidate` binaries ship from the
+[`noya-cli`](https://crates.io/crates/noya-cli) companion crate
+(the `noyalib` library crate itself contains no binaries — the
+split keeps `clap` + `miette` + `validate-schema` out of the
+library's dependency graph for downstream embedders).
 
 | Channel | Install |
 |---|---|
-| Cargo | `cargo install noyalib` |
+| Cargo (crates.io) | `cargo install noya-cli --locked` |
+| Cargo (from source) | `cargo install --locked --path crates/noya-cli` |
 | Homebrew (personal tap) | `brew tap sebastienrousseau/tap && brew install noyalib` |
 | Arch Linux (AUR) | `yay -S noyalib-bin` (binary) or `yay -S noyalib` (source) |
 | Scoop (Windows) | `scoop bucket add sebastienrousseau https://github.com/sebastienrousseau/scoop-bucket && scoop install noyalib` |
@@ -69,6 +73,11 @@ mainstream package channel.
 | npm (MCP) | `npx noyalib-mcp` (no Rust toolchain needed) |
 | VS Code | search `noyalib` in the Marketplace |
 | Open VSX | search `noyalib` in [open-vsx.org](https://open-vsx.org) |
+
+`cargo install noya-cli --locked` builds both binaries by default
+(via the `noyavalidate` Cargo feature). To install only the
+formatter and skip the schema-validation toolchain, use
+`cargo install noya-cli --locked --no-default-features --features noyafmt`.
 
 GitHub Releases additionally publish pre-built tarballs for
 Linux (gnu + musl), macOS (Intel + Apple Silicon + universal),
@@ -284,12 +293,16 @@ A few features built on top of those choices:
   `doc.set("version", "0.0.2")` rewrites only the touched span;
   comments, indentation, and sibling entries are left alone.
 
-The dependency tree is eight required crates: `serde`, `indexmap`,
-`rustc-hash`, `itoa`, `ryu`, `memchr`, `smallvec`, `serde_ignored`.
-**No archived or unmaintained crates appear in the graph** —
-`serde_yaml` 0.9 (archived), `libyaml` (C-FFI), and `thiserror` are
-all absent. `cargo audit`, `cargo deny`, and `cargo vet` are CI
-gates on every push.
+The default profile compiles **eight crates**: five
+unconditional (`serde`, `indexmap`, `rustc-hash`, `memchr`,
+`smallvec`) plus three default-on but optional (`itoa` via
+`fast-int`, `ryu` via `fast-float`, `serde_ignored` via
+`strict-deserialise`). Disabling the default features drops the
+graph to the five unconditional crates. **No archived or
+unmaintained crate appears in the graph** — `serde_yaml` 0.9
+(archived), `libyaml` (C-FFI), and `thiserror` are all absent.
+`cargo audit`, `cargo deny`, and `cargo vet` are CI gates on
+every push.
 
 ---
 
@@ -401,8 +414,9 @@ Built on top of the lossless CST:
 ## Ecosystem comparison
 
 How noyalib lines up against the other Rust YAML libraries it is
-likely to be evaluated alongside. Cells reflect the published
-state at the time of writing; corrections welcome via PR.
+likely to be evaluated alongside. Cells reflect the state of the
+named crates as of **2026-05** (verified against the latest
+crates.io release of each); corrections welcome via PR.
 
 | | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -543,12 +557,12 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 
 | Metric | Value |
 | :--- | :--- |
-| **Source** | 26,000+ lines across 25 modules |
+| **Source** | 26,000+ lines across the workspace |
 | **Test suite** | 3,600+ tests + doc-tests + CLI smoke |
 | **YAML Test Suite** | 100% literal compliance: 406/406 cases pass with zero skips |
 | **Examples** | 50+ runnable examples + WASM demo |
 | **Coverage** | 95%+ line coverage |
-| **Dependencies** | 8 runtime + 7 optional (miette, garde, validator, schemars, serde_json, jsonschema, figment) |
+| **Dependencies** | 5 unconditional + 3 default-on optional (`itoa`, `ryu`, `serde_ignored`) + 12 opt-in optional (`miette`, `garde`, `validator`, `schemars`, `serde_json`, `jsonschema`, `figment`, `rayon`, `serde-saphyr`, plus the three default-on opt-outs) |
 | **WASM binary** | 338 KB (release, LTO) |
 | **MSRV** | Rust 1.75.0 (core); newer for optional features |
 
@@ -570,7 +584,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
 | **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. `miette::Diagnostic` integration included (`--features miette`) for rich terminal reports with error codes, actionable help text, and source spans. |
 | **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without `std`. I/O functions (`from_reader`, `to_writer`), `Spanned<T>` deserialization (TLS), and the CST module require the `std` feature. CI enforces `cargo check --no-default-features` on every push. |
-| **CST editing** | Side-table CST (`noyalib::cst`) for byte-faithful round-tripping. `Document::set("server.port", "9090")` rewrites only the touched bytes; comments, blank lines, and sibling formatting survive. `Document::entry(path)` is the chainable mutable handle (12 methods, smart `items[0]` path composition). `Document::indent_unit()` detects 2-/3-/4-space conventions so inserts conform to the file's existing style. |
+| **CST editing** | Side-table CST (`noyalib::cst`) for byte-faithful round-tripping. `Document::set("server.port", "9090")` rewrites only the touched bytes; comments, blank lines, and sibling formatting survive. `Document::entry(path)` is the chainable mutable handle (16 methods covering set / set_value / remove / insert / insert_value / push_back / insert_after / and_modify / or_insert / or_insert_with / or_insert_value / get / span_at / comments / exists / nested entry, plus smart `items[0]` path composition). `Document::indent_unit()` detects 2-/3-/4-space conventions so inserts conform to the file's existing style. |
 | **Anchors v2** | `Document::anchors()` / `aliases()` / `aliases_of(name)` enumerate every `&name` / `*name` lexeme in source order. `Document::materialise_alias_at(byte_pos)` and `materialise_aliases_of(name)` "break" an alias by inlining the anchored scalar's source bytes — leaves the alias site independent of future anchor edits. |
 | **Schema codegen** | `schema` feature: derive `JsonSchema` (re-exported from `schemars`), then `schema_for::<T>() -> Result<Value>` or `schema_for_yaml::<T>() -> Result<String>` to emit the JSON Schema 2020-12 document. Honours `#[doc]`, `#[serde(default)]`, `#[serde(rename)]`, integer bounds, nested types via `$defs`. |
 | **Schema validation** | `validate-schema` feature (implies `schema`): `validate_against_schema(value, schema) -> Result<()>` enforces a JSON Schema 2020-12 contract on parsed YAML. Multiple violations aggregated with RFC 6901 JSON-pointer paths. `validate_against_schema_str` is the raw-text convenience. |
@@ -1221,12 +1235,21 @@ make clean        # remove build artifacts
 
 ### Fuzzing
 
+Nine `cargo-fuzz` targets ship under `fuzz/fuzz_targets/`:
+
 ```bash
-cargo +nightly fuzz run fuzz_parse       # Arbitrary YAML parsing
-cargo +nightly fuzz run fuzz_roundtrip   # Parse -> serialize -> re-parse
-cargo +nightly fuzz run fuzz_from_value  # Value -> typed deserialization
-cargo +nightly fuzz run fuzz_multi_doc   # Multi-document streams
-cargo +nightly fuzz run fuzz_strict      # Tight security limits
+# Generic surface
+cargo +nightly fuzz run fuzz_parse              # arbitrary YAML parsing
+cargo +nightly fuzz run fuzz_roundtrip          # parse → serialize → re-parse
+cargo +nightly fuzz run fuzz_from_value         # Value → typed deserialise
+cargo +nightly fuzz run fuzz_multi_doc          # multi-document streams
+cargo +nightly fuzz run fuzz_strict             # tight security limits
+
+# Targeted regression coverage
+cargo +nightly fuzz run fuzz_borrowed_alias     # BorrowedValue + alias resolution
+cargo +nightly fuzz run fuzz_diff               # owned-vs-borrowed parity
+cargo +nightly fuzz run fuzz_double_quoted      # double-quoted scalar escapes
+cargo +nightly fuzz run fuzz_yaml_v1_1          # YAML 1.1 resolver toggle
 ```
 
 Seed corpus included in `fuzz/corpus/seed/`.
@@ -1321,23 +1344,43 @@ that overflows a `usize` counter still triggers the limit cleanly
 
 `Value::interpolate_properties` (see `examples/env.rs`) substitutes
 `${name}` references inside string scalars from a property map.
-The interpolator is deliberately **lossy by default for unknown
-keys** — pair it with a `secrecy::Secret<T>` field to keep the
-substituted value out of `Debug` / log output.
+By default it is **strict**: an unknown placeholder returns
+`Error::Custom` so a misconfigured deployment surfaces immediately
+rather than silently degrading. Two opt-in variants change that
+contract:
+
+| Method | Unknown placeholder | Error message echoes name |
+| :--- | :--- | :--- |
+| `interpolate_properties` *(default)* | `Err(Error::Custom)` | yes |
+| `interpolate_properties_redacted` | `Err(Error::Custom)` | replaced with `<redacted>` |
+| `interpolate_properties_lossy` | substituted with `""`, never errors | n/a |
+
+For secrets, pair the strict path with `secrecy::Secret<T>` on the
+target field to keep the substituted value out of `Debug` / log
+output.
 
 ```rust
 use noyalib::{from_str, Value};
 use std::collections::HashMap;
 
 let yaml = "db_url: ${DATABASE_URL}\napi_key: ${API_KEY}\n";
-let mut map = HashMap::new();
+let mut map: HashMap<String, String> = HashMap::new();
 map.insert("DATABASE_URL".into(), "postgres://...".into());
 map.insert("API_KEY".into(), "redacted-token".into());
 
 let mut value: Value = from_str(yaml).unwrap();
+// Strict by default — every placeholder must resolve.
 value.interpolate_properties(&map).unwrap();
 // `api_key` now holds the substituted secret — wrap downstream
 // in `secrecy::Secret<String>` to keep it out of Debug formatting.
+
+// Hide the placeholder name in error output (audit-trail safe).
+let mut value: Value = from_str(yaml).unwrap();
+let _ = value.interpolate_properties_redacted(&map);
+
+// Treat unknown placeholders as empty strings (env-var style).
+let mut value: Value = from_str(yaml).unwrap();
+value.interpolate_properties_lossy(&map);
 ```
 
 ### Compile- and runtime-safety guarantees

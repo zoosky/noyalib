@@ -5,7 +5,7 @@
 End-to-end demos for the `noyafmt` and `noyavalidate` binaries.
 Each example is a self-contained shell script — run it directly,
 no project setup needed (assumes the binaries are on `$PATH`,
-which `cargo install noyalib` arranges).
+which `cargo install noya-cli` arranges).
 
 | Script | What it shows |
 |---|---|

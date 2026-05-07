@@ -235,11 +235,26 @@ impl SerializerConfig {
     }
 }
 
-/// Serialize a Rust type to a YAML string.
+/// Serialize a Rust value to a YAML `String`.
+///
+/// Uses [`SerializerConfig::default`]: 2-space indent, no
+/// `---` / `...` markers, block style for collections, auto-style
+/// scalars, block scalars enabled.
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized to YAML.
+/// Returns [`Error`](crate::Error) when:
+///
+/// - `Error::Serialize` — `T`'s `Serialize` impl returned an
+///   error (custom `serde::ser::Error`, non-string mapping key
+///   that cannot be coerced, …).
+/// - `Error::DepthLimit` — the value graph exceeds
+///   `SerializerConfig::max_depth` (default 128). Use
+///   [`to_string_with_config`] to raise the cap when serialising
+///   a deliberately deep structure.
+///
+/// `to_string` itself does not perform any I/O and never returns
+/// `Error::Io`.
 ///
 /// # Examples
 ///
@@ -269,11 +284,15 @@ where
     value_to_string(&v, &SerializerConfig::default())
 }
 
-/// Serialize a Rust type to a YAML string with custom configuration.
+/// Serialize a Rust value to a YAML `String` with a custom
+/// [`SerializerConfig`].
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized to YAML.
+/// Same variant set as [`to_string`]. The active `config`
+/// controls which limit-related errors can fire — in particular,
+/// raising `max_depth` lets deeper graphs through, lowering it
+/// surfaces `Error::DepthLimit` sooner.
 ///
 /// # Examples
 ///
@@ -307,11 +326,16 @@ where
     value_to_string(&v, config)
 }
 
-/// Serialize a Rust type to a YAML writer.
+/// Serialize a Rust value to YAML and write to an [`io::Write`]
+/// sink.
+///
+/// Internally serialises to a `String` then writes the bytes to
+/// `writer` in a single call.
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized or writing fails.
+/// - `Error::Io` — the underlying writer returned an I/O error.
+/// - All variants documented on [`to_string`].
 #[cfg(feature = "std")]
 pub fn to_writer<W, T>(writer: W, value: &T) -> Result<()>
 where
@@ -321,11 +345,13 @@ where
     to_writer_with_config(writer, value, &SerializerConfig::default())
 }
 
-/// Serialize a Rust type to a YAML writer with custom configuration.
+/// Serialize a Rust value to YAML and write to an [`io::Write`]
+/// sink, using a custom [`SerializerConfig`].
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized or writing fails.
+/// - `Error::Io` — the underlying writer returned an I/O error.
+/// - All variants documented on [`to_string_with_config`].
 #[cfg(feature = "std")]
 pub fn to_writer_with_config<W, T>(writer: W, value: &T, config: &SerializerConfig) -> Result<()>
 where
@@ -435,11 +461,14 @@ where
     Ok(())
 }
 
-/// Serialize a Rust type to a `fmt::Write` destination.
+/// Serialize a Rust value to YAML and write into a [`fmt::Write`]
+/// sink — the no_std-friendly counterpart to [`to_writer`].
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized or writing fails.
+/// - `Error::Serialize` — the destination's `write_str` returned
+///   `fmt::Error`, propagated through `Error::Serialize`.
+/// - All variants documented on [`to_string`].
 pub fn to_fmt_writer<W, T>(writer: &mut W, value: &T) -> Result<()>
 where
     W: fmt::Write,
@@ -448,11 +477,14 @@ where
     to_fmt_writer_with_config(writer, value, &SerializerConfig::default())
 }
 
-/// Serialize a Rust type to a `fmt::Write` destination with custom configuration.
+/// Serialize a Rust value to YAML and write into a [`fmt::Write`]
+/// sink, using a custom [`SerializerConfig`].
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized or writing fails.
+/// - `Error::Serialize` — the destination's `write_str` returned
+///   `fmt::Error`.
+/// - All variants documented on [`to_string_with_config`].
 pub fn to_fmt_writer_with_config<W, T>(
     writer: &mut W,
     value: &T,
@@ -468,11 +500,20 @@ where
         .map_err(|e| Error::Serialize(e.to_string()))
 }
 
-/// Serialize a Rust type to a `Value`.
+/// Serialize a Rust value into a dynamic [`Value`] tree via the
+/// Serde data model.
+///
+/// Use this when the typed serialise output should land in
+/// noyalib's [`Value`] for further programmatic editing
+/// (`Value::merge`, `Value::interpolate_properties`, …) before a
+/// final emit.
 ///
 /// # Errors
 ///
-/// Returns an error if the type cannot be serialized.
+/// - `Error::Serialize` — `T`'s `Serialize` impl returned an
+///   error.
+/// - `Error::Custom` — surfaces upstream `serde::ser::Error`
+///   conversions that don't fit the structured variants.
 pub fn to_value<T>(value: &T) -> Result<Value>
 where
     T: ?Sized + Serialize,
@@ -1186,13 +1227,14 @@ fn write_folded_block(output: &mut String, s: &str, indent: usize, config: &Seri
     }
 }
 
-/// Serialize multiple values as a multi-document YAML string.
-///
-/// Each value is separated by `---` document start markers.
+/// Serialize an iterable of values as a multi-document YAML
+/// string with `---` document-start markers between each.
 ///
 /// # Errors
 ///
-/// Returns an error if any value cannot be serialized.
+/// All variants documented on [`to_string`]; the first failing
+/// document short-circuits and returns its error — earlier
+/// documents are not emitted.
 ///
 /// # Examples
 ///
@@ -1205,12 +1247,12 @@ pub fn to_string_multi<T: Serialize>(values: &[T]) -> Result<String> {
     to_string_multi_with_config(values, &SerializerConfig::default())
 }
 
-/// Serialize multiple values as a multi-document YAML string with custom
-/// configuration.
+/// Serialize an iterable of values as a multi-document YAML
+/// string with a custom [`SerializerConfig`].
 ///
 /// # Errors
 ///
-/// Returns an error if any value cannot be serialized.
+/// All variants documented on [`to_string_with_config`].
 pub fn to_string_multi_with_config<T: Serialize>(
     values: &[T],
     config: &SerializerConfig,

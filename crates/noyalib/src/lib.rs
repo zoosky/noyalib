@@ -107,6 +107,224 @@
 //! - **Path queries** — `value.query("items[*].name")` with wildcards.
 //! - **`no_std`** — works with `alloc` only (`default-features = false`).
 //! - **`miette`** — optional rich terminal diagnostics (`--features miette`).
+//!
+//! ## API stability and SemVer policy
+//!
+//! noyalib follows [Semantic Versioning 2.0.0]. Pre-`1.0`, the
+//! version axis used for breaking changes is the **patch number**
+//! during the `0.0.x` series and the **minor number** during the
+//! `0.x.y` series — patch bumps within a stable line are
+//! source-compatible.
+//!
+//! - **Public surface** = items reachable from the crate root by an
+//!   in-scope `pub use` (this file). Items reachable only via a
+//!   `pub` module (e.g. helpers in [`borrowed`], [`cst`],
+//!   [`policy`]) are also public; everything in a `pub(crate)` /
+//!   private module is internal.
+//! - **`#[non_exhaustive]`** is applied to every public
+//!   configuration struct ([`ParserConfig`], [`SerializerConfig`],
+//!   [`Error`], [`MergeKeyPolicy`], [`DuplicateKeyPolicy`],
+//!   [`FlowStyle`], [`ScalarStyle`], [`YamlVersion`]) so adding a
+//!   field or variant in a future release is **not** a breaking
+//!   change. Construct configuration via the documented
+//!   `new` / `default` / `strict` constructors plus the builder
+//!   setters; do not use exhaustive struct-literal syntax outside
+//!   this crate.
+//! - **What we will not break in patch releases:**
+//!   - public function signatures (parameter names, types, return
+//!     types);
+//!   - the [`Value`] enum's variant set;
+//!   - re-exported macro names (none today);
+//!   - the YAML 1.2 default-strictness contract.
+//! - **What may change without a major bump:** non-default
+//!   `ParserConfig` semantics under explicit opt-in (e.g. a future
+//!   `legacy_*` flag), error *message* wording (variant *names*
+//!   are stable), benchmark numbers, internal module layout.
+//! - **Deprecations** ship with `#[deprecated(since = "x.y.z",
+//!   note = "...")]` for at least one minor release before
+//!   removal. CHANGELOG carries the migration recipe.
+//! - **API drift checks**: `cargo semver-checks` runs in CI on
+//!   every PR.
+//!
+//! [Semantic Versioning 2.0.0]: https://semver.org/spec/v2.0.0.html
+//!
+//! ## MSRV policy
+//!
+//! - **Core library (`noyalib`)** — Rust **1.75.0** stable. CI's
+//!   `msrv-1-75-core` job builds the `default-features = false`
+//!   and the standard `default` set on `rustc 1.75.0` for every
+//!   PR. The MSRV is treated as part of the public contract: a
+//!   bump within `0.0.x` is a breaking change and ships a major
+//!   version.
+//! - **Optional features** that pull a dep with a higher floor
+//!   (`miette`, `garde`, `validate-schema`, `figment`,
+//!   `parallel`, `validator`) inherit that dep's MSRV — currently
+//!   `1.80`–`1.86` depending on the feature. The CI matrix runs
+//!   each one against the dep's declared `rust-version`.
+//! - **Companion crates** ([`noya-cli`], [`noyalib-lsp`]) carry
+//!   their own higher MSRVs because their dep tree includes
+//!   edition-2024 transitives — `1.85.0` for both at time of
+//!   writing.
+//! - **`nightly-simd`** is the only feature that requires nightly
+//!   rustc (`#![feature(portable_simd)]`); a `build.rs` cfg-detect
+//!   probe means stable builds with `--all-features` still
+//!   compile by treating `nightly-simd` as a no-op.
+//!
+//! [`noya-cli`]: https://crates.io/crates/noya-cli
+//! [`noyalib-lsp`]: https://crates.io/crates/noyalib-lsp
+//!
+//! ## Feature flag matrix
+//!
+//! All optional integrations are off by default — enable only
+//! what your application needs. Default-on flags can be opted out
+//! via `default-features = false`.
+//!
+//! | Feature | Default | Pulls in | Adds | Implies |
+//! | :--- | :---: | :--- | :--- | :--- |
+//! | `std` | ✅ | — | I/O, [`Spanned<T>`] deserialise, [`cst`] | — |
+//! | `fast-int` | ✅ | `itoa` | branchless integer formatting | `std` recommended |
+//! | `fast-float` | ✅ | `ryu` | branchless float formatting | `std` recommended |
+//! | `strict-deserialise` | ✅ | `serde_ignored` | `from_*_strict` family | `std` |
+//! | `minimal` | ⛔ | — | meta-alias for `std` only (drops the three above) | `std` |
+//! | `miette` | ⛔ | `miette 7` | rich terminal diagnostics | — |
+//! | `schema` | ⛔ | `schemars`, `serde_json` | [`schema_for`] / [`schema_for_yaml`] | — |
+//! | `validate-schema` | ⛔ | `schema` + `jsonschema` | [`validate_against_schema`], [`coerce_to_schema`] | `schema` |
+//! | `figment` | ⛔ | `figment 0.10` | [`figment::Yaml`](crate::figment) Provider | `std` |
+//! | `garde` | ⛔ | `garde 0.22` | [`Validated<T>`] | — |
+//! | `validator` | ⛔ | `validator 0.19` | [`ValidatedValidator<T>`] | — |
+//! | `robotics` | ⛔ | — | `Degrees` / `Radians` / `StrictFloat` newtypes | — |
+//! | `parallel` | ⛔ | `rayon 1.10` | [`parallel::parse`], [`parallel::values`] | `std` |
+//! | `simd` | ⛔ | — | `noyalib::simd::*` primitives | — |
+//! | `nightly-simd` | ⛔ | nightly rustc | 32-byte `StructuralIter` | `simd` |
+//! | `compat-serde-yaml` | ⛔ | — | `noyalib::compat::serde_yaml` shim | — |
+//! | `compare-saphyr` | ⛔ | `serde-saphyr` | comparison-bench arms | — |
+//!
+//! `docs.rs` builds with `--all-features`; every gated item is
+//! tagged with the feature it requires via the `doc(cfg(...))`
+//! badge.
+//!
+//! ## Concurrency guarantees
+//!
+//! - All public top-level functions ([`from_str`], [`from_slice`],
+//!   [`from_reader`], [`to_string`], [`to_writer`], …) are pure
+//!   over their inputs and may be called concurrently from any
+//!   number of threads.
+//! - [`Value`], [`Mapping`], [`Number`], [`Spanned<T>`],
+//!   [`Error`] are `Send + Sync`. Cloning a `Value` is `O(n)` in
+//!   the value graph; share ownership via [`Arc<Value>`] when
+//!   that cost matters.
+//! - [`policy::Policy`] requires `Send + Sync` so policies can be
+//!   shared by reference across threads. Stateful policies should
+//!   hold their state behind interior mutability
+//!   ([`std::sync::Mutex`] or equivalent).
+//! - [`Spanned<T>`] deserialisation uses a thread-local span
+//!   context (`std` feature). The TLS guard installs on entry to
+//!   [`from_str_with_config`] and clears on return — no leakage
+//!   across calls or across threads.
+//! - Anchor and alias state lives in the parser stack frame (one
+//!   per call); concurrent calls share no mutable state.
+//! - The Rayon-backed [`parallel`] module pre-scans document
+//!   boundaries on the calling thread, then dispatches each
+//!   document to the global Rayon pool — `T: Send` is required.
+//! - [`anchors::ArcAnchorRegistry`] / [`anchors::ArcAnchor`] use
+//!   `Arc` + `Weak` and are explicitly multi-thread-safe; the
+//!   `Rc`-backed siblings are single-thread.
+//!
+//! ## Security posture
+//!
+//! - **No `unsafe`** — `#![forbid(unsafe_code)]` enforced at
+//!   compile time on every workspace crate.
+//! - **No FFI** — pure Rust scanner / parser / serialiser /
+//!   CST. Closes the historical `libyaml` C-FFI CVE class.
+//! - **No arbitrary object instantiation from tags** — custom
+//!   tags surface as [`Value::Tagged`] data; opt-in dispatch via
+//!   [`TagRegistry`]. There is no path from a parsed YAML
+//!   document to running attacker-chosen code.
+//! - **Resource budgets** — seven configurable limits in
+//!   [`ParserConfig`] cap depth, document size, alias
+//!   expansions, mapping keys, sequence length, duplicate-key
+//!   policy, and boolean strictness. [`ParserConfig::strict`]
+//!   tightens every budget for untrusted input. Alias-byte
+//!   accumulation uses `saturating_add` so a crafted overflow
+//!   still trips the cap.
+//! - **Pluggable policies** — [`policy::DenyAnchors`],
+//!   [`policy::DenyTags`], [`policy::MaxScalarLength`] for
+//!   organisational "Safe YAML" enforcement. Custom policies
+//!   implement [`policy::Policy`].
+//! - **Supply chain** — `cargo audit`, `cargo deny`, `cargo vet`
+//!   gate every PR. Releases ship SLSA L3 provenance and
+//!   sigstore signatures (verification cookbook in
+//!   [`pkg/VERIFY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/pkg/VERIFY.md)).
+//!   No archived or unmaintained crate appears in the dependency
+//!   graph.
+//!
+//! Disclosure policy: see
+//! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! ## Performance and complexity
+//!
+//! - **Parser** — single-pass, `O(n)` in input bytes for the
+//!   scanner; loader is `O(n)` events. `IndexMap` insert is
+//!   amortised `O(1)`; `FxHasher` keeps key hashing cheap on
+//!   short keys.
+//! - **Streaming deserialise** — bypasses the dynamic `Value`
+//!   AST when the caller asks for a typed `T`, eliminating
+//!   intermediate allocations. ~30% faster than the
+//!   AST-via-`Value` path on real workloads.
+//! - **Zero-copy scanner** — string scalars come out as
+//!   `Cow::Borrowed` when no escape sequence forces an
+//!   allocation. [`borrowed::BorrowedValue`] surfaces this all
+//!   the way to the caller.
+//! - **SIMD primitives** — [`simd::find_any_of`] dispatches to
+//!   `memchr` SSE2/NEON for arity 1/2/3 and SWAR for arity 4+.
+//!   With `nightly-simd`, the structural-bitmask scanner widens
+//!   to 32-byte lanes — ~9× speedup vs the memchr loop on 1 MiB
+//!   inputs.
+//! - **SWAR decimal parser** — folds 8 ASCII digits per `u64`
+//!   cycle. ~2× faster than `<i64 as FromStr>::from_str` on big
+//!   numbers.
+//! - **Serialiser** — branchless integer (`itoa`) and float
+//!   (`ryu`) formatting in the hot path; falls back to
+//!   `core::fmt` under `--no-default-features`.
+//! - **Parallel multi-document** — [`parallel::parse`] scales
+//!   near-linearly with cores on `---`-separated streams; the
+//!   pre-scan is `O(input.len())` on the calling thread.
+//! - **`Value::clone`** is `O(n)` over the value graph; share
+//!   via `Arc<Value>` when that matters.
+//!
+//! ## Platform support
+//!
+//! - **Tier 1**: `x86_64-unknown-linux-gnu`,
+//!   `x86_64-apple-darwin`, `aarch64-apple-darwin`,
+//!   `x86_64-pc-windows-msvc`, `aarch64-unknown-linux-gnu`. CI
+//!   runs on each of these on every PR.
+//! - **Tier 2**: musl Linux (`*-musl`),
+//!   `i686-pc-windows-msvc`, `aarch64-pc-windows-msvc`. Built
+//!   in release CI; not gated on every PR.
+//! - **Embedded / `no_std`**: any target supported by `alloc`.
+//!   The `std`-only items ([`from_reader`], [`to_writer`],
+//!   [`Spanned<T>`] deserialisation via TLS, the [`cst`]
+//!   module) are gone; the rest of the surface compiles. CI
+//!   enforces `cargo check --no-default-features` on every PR.
+//! - **WASM**: `wasm32-unknown-unknown` via the `noyalib-wasm`
+//!   companion crate. 338 KB release binary (LTO). Browser
+//!   demo in `crates/noyalib/examples/wasm/`.
+//! - **Big-endian**: validated under Miri's
+//!   `mips64-unknown-linux-gnuabi64` simulation in the weekly
+//!   `miri-bigendian` job.
+//!
+//! ## Error model
+//!
+//! Every fallible function returns [`Result<T>`](crate::Result)
+//! aliasing `core::result::Result<T, Error>`. [`Error`] is
+//! `#[non_exhaustive]`, implements `core::fmt::Display`,
+//! `core::error::Error` (via `std::error::Error` under the
+//! `std` feature), and — with `--features miette` —
+//! `miette::Diagnostic` for rich terminal reports.
+//!
+//! Each entry-point's `# Errors` section enumerates the variant
+//! set callers must handle; cross-reference the [`Error`]
+//! variants for descriptions.
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 Noyalib. All rights reserved.

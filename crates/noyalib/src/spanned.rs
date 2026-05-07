@@ -145,7 +145,16 @@ impl<T> Deref for Spanned<T> {
 }
 
 impl<T> Spanned<T> {
-    /// Create a new spanned value with default (zero) locations.
+    /// Create a new spanned value with sentinel zero locations
+    /// (`line = 0`, `column = 0`, `index = 0`).
+    ///
+    /// The sentinel form exists so callers can synthesise a
+    /// [`Spanned<T>`] without owning a parser context; it is
+    /// distinguishable from a parsed location because parsed
+    /// locations always have `line >= 1` and `column >= 1`. Use
+    /// the deserialisation path (`#[derive(Deserialize)]` with a
+    /// `Spanned<T>` field) when authentic source positions are
+    /// required.
     ///
     /// # Examples
     ///
@@ -153,6 +162,8 @@ impl<T> Spanned<T> {
     /// use noyalib::Spanned;
     /// let s = Spanned::new(42_u16);
     /// assert_eq!(*s, 42);
+    /// // Sentinel — distinguishable from a parsed location.
+    /// assert_eq!(s.start.line(), 0);
     /// ```
     pub fn new(value: T) -> Self {
         Self {

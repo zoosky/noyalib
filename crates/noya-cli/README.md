@@ -42,7 +42,8 @@
 
 | Channel | Command |
 |---|---|
-| Cargo | `cargo install noyalib` |
+| Cargo (crates.io) | `cargo install noya-cli --locked` |
+| Cargo (from source) | `cargo install --locked --path .` |
 | Homebrew (personal tap) | `brew tap sebastienrousseau/tap && brew install noyalib` |
 | Arch (AUR) | `yay -S noyalib-bin` (binary) or `yay -S noyalib` (source) |
 | Scoop (Windows) | `scoop bucket add sebastienrousseau https://github.com/sebastienrousseau/scoop-bucket && scoop install noyalib` |

@@ -390,7 +390,7 @@ noyavalidate --schema schema.yaml --fix in.yaml
 
 Both use the same `noyalib::cst::format` + `coerce_to_schema`
 engines exposed to library callers. Distro-installable via
-crates.io (`cargo install noyalib`), Homebrew, AUR, and the
+crates.io (`cargo install noya-cli --locked`), Homebrew, AUR, and the
 other channels in [`pkg/PUBLISH.md`](../pkg/PUBLISH.md).
 
 ## 12. WASM, MCP, and LSP

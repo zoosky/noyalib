@@ -22,10 +22,15 @@ The `noyafmt` and `noyavalidate` binaries ship through every
 mainstream package channel:
 
 ```sh
-cargo install noyalib                  # crates.io
+cargo install noya-cli --locked        # crates.io (noyafmt + noyavalidate)
 brew tap sebastienrousseau/tap && brew install noyalib   # macOS
 yay -S noyalib-bin                     # Arch / AUR
 ```
+
+The library crate is `noyalib`; the binary crate that produces
+`noyafmt` / `noyavalidate` is `noya-cli`. See the
+[Install](./README.md#install) section of the root README for the
+full per-channel matrix.
 
 Full per-channel install matrix lives in
 [`pkg/PUBLISH.md`](./pkg/PUBLISH.md).

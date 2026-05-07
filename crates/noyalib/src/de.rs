@@ -61,6 +61,17 @@ pub enum YamlVersion {
 
 /// Deserialization configuration.
 ///
+/// All fields are public, but the struct is annotated
+/// [`#[non_exhaustive]`][nex] so that adding a new budget or
+/// policy in a future minor release is **not** a breaking change.
+/// Construct with [`ParserConfig::new`] / [`ParserConfig::strict`]
+/// / [`ParserConfig::default`] (preferred) or with the
+/// `..ParserConfig::default()` struct-update form; do not
+/// construct from an exhaustive struct-literal outside this
+/// crate.
+///
+/// [nex]: https://doc.rust-lang.org/reference/attributes/type_system.html#the-non_exhaustive-attribute
+///
 /// # Examples
 ///
 /// ```
@@ -69,6 +80,7 @@ pub enum YamlVersion {
 /// assert_eq!(cfg.max_depth, 64);
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ParserConfig {
     /// Which YAML specification version to honour during plain-scalar
     /// resolution.
@@ -554,6 +566,7 @@ impl ParserConfig {
 /// assert_eq!(MergeKeyPolicy::default(), MergeKeyPolicy::Auto);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum MergeKeyPolicy {
     /// Apply the YAML 1.2 merge-key semantics — `<<:` keys trigger
     /// automatic merge of the value into the enclosing mapping.
@@ -581,6 +594,7 @@ pub enum MergeKeyPolicy {
 /// assert_eq!(DuplicateKeyPolicy::default(), DuplicateKeyPolicy::Last);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum DuplicateKeyPolicy {
     /// Use the first occurrence of the key; ignore subsequent ones.
     First,
@@ -591,7 +605,38 @@ pub enum DuplicateKeyPolicy {
     Error,
 }
 
-/// Deserialize YAML from a string.
+/// Deserialize YAML from a `&str` into a typed `T`.
+///
+/// Default entry point for typed deserialisation. Drives the
+/// streaming fast-path when the input matches its eligibility
+/// rules (no custom merge-key policy, no ignore-binary-tag mode,
+/// no registered policies); otherwise routes through the
+/// `Value`-AST loader. The choice is transparent — both paths
+/// produce identical results.
+///
+/// # Errors
+///
+/// Returns [`Error`](crate::Error) when:
+///
+/// - `Error::Parse` / `Error::ParseWithLocation` — `s` is not
+///   well-formed YAML 1.2 (missing closing bracket, indentation
+///   mismatch, invalid escape, …).
+/// - `Error::Deserialize` — the document parses but does not
+///   match `T`'s shape (wrong scalar type, missing required field
+///   on a struct without `#[serde(default)]`, unknown enum
+///   variant, …).
+/// - `Error::DepthLimit` / `Error::DocumentTooLong` /
+///   `Error::AliasLimit` — input exceeds the default
+///   [`ParserConfig`] safety budgets. Use
+///   [`from_str_with_config`] with [`ParserConfig::strict()`] for
+///   tighter limits or with relaxed limits if the defaults
+///   reject a known-good document.
+/// - `Error::DuplicateKey` — only when `duplicate_key_policy`
+///   has been switched to `Error`. The default policy is `Last`,
+///   which deduplicates without erroring.
+/// - `Error::Custom` — surface for upstream `serde::de::Error`
+///   conversions; ordinarily the more specific variants above are
+///   produced first.
 ///
 /// # Examples
 ///
@@ -747,7 +792,28 @@ where
     from_str_strict(&s)
 }
 
-/// Deserialize YAML from a string with custom security limits.
+/// Deserialize YAML from a `&str` with a custom [`ParserConfig`].
+///
+/// Use this when the defaults need overriding — common reasons:
+/// untrusted input ([`ParserConfig::strict()`]), pipeline-specific
+/// limits ([`ParserConfig::max_depth`]), YAML 1.1 compatibility
+/// ([`ParserConfig::version`]), or custom safe-YAML
+/// [`policy::Policy`](crate::policy::Policy) enforcement.
+///
+/// # Errors
+///
+/// Same variant set as [`from_str`]. The active `config` controls
+/// which limit-related errors can fire:
+///
+/// - When `config.duplicate_key_policy == DuplicateKeyPolicy::Error`,
+///   any duplicate mapping key returns `Error::DuplicateKey`.
+/// - When the input exceeds the configured `max_depth`,
+///   `max_document_length`, `max_alias_expansions`,
+///   `max_mapping_keys`, or `max_sequence_length`, the matching
+///   `Error::*Limit` variant is returned.
+/// - When `config.policies` contains a policy that rejects the
+///   document, `Error::Deserialize` is returned with the policy's
+///   diagnostic.
 ///
 /// # Examples
 ///
@@ -812,6 +878,16 @@ where
 
 /// Deserialize YAML from a byte slice.
 ///
+/// Convenience wrapper that validates `b` is UTF-8 then forwards
+/// to [`from_str`]. Use when the caller already holds a `&[u8]`
+/// (a buffer, a network frame, a `bytes::Bytes`) and would
+/// otherwise have to round-trip through `String`.
+///
+/// # Errors
+///
+/// - `Error::Deserialize` — `b` is not valid UTF-8.
+/// - All variants documented on [`from_str`].
+///
 /// # Examples
 ///
 /// ```
@@ -826,7 +902,12 @@ where
     from_str(s)
 }
 
-/// Deserialize YAML from a byte slice with custom configuration.
+/// Deserialize YAML from a byte slice with a custom [`ParserConfig`].
+///
+/// # Errors
+///
+/// - `Error::Deserialize` — `b` is not valid UTF-8.
+/// - All variants documented on [`from_str_with_config`].
 ///
 /// # Examples
 ///
@@ -844,7 +925,21 @@ where
     from_str_with_config(s, config)
 }
 
-/// Deserialize YAML from an IO reader.
+/// Deserialize YAML from an [`io::Read`] source.
+///
+/// Reads the entire stream into memory before parsing — YAML's
+/// data model is not streamable past document boundaries, so this
+/// function trades incremental I/O for a single, simple `Result`.
+/// For very large multi-document streams prefer
+/// [`crate::parallel::parse`] (with the `parallel` feature) which
+/// scans document boundaries on the input thread and parses each
+/// document in parallel.
+///
+/// # Errors
+///
+/// - `Error::Io` — the underlying reader returns an I/O error
+///   while filling the buffer.
+/// - All variants documented on [`from_str`].
 ///
 /// # Examples
 ///
@@ -863,7 +958,13 @@ where
     from_reader_with_config(reader, &ParserConfig::default())
 }
 
-/// Deserialize YAML from an IO reader with custom configuration.
+/// Deserialize YAML from an [`io::Read`] source with a custom
+/// [`ParserConfig`].
+///
+/// # Errors
+///
+/// - `Error::Io` — the underlying reader returns an I/O error.
+/// - All variants documented on [`from_str_with_config`].
 ///
 /// # Examples
 ///
@@ -886,7 +987,17 @@ where
     from_str_with_config(&s, config)
 }
 
-/// Deserialize a Value into a Rust type.
+/// Deserialize a [`Value`] into a typed `T` via Serde's data model.
+///
+/// Useful for second-pass conversion when the first pass parsed
+/// into the dynamic [`Value`] tree and a typed view is now needed
+/// for a sub-tree.
+///
+/// # Errors
+///
+/// - `Error::Deserialize` — `value` does not match `T`'s shape.
+/// - `Error::Custom` — surfaces upstream `serde::de::Error`
+///   conversions that don't fit the structured variants.
 ///
 /// # Examples
 ///

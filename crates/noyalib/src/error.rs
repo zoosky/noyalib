@@ -6,7 +6,19 @@
 use crate::prelude::*;
 use core::fmt;
 
-/// A byte-offset location in a YAML document.
+/// A `(line, column, byte index)` location in a YAML document.
+///
+/// `line` and `column` are **1-based** for any [`Location`]
+/// produced by parsing or by [`Location::from_index`] /
+/// [`Location::new`]. The single exception is
+/// [`Location::default()`] (and the `Spanned::new` constructor it
+/// powers), which yields `0/0/0` as a sentinel for "not yet
+/// populated by a parser pass." User code that only ever sees a
+/// [`Location`] returned from a parser may treat both axes as
+/// strictly ≥ 1.
+///
+/// `index` is always **0-based** and counts UTF-8 bytes from the
+/// start of the document.
 ///
 /// # Examples
 ///
@@ -86,6 +98,11 @@ impl Location {
 
     /// The 1-based line number.
     ///
+    /// Returns `0` only for a [`Location::default()`] that has not
+    /// been populated by a parser pass; any [`Location`] produced
+    /// by [`Location::from_index`], [`Location::new`], or returned
+    /// from a parser is `≥ 1`.
+    ///
     /// # Examples
     ///
     /// ```
@@ -98,6 +115,11 @@ impl Location {
     }
 
     /// The 1-based column number.
+    ///
+    /// Returns `0` only for a [`Location::default()`] that has not
+    /// been populated by a parser pass; any [`Location`] produced
+    /// by [`Location::from_index`], [`Location::new`], or returned
+    /// from a parser is `≥ 1`.
     ///
     /// # Examples
     ///

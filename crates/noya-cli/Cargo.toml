@@ -15,7 +15,13 @@ readme = "README.md"
 keywords = ["yaml", "cli", "formatter", "validator", "schema"]
 categories = ["command-line-utilities", "encoding"]
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
-publish = false
+# Published to crates.io so end users can run
+# `cargo install noya-cli` to get the `noyafmt` and `noyavalidate`
+# binaries without cloning the repo. The `noyalib` library crate
+# is published independently — keeping the binary crate distinct
+# from the lib lets users embed `noyalib` without pulling clap +
+# miette + the `validate-schema` chain into their own dep graph.
+publish = true
 
 [lib]
 name = "noya_cli"
