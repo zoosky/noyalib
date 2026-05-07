@@ -7,6 +7,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Migration notice (pre-launch — applies before v0.0.1 is tagged)
+
+Two source-level changes ship in `[Unreleased]` that downstream
+crates touching the published `from_*` family will see. Both are
+non-breaking for typed deserialise; they affect only the
+`from_str::<Value>` and `from_value::<Value>` shapes.
+
+1. **Tag preservation**: a `from_str::<Value>("!Custom 'hi'\n")`
+   that previously returned `Value::String("hi")` now returns
+   `Value::Tagged(Tag("!Custom"), Value::String("hi"))`. Code
+   that read tagged scalars via `as_str` / `as_i64` / etc. needs
+   either a wrapper unwrap (`value.untag_ref().as_str()`), a
+   typed deserialise (`#[derive(Deserialize)] struct Foo`), or a
+   tag-aware `match`. See the migration recipe in
+   [`doc/MIGRATION-FROM-SERDE-YAML.md`](doc/MIGRATION-FROM-SERDE-YAML.md#1-valuetagged-is-a-7th-variant--and-noyalib-preserves-scalar-tags-too).
+2. **`T: 'static` bound** on the public `from_str` /
+   `from_str_with_config` / `from_slice*` / `from_reader*` /
+   `from_value` family. Every real-world `DeserializeOwned` type
+   already satisfies it (the HRTB on its own already disallows
+   borrowed lifetimes); the `'static` is what lets noyalib detect
+   at the call site whether `T == Value` and engage the
+   tag-preserving fast path. Add `+ 'static` to bound expressions
+   in any wrapper functions you wrote on top of noyalib's
+   `from_*`. Trait signatures from external crates (e.g.
+   `figment::Format::from_str`) that drop `'static` are handled
+   by a private internal entry point — your existing
+   `impl Format for ...` keeps compiling.
+
 ### Added — Custom-tag scalar `Value::Tagged` surfacing on the default deserialise path
 
 - **`from_str::<Value>("!Custom 'hi'")`** now returns

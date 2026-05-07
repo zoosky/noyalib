@@ -136,6 +136,15 @@
 //!   - the [`Value`] enum's variant set;
 //!   - re-exported macro names (none today);
 //!   - the YAML 1.2 default-strictness contract.
+//! - **The deserialise-target bound is `T: for<'de>
+//!   Deserialize<'de> + 'static`.** The `'static` half is the
+//!   contract every real-world `DeserializeOwned` type already
+//!   satisfies (the HRTB itself disallows borrowed lifetimes); it
+//!   is documented explicitly because a small number of
+//!   externally-defined trait signatures (e.g. `figment`'s
+//!   `Format::from_str`) drop the `'static` from their own bound
+//!   — for those, noyalib provides feature-gated internal entry
+//!   points that bypass the [`Value`]-tag-preserving fast path.
 //! - **What may change without a major bump:** non-default
 //!   `ParserConfig` semantics under explicit opt-in (e.g. a future
 //!   `legacy_*` flag), error *message* wording (variant *names*

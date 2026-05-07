@@ -108,7 +108,7 @@ See the public API surface map at the top of `crates/noyalib/src/lib.rs`.
 
 ## Behavioural differences worth knowing
 
-### 1. `Value::Tagged` is a 7th variant
+### 1. `Value::Tagged` is a 7th variant — and noyalib preserves scalar tags too
 
 `serde_yaml::Value` has six variants (`Null`, `Bool`, `Number`,
 `String`, `Sequence`, `Mapping`); `noyalib::Value` adds
@@ -127,8 +127,35 @@ See the public API surface map at the top of `crates/noyalib/src/lib.rs`.
  }
 ```
 
-If you don't currently inspect tags, the simplest migration is
-to call `value.untag()` to strip the wrapper before matching.
+**Where `serde_yaml` differs from noyalib**: `serde_yaml` 0.9
+drops custom-tag scalars from the `Value` tree by default — a
+`!Custom 'hello'` scalar deserialises into `Value::String("hello")`
+and the tag is lost. `noyalib` preserves the tag:
+`from_str::<Value>("!Custom 'hello'\n")` returns
+`Value::Tagged(Tag("!Custom"), Value::String("hello"))`. This
+matches noyalib's behaviour for tagged sequences and tagged
+mappings — three Tagged shapes, one consistent rule.
+
+If your existing code worked because the tag was silently dropped,
+migrate by either:
+
+- Calling `value.untag()` (or `value.untag_ref()` for
+  borrow-friendly reads) before any `as_str` / `as_i64` /
+  type-cast you used to do directly. This is the smallest diff.
+- Switching to a typed deserialise. Typed targets
+  (`#[derive(Deserialize)] struct Foo { ... }`) see through tags
+  transparently — `from_str::<Foo>("!Foo {x: 1}")` yields
+  `Foo { x: 1 }` regardless of the tag.
+- Registering the tag with [`TagRegistry::with`] for inline
+  strip-through on the streaming path. Useful when you want
+  noyalib to dispatch into a typed handler keyed on the tag
+  string.
+
+If you don't inspect tags at all and want the old serde_yaml
+behaviour wholesale, that's the `compat::serde_yaml` shim's
+default: see "Drop-in compatibility shim" below.
+
+[`TagRegistry::with`]: https://docs.rs/noyalib/latest/noyalib/struct.TagRegistry.html#method.with
 
 ### 2. Default boolean recognition is YAML 1.2 strict
 
@@ -192,6 +219,29 @@ limit you might want (`max_depth`, `max_alias_expansions`,
 `max_scalar_length`, `duplicate_key_policy`,
 `strict_booleans`, etc.). The factory `ParserConfig::strict()`
 turns every dial up for untrusted input.
+
+### 5. The deserialise-target bound is `T: 'static`
+
+`serde_yaml::from_str<T>` constrains `T: for<'de> Deserialize<'de>`.
+`noyalib::from_str<T>` adds `T: 'static`. Every real-world
+`DeserializeOwned` type already satisfies this — the HRTB on its
+own already disallows borrowed lifetimes — and the `'static` is
+what lets noyalib detect at the call site whether the caller's
+target is `Value` itself (in which case the tag-preserving fast
+path engages) or something else (typed deserialise stays
+transparent).
+
+Concretely: a `&'a str` target was already disallowed by the HRTB;
+`String`, `Vec<...>`, `HashMap<String, V>`, and every `derive`-d
+struct continue to work unchanged. If you hit a compile error
+whose message mentions a missing `'static` bound on a `T` you
+control, add `+ 'static` to the bound — that's the only diff.
+
+This bound is a soft constraint. The few external trait signatures
+that drop `'static` from their `DeserializeOwned` bound (notably
+`figment::Format::from_str`) are accommodated by a private
+internal entry point that bypasses the tag-preserving fast path.
+You don't see it; your `Format` impl just works.
 
 ## Drop-in compatibility shim
 

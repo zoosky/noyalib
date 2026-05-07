@@ -33,6 +33,7 @@
 - [Ecosystem comparison](#ecosystem-comparison) — feature matrix
 - [Benchmarks](#benchmarks) — measurements vs. other libraries
 - [Features](#features) — module-level capability list
+- [Custom tags ("just data")](#custom-tags-just-data) — `Value::Tagged`, untag, registry
 - [Library Usage](#library-usage) — deserialise, serialise, values, spans
 - [Configuration](#configuration) — parser and serialiser options
 - [Examples](#examples) — runnable example index
@@ -759,6 +760,70 @@ let cfg: Config = noyalib::from_str(yaml)
 
 See `examples/diagnostic.rs` for the full integration pattern.
 
+For sinks with hard length budgets — Slack messages, Sentry tags,
+structured-log fields — the same diagnostic is available capped
+at a caller-supplied character count:
+
+```rust
+use noyalib::{from_str, Value};
+let source = "a: [unclosed";
+let err = from_str::<Value>(source).unwrap_err();
+
+// Cap at 60 chars; UTF-8-aligned cut; ASCII `...` ellipsis.
+let short = err.format_with_source_truncated(source, 60);
+assert!(short.len() <= 60);
+
+// Multi-line context (rustc-style) capped at 200 chars:
+let with_ctx = err.format_with_source_radius_truncated(source, 1, 200);
+assert!(with_ctx.len() <= 200);
+```
+
+The truncation contract: UTF-8-aligned cut, `...` appended on
+truncation (dropped only when `max_chars < 3`), no ANSI escapes,
+deterministic across builds.
+
+---
+
+## Custom tags ("just data")
+
+YAML tags (`!Custom`, `!!python/object`, `!Color`) attach a
+type label to any node. noyalib surfaces them as
+[`Value::Tagged`] on the default `from_str::<Value>` path, never
+as code paths — they are pure data the caller dispatches on:
+
+```rust
+use noyalib::{from_str, Value};
+
+let v: Value = from_str("!Color '#ff8800'\n").unwrap();
+match &v {
+    Value::Tagged(t) => {
+        assert_eq!(t.tag().as_str(), "!Color");
+        assert_eq!(t.value().as_str(), Some("#ff8800"));
+    }
+    _ => unreachable!(),
+}
+```
+
+Three escape hatches when the wrapper isn't what you want:
+
+| Need | API |
+| :--- | :--- |
+| Read the inner value directly, ignoring the tag | [`Value::untag_ref`] / [`Value::untag`] |
+| Strip a known tag inline on the streaming path (no AST detour) | [`TagRegistry::with`] |
+| Reject any document carrying a non-core tag at parse time | [`policy::DenyTags`] |
+
+Typed targets (`#[derive(Deserialize)] struct Foo { ... }`) see
+through tags transparently — `from_str::<Foo>("!Foo {x: 1}")`
+yields `Foo { x: 1 }` regardless of the tag. The tag wrapper is
+only surfaced when the deserialise target is `Value` itself,
+detected at the entry point via `TypeId`.
+
+[`Value::Tagged`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#variant.Tagged
+[`Value::untag_ref`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#method.untag_ref
+[`Value::untag`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#method.untag
+[`TagRegistry::with`]: https://docs.rs/noyalib/latest/noyalib/struct.TagRegistry.html#method.with
+[`policy::DenyTags`]: https://docs.rs/noyalib/latest/noyalib/policy/struct.DenyTags.html
+
 ---
 
 ## Compact list indentation
@@ -1313,26 +1378,38 @@ RCE vector — a malicious tag can load arbitrary code in legacy
 parsers. noyalib only deserialises into Rust types you've defined
 at compile time, with `#[derive(Deserialize)]`.
 
-In v0.0.1, custom tags on scalar values are coerced to the
-underlying scalar's resolved type (typically a string for non-core
-tags) — the data flows through, the tag itself is dropped on the
-default `from_str::<Value>` path. To act on tags, opt into a
-[`TagRegistry`](https://docs.rs/noyalib/latest/noyalib/struct.TagRegistry.html):
-every recognised tag is one you've explicitly named. Tagged
-sequences and mappings already route through the AST loader and
-surface as [`Value::Tagged`].
+Custom tags surface as **pure data** through the [`Value`] tree,
+never as code paths. Three options, in order of decreasing
+strictness:
 
-Promoting scalar tag handling to first-class
-[`Value::Tagged`](https://docs.rs/noyalib/latest/noyalib/enum.Value.html#variant.Tagged)
-on the default deserialise path (`!Custom 'hello'` →
-`Value::Tagged("!Custom", String("hello"))`) is on the v0.0.2
-roadmap; track it via
-[issue #N/A](https://github.com/sebastienrousseau/noyalib/issues).
+- **Tagged data is fully preserved.**
+  `from_str::<Value>("!Custom 'hello'\n")` returns
+  `Value::Tagged(Tag("!Custom"), Value::String("hello"))` — the
+  same shape that already covered tagged sequences and tagged
+  mappings. Downstream code can read the tag via
+  `Value::Tagged(t)` pattern matching, dispatch on it, or step
+  through it via [`Value::untag_ref`] for transparent reads. No
+  global type registry, no runtime code lookup, no
+  attacker-controlled instantiation — just data.
+- **Typed targets see through tags.** A
+  `#[derive(Deserialize)] struct Foo { x: u8 }` against
+  `!Foo {x: 1}` yields `Foo { x: 1 }`. The typed visitor never
+  observes the tag string, so an attacker forging a tag to
+  trigger a different `Deserialize` impl is impossible.
+- **`TagRegistry` for opt-in routing.** Register the specific
+  tags your application understands; unregistered custom tags
+  still surface as `Value::Tagged(...)` data. See
+  [`TagRegistry`](https://docs.rs/noyalib/latest/noyalib/struct.TagRegistry.html).
+- **`policy::DenyTags` for hard rejection.** Reject any
+  document carrying a non-core tag at parse time, before any
+  data flows downstream. See [Policy enforcement](#policy-enforcement-safe-yaml).
 
 There is no path from a parsed YAML document to running attacker-
 chosen code. Period.
 
+[`Value`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html
 [`Value::Tagged`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#variant.Tagged
+[`Value::untag_ref`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#method.untag_ref
 
 ### Configurable resource budgets
 

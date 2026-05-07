@@ -1549,6 +1549,11 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Sequence(seq) => {
                 self.wrap_err(visitor.visit_seq(ValueSeqAccess::from_de(&self, seq)))
             }
+            // Tagged values are transparent for typed `deserialize_*`
+            // calls — `Vec<T>::deserialize` against `!List [1, 2, 3]`
+            // (which now surfaces as `Tagged(Sequence(...))` per the
+            // tag-preserving loader) sees through the wrapper.
+            Value::Tagged(tagged) => self.descend(tagged.value()).deserialize_seq(visitor),
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "sequence",
                 found: type_name(self.value),
@@ -1583,6 +1588,12 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Mapping(map) => {
                 self.wrap_err(visitor.visit_map(ValueMapAccess::from_de(&self, map)))
             }
+            // Tagged values are transparent for typed
+            // `deserialize_*` calls — `HashMap::deserialize`
+            // against `!!set { Mark, Sammy }` (which now surfaces
+            // as `Tagged(Mapping(...))` per the tag-preserving
+            // loader) sees through the wrapper.
+            Value::Tagged(tagged) => self.descend(tagged.value()).deserialize_map(visitor),
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "mapping",
                 found: type_name(self.value),

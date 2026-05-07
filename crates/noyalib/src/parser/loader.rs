@@ -10,7 +10,7 @@ use crate::parser::events::Event;
 use crate::prelude::*;
 #[cfg(feature = "std")]
 use crate::span_context::SpanTree;
-use crate::value::{Mapping, Number, Tag, Value};
+use crate::value::{Mapping, Number, Tag, TaggedValue, Value};
 use indexmap::IndexMap;
 
 /// Maximum number of bytes an expanded alias can account for per document.
@@ -157,6 +157,12 @@ enum Frame {
         span_items: Vec<SpanTree>,
         start: usize,
         anchor: Option<String>,
+        /// Tag carried by the originating `SequenceStart` event,
+        /// if any. Wrapped onto the produced [`Value::Sequence`]
+        /// at `SequenceEnd` time so non-core tagged sequences
+        /// surface as [`Value::Tagged`] on the deserialise return
+        /// path. See [`crate::de::Deserializer::preserve_tags`].
+        tag: Option<(String, String)>,
     },
     MappingKey {
         map: Mapping,
@@ -164,6 +170,10 @@ enum Frame {
         start: usize,
         anchor: Option<String>,
         merge_values: Vec<Value>,
+        /// Tag carried by the originating `MappingStart` event,
+        /// if any. Wrapped onto the produced [`Value::Mapping`]
+        /// at `MappingEnd` time.
+        tag: Option<(String, String)>,
     },
     MappingValue {
         map: Mapping,
@@ -173,6 +183,7 @@ enum Frame {
         start: usize,
         anchor: Option<String>,
         merge_values: Vec<Value>,
+        tag: Option<(String, String)>,
     },
 }
 
@@ -290,7 +301,9 @@ impl<'a> Loader<'a> {
                 }
                 self.push_node(v, st, input)?;
             }
-            Event::SequenceStart { anchor, span, .. } => {
+            Event::SequenceStart {
+                anchor, tag, span, ..
+            } => {
                 self.depth += 1;
                 if self.depth > self.config.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
@@ -300,6 +313,7 @@ impl<'a> Loader<'a> {
                     span_items: Vec::new(),
                     start: span.start,
                     anchor,
+                    tag,
                 });
             }
             Event::SequenceEnd { span } => {
@@ -309,9 +323,11 @@ impl<'a> Loader<'a> {
                     span_items,
                     start,
                     anchor,
+                    tag,
                 }) = self.stack.pop()
                 {
-                    let v = Value::Sequence(items);
+                    let inner = Value::Sequence(items);
+                    let v = wrap_with_tag(inner, tag.as_ref());
                     let st = SpanTree::Sequence {
                         start,
                         end: span.end,
@@ -329,7 +345,9 @@ impl<'a> Loader<'a> {
                     ));
                 }
             }
-            Event::MappingStart { anchor, span, .. } => {
+            Event::MappingStart {
+                anchor, tag, span, ..
+            } => {
                 self.depth += 1;
                 if self.depth > self.config.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
@@ -340,6 +358,7 @@ impl<'a> Loader<'a> {
                     start: span.start,
                     anchor,
                     merge_values: Vec::new(),
+                    tag,
                 });
             }
             Event::MappingEnd { span } => {
@@ -350,13 +369,15 @@ impl<'a> Loader<'a> {
                     start,
                     anchor,
                     merge_values,
+                    tag,
                 }) = self.stack.pop()
                 {
                     for mv in merge_values {
                         apply_merge(&mut map, mv)?;
                     }
 
-                    let v = Value::Mapping(map);
+                    let inner = Value::Mapping(map);
+                    let v = wrap_with_tag(inner, tag.as_ref());
                     let st = SpanTree::Mapping {
                         start,
                         end: span.end,
@@ -398,6 +419,7 @@ impl<'a> Loader<'a> {
                 start,
                 anchor,
                 merge_values,
+                tag,
             } => {
                 // Coerce scalar keys to strings; complex keys (sequences,
                 // mappings) are stringified via their YAML serialization
@@ -422,6 +444,7 @@ impl<'a> Loader<'a> {
                 let old_start = *start;
                 let old_anchor = anchor.take();
                 let old_merge_values = core::mem::take(merge_values);
+                let old_tag = tag.take();
 
                 *self.stack.last_mut().unwrap() = Frame::MappingValue {
                     map: old_map,
@@ -431,6 +454,7 @@ impl<'a> Loader<'a> {
                     start: old_start,
                     anchor: old_anchor,
                     merge_values: old_merge_values,
+                    tag: old_tag,
                 };
             }
             Frame::MappingValue {
@@ -441,6 +465,7 @@ impl<'a> Loader<'a> {
                 start,
                 anchor,
                 merge_values,
+                tag,
             } => {
                 let is_merge = key == MERGE_KEY;
                 let merge_treat_as_ordinary =
@@ -483,6 +508,7 @@ impl<'a> Loader<'a> {
                 let old_start = *start;
                 let old_anchor = anchor.take();
                 let old_merge_values = core::mem::take(merge_values);
+                let old_tag = tag.take();
 
                 *self.stack.last_mut().unwrap() = Frame::MappingKey {
                     map: old_map,
@@ -490,6 +516,7 @@ impl<'a> Loader<'a> {
                     start: old_start,
                     anchor: old_anchor,
                     merge_values: old_merge_values,
+                    tag: old_tag,
                 };
             }
         }
@@ -569,17 +596,20 @@ enum NoSpanFrame {
     Sequence {
         items: Vec<Value>,
         anchor: Option<String>,
+        tag: Option<(String, String)>,
     },
     MappingKey {
         map: Mapping,
         anchor: Option<String>,
         merge_values: Vec<Value>,
+        tag: Option<(String, String)>,
     },
     MappingValue {
         map: Mapping,
         key: String,
         anchor: Option<String>,
         merge_values: Vec<Value>,
+        tag: Option<(String, String)>,
     },
 }
 
@@ -678,29 +708,32 @@ impl<'a> NoSpanLoader<'a> {
                 }
                 self.push_value(v)?;
             }
-            Event::SequenceStart { anchor, .. } => {
+            Event::SequenceStart { anchor, tag, .. } => {
                 self.depth += 1;
                 self.stack.push(NoSpanFrame::Sequence {
                     items: Vec::new(),
                     anchor,
+                    tag,
                 });
             }
             Event::SequenceEnd { .. } => {
                 self.depth = self.depth.saturating_sub(1);
-                if let Some(NoSpanFrame::Sequence { items, anchor }) = self.stack.pop() {
-                    let v = Value::Sequence(items);
+                if let Some(NoSpanFrame::Sequence { items, anchor, tag }) = self.stack.pop() {
+                    let inner = Value::Sequence(items);
+                    let v = wrap_with_tag(inner, tag.as_ref());
                     if let Some(name) = anchor {
                         let _ = self.anchor_map.insert(name, v.clone());
                     }
                     self.push_value(v)?;
                 }
             }
-            Event::MappingStart { anchor, .. } => {
+            Event::MappingStart { anchor, tag, .. } => {
                 self.depth += 1;
                 self.stack.push(NoSpanFrame::MappingKey {
                     map: Mapping::new(),
                     anchor,
                     merge_values: Vec::new(),
+                    tag,
                 });
             }
             Event::MappingEnd { .. } => {
@@ -709,12 +742,14 @@ impl<'a> NoSpanLoader<'a> {
                     mut map,
                     anchor,
                     merge_values,
+                    tag,
                 }) = self.stack.pop()
                 {
                     for mv in merge_values {
                         apply_merge(&mut map, mv)?;
                     }
-                    let v = Value::Mapping(map);
+                    let inner = Value::Mapping(map);
+                    let v = wrap_with_tag(inner, tag.as_ref());
                     if let Some(name) = anchor {
                         let _ = self.anchor_map.insert(name, v.clone());
                     }
@@ -738,16 +773,19 @@ impl<'a> NoSpanLoader<'a> {
                 map,
                 anchor,
                 merge_values,
+                tag,
             } => {
                 if let Some(key) = value_to_key_string(value) {
                     let old_map = core::mem::take(map);
                     let old_anchor = anchor.take();
                     let old_merge_values = core::mem::take(merge_values);
+                    let old_tag = tag.take();
                     *self.stack.last_mut().unwrap() = NoSpanFrame::MappingValue {
                         map: old_map,
                         key,
                         anchor: old_anchor,
                         merge_values: old_merge_values,
+                        tag: old_tag,
                     };
                 }
             }
@@ -756,6 +794,7 @@ impl<'a> NoSpanLoader<'a> {
                 key,
                 anchor,
                 merge_values,
+                tag,
             } => {
                 let is_merge = key == MERGE_KEY;
                 let merge_treat_as_ordinary =
@@ -774,10 +813,12 @@ impl<'a> NoSpanLoader<'a> {
                 let old_map = core::mem::take(map);
                 let old_anchor = anchor.take();
                 let old_merge_values = core::mem::take(merge_values);
+                let old_tag = tag.take();
                 *self.stack.last_mut().unwrap() = NoSpanFrame::MappingKey {
                     map: old_map,
                     anchor: old_anchor,
                     merge_values: old_merge_values,
+                    tag: old_tag,
                 };
             }
         }
@@ -846,6 +887,33 @@ fn value_to_key_string(value: Value) -> Option<String> {
     }
 }
 
+/// Wrap `inner` (a Sequence or Mapping `Value`) in
+/// [`Value::Tagged`] when the originating event carried a custom
+/// (non-core) tag. Core YAML 1.2 tags (`!!seq`, `!!map`) are
+/// stripped — they are no-ops on a sequence/mapping anyway and
+/// `!!seq` / `!!map` would otherwise leak into the deserialise
+/// return path as redundant metadata.
+fn wrap_with_tag(inner: Value, tag: Option<&(String, String)>) -> Value {
+    let Some((handle, suffix)) = tag else {
+        return inner;
+    };
+    // `!!seq` / `!!map` (and the explicit URI form) are
+    // pure-metadata core tags on collections; the `Sequence` or
+    // `Mapping` variant of `Value` already conveys "seq" /
+    // "map" — wrapping in `Tagged` would only confuse downstream
+    // matches that key on the variant.
+    let is_core_collection = (handle == "!!"
+        || handle == "tag:yaml.org,2002:")
+        && (suffix == "seq" || suffix == "map");
+    if is_core_collection {
+        return inner;
+    }
+    Value::Tagged(Box::new(TaggedValue::new(
+        Tag::new(format!("{handle}{suffix}")),
+        inner,
+    )))
+}
+
 /// Resolve a tagged scalar into a typed `Value`. Handles the YAML 1.2
 /// core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
 /// and any custom tag falls through to the `Tagged` wrapper.
@@ -902,13 +970,13 @@ fn resolve_tagged_scalar(handle: &str, suffix: &str, value: &str) -> Result<Valu
                 _ => Err(Error::FailedToParseNumber(format!("!!null {value}"))),
             },
             "str" => Ok(Value::String(value.to_owned())),
-            _ => Ok(Value::Tagged(Box::new(crate::value::TaggedValue::new(
+            _ => Ok(Value::Tagged(Box::new(TaggedValue::new(
                 Tag::new(format!("{handle}{suffix}")),
                 Value::String(value.to_owned()),
             )))),
         }
     } else {
-        Ok(Value::Tagged(Box::new(crate::value::TaggedValue::new(
+        Ok(Value::Tagged(Box::new(TaggedValue::new(
             Tag::new(format!("{handle}{suffix}")),
             Value::String(value.to_owned()),
         ))))

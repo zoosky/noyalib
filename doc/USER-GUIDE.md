@@ -345,6 +345,82 @@ expected type, then re-validates. This is the library engine
 behind `noyavalidate --fix`. See
 [`crates/noyalib/examples/schema_validation.rs`](../crates/noyalib/examples/schema_validation.rs).
 
+## 9b. Custom YAML tags (`Value::Tagged`)
+
+YAML lets any node carry a "tag" — a type label like `!Color`,
+`!Celsius`, `!!python/object`. noyalib surfaces these on the
+default `from_str::<Value>` path so downstream code can dispatch
+on them safely (no global type registry, no runtime code
+lookup, no attacker-controlled instantiation):
+
+```rust
+use noyalib::{from_str, Value};
+
+let v: Value = from_str("!Color '#ff8800'\n")?;
+match &v {
+    Value::Tagged(t) => {
+        println!("tag: {}", t.tag().as_str());          // "!Color"
+        println!("inner: {:?}", t.value().as_str());    // Some("#ff8800")
+    }
+    _ => unreachable!(),
+}
+# Ok::<(), noyalib::Error>(())
+```
+
+This contract holds for all three tag-bearing shapes:
+
+| YAML | Resulting `Value` |
+| :--- | :--- |
+| `!Custom 'hello'` | `Value::Tagged(Tag("!Custom"), Value::String("hello"))` |
+| `!List [a, b]` | `Value::Tagged(Tag("!List"), Value::Sequence(...))` |
+| `!Map {k: v}` | `Value::Tagged(Tag("!Map"), Value::Mapping(...))` |
+| `!!str 42` | `Value::String("42")` *(core tag — resolves)* |
+| `!!int 42` | `Value::Number(Integer(42))` *(core tag — resolves)* |
+
+**Reading through the wrapper.** Two helpers on `Value` step
+through the tag for transparent reads:
+
+```rust
+# use noyalib::{from_str, Value};
+let v: Value = from_str("!Color '#ff8800'\n")?;
+assert_eq!(v.untag_ref().as_str(), Some("#ff8800"));    // borrow-friendly
+let owned = v.untag();                                  // consumes
+# Ok::<(), noyalib::Error>(())
+```
+
+**Typed targets see through tags transparently.** A
+`#[derive(Deserialize)] struct Foo { ... }` against
+`!Foo {x: 1}` yields `Foo { x: 1 }` — the typed visitor never
+observes the tag string. This is what lets schema-tagged YAML
+inputs deserialise into bare structs.
+
+**Opt out via `TagRegistry`.** When you want noyalib to strip
+known tags inline on the streaming path (no AST detour, no
+wrapper to step through), register them:
+
+```rust
+use std::sync::Arc;
+use noyalib::{from_str_with_config, ParserConfig, TagRegistry};
+
+let cfg = ParserConfig::new()
+    .tag_registry(Arc::new(TagRegistry::new().with("!Color")));
+// Now `!Color "#ff8800"` deserialises directly into a String,
+// no Tagged wrapper, no AST fallback.
+```
+
+**Reject custom tags entirely.** For schema-strict contexts —
+audit pipelines, security-sensitive ingest — `policy::DenyTags`
+fails any document carrying a non-core tag at parse time:
+
+```rust
+use noyalib::{from_str_with_config, ParserConfig, Value};
+use noyalib::policy::DenyTags;
+
+let cfg = ParserConfig::new().with_policy(DenyTags);
+let bad: Result<Value, _> = from_str_with_config("k: !Foo 1\n", &cfg);
+assert!(bad.is_err());
+```
+
 ## 10. Multi-document streams + parallel parse
 
 YAML's `---` document separator lets one file carry many
