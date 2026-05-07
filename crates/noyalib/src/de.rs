@@ -925,7 +925,7 @@ where
     from_str_with_config(s, config)
 }
 
-/// Deserialize YAML from an [`io::Read`] source.
+/// Deserialize YAML from an [`std::io::Read`] source.
 ///
 /// Reads the entire stream into memory before parsing — YAML's
 /// data model is not streamable past document boundaries, so this
@@ -958,7 +958,7 @@ where
     from_reader_with_config(reader, &ParserConfig::default())
 }
 
-/// Deserialize YAML from an [`io::Read`] source with a custom
+/// Deserialize YAML from an [`std::io::Read`] source with a custom
 /// [`ParserConfig`].
 ///
 /// # Errors

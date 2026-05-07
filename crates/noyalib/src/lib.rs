@@ -211,8 +211,8 @@
 //!   number of threads.
 //! - [`Value`], [`Mapping`], [`Number`], [`Spanned<T>`],
 //!   [`Error`] are `Send + Sync`. Cloning a `Value` is `O(n)` in
-//!   the value graph; share ownership via [`Arc<Value>`] when
-//!   that cost matters.
+//!   the value graph; share ownership via
+//!   [`Arc`](std::sync::Arc)`<Value>` when that cost matters.
 //! - [`policy::Policy`] requires `Send + Sync` so policies can be
 //!   shared by reference across threads. Stateful policies should
 //!   hold their state behind interior mutability

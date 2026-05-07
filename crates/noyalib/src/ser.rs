@@ -326,8 +326,8 @@ where
     value_to_string(&v, config)
 }
 
-/// Serialize a Rust value to YAML and write to an [`io::Write`]
-/// sink.
+/// Serialize a Rust value to YAML and write to a
+/// [`std::io::Write`] sink.
 ///
 /// Internally serialises to a `String` then writes the bytes to
 /// `writer` in a single call.
@@ -345,8 +345,8 @@ where
     to_writer_with_config(writer, value, &SerializerConfig::default())
 }
 
-/// Serialize a Rust value to YAML and write to an [`io::Write`]
-/// sink, using a custom [`SerializerConfig`].
+/// Serialize a Rust value to YAML and write to a
+/// [`std::io::Write`] sink, using a custom [`SerializerConfig`].
 ///
 /// # Errors
 ///
@@ -461,7 +461,7 @@ where
     Ok(())
 }
 
-/// Serialize a Rust value to YAML and write into a [`fmt::Write`]
+/// Serialize a Rust value to YAML and write into a [`core::fmt::Write`]
 /// sink — the no_std-friendly counterpart to [`to_writer`].
 ///
 /// # Errors
@@ -477,7 +477,7 @@ where
     to_fmt_writer_with_config(writer, value, &SerializerConfig::default())
 }
 
-/// Serialize a Rust value to YAML and write into a [`fmt::Write`]
+/// Serialize a Rust value to YAML and write into a [`core::fmt::Write`]
 /// sink, using a custom [`SerializerConfig`].
 ///
 /// # Errors

@@ -15,6 +15,7 @@ authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
 autoexamples = false
 include = [
     "/benches/**",
+    "/build.rs",
     "/Cargo.toml",
     "/examples/**",
     "/LICENSE-APACHE",
@@ -461,6 +462,19 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 # Linting config
 [lints.rust]
+# Two custom cfg flags are emitted by `build.rs`: `noyalib_nightly`
+# (set when rustc is a nightly toolchain so `nightly-simd` can opt
+# in) and `noyalib_coverage` (set when `NOYALIB_COVERAGE=1` is
+# exported so coverage-instrumentation hot paths can opt out via
+# `#[cfg_attr(noyalib_coverage, coverage(off))]`). Declare them
+# here as well as in `build.rs` so `cargo publish`'s verification
+# pass — which runs without `build.rs` cfg propagation in some
+# topologies — does not surface `unexpected_cfgs` warnings.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(noyalib_nightly)',
+    'cfg(noyalib_coverage)',
+    'cfg(docsrs)',
+] }
 missing_copy_implementations = "warn"
 missing_docs = "warn"
 unstable_features = "warn"

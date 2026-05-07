@@ -2,7 +2,21 @@
 name = "noyalib-wasm"
 version = "0.0.1"
 edition = "2021"
+rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
+description = "WebAssembly (wasm-bindgen) bindings for the noyalib YAML library — browser-ready parse / serialise / lossless edit"
+repository = "https://github.com/sebastienrousseau/noyalib"
+homepage = "https://github.com/sebastienrousseau/noyalib"
+documentation = "https://docs.rs/noyalib-wasm"
+readme = "README.md"
+keywords = ["yaml", "wasm", "wasm-bindgen", "browser", "noyalib"]
+categories = ["wasm", "encoding", "parser-implementations"]
+authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
+# Distributed via npm as `@noyalib/noyalib-wasm` rather than
+# crates.io — the bindgen output is the consumer-facing artifact,
+# not the Rust crate. Metadata above is filled in for
+# `cargo metadata` consumers and for parity with the rest of the
+# workspace.
 publish = false
 
 [lib]
