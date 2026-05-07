@@ -1664,16 +1664,20 @@ impl<'de> serde::de::MapAccess<'de> for TagPreservingMapAccess<'de> {
         match self.state {
             TagPreservingState::EmitTagKey { tag, value } => {
                 self.state = TagPreservingState::EmitTagValue { tag, value };
-                seed.deserialize(serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(
-                    TAGGED_VALUE_FIELD_TAG,
-                ))
+                seed.deserialize(
+                    serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(
+                        TAGGED_VALUE_FIELD_TAG,
+                    ),
+                )
                 .map(Some)
             }
             TagPreservingState::EmitValueKey { value } => {
                 self.state = TagPreservingState::EmitValueValue { value };
-                seed.deserialize(serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(
-                    TAGGED_VALUE_FIELD_VALUE,
-                ))
+                seed.deserialize(
+                    serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(
+                        TAGGED_VALUE_FIELD_VALUE,
+                    ),
+                )
                 .map(Some)
             }
             TagPreservingState::Done => Ok(None),
@@ -1695,11 +1699,24 @@ impl<'de> serde::de::MapAccess<'de> for TagPreservingMapAccess<'de> {
         match self.state {
             TagPreservingState::EmitTagValue { tag, value } => {
                 self.state = TagPreservingState::EmitValueKey { value };
-                seed.deserialize(serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(tag))
+                seed.deserialize(
+                    serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(tag),
+                )
             }
             TagPreservingState::EmitValueValue { value } => {
                 self.state = TagPreservingState::Done;
-                seed.deserialize(value)
+                // Route through the preserve-tags-aware Deserializer
+                // so any nested `Value::Tagged` inside `value` also
+                // survives the round-trip — without this wrapping,
+                // a tagged scalar inside a tagged collection would
+                // collapse to the single-key `Mapping{"!tag": …}`
+                // shape that the standard `&'de Value` Deserializer
+                // produces for `Value::Tagged` (BUG: noyalib v0.0.1
+                // C4HZ regression — global tags inside a tagged
+                // sequence).
+                seed.deserialize(crate::de::Deserializer::with_options_preserving_tags(
+                    value, None, false,
+                ))
             }
             _ => Err(serde::de::Error::custom(
                 "TagPreservingMapAccess: next_value called out of order",

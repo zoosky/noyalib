@@ -576,10 +576,7 @@ pub fn to_string_value(value: &Value) -> Result<String> {
 /// # Errors
 ///
 /// All variants documented on [`to_string_with_config`].
-pub fn to_string_value_with_config(
-    value: &Value,
-    config: &SerializerConfig,
-) -> Result<String> {
+pub fn to_string_value_with_config(value: &Value, config: &SerializerConfig) -> Result<String> {
     value_to_string(value, config)
 }
 

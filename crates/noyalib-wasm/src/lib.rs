@@ -106,8 +106,9 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = spanAt)]
     pub fn span_at(&self, path: &str) -> Result<JsValue, JsError> {
         match core::document_span_at(&self.inner, path) {
-            Some((start, end)) => to_js(&WasmSpan { start, end })
-                .map_err(|e| JsError::new(&e.to_string())),
+            Some((start, end)) => {
+                to_js(&WasmSpan { start, end }).map_err(|e| JsError::new(&e.to_string()))
+            }
             None => Ok(JsValue::NULL),
         }
     }
@@ -147,8 +148,7 @@ impl WasmDocument {
             before: Vec<String>,
             inline: Option<String>,
         }
-        to_js(&Bundle { before, inline })
-            .map_err(|e| JsError::new(&e.to_string()))
+        to_js(&Bundle { before, inline }).map_err(|e| JsError::new(&e.to_string()))
     }
 }
 

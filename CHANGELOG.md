@@ -7,6 +7,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — nested `Value::Tagged` inside a tagged container (C4HZ regression)
+
+`from_str::<Value>("!shape\n- !circle 1\n")` previously collapsed
+the inner `Tagged(circle, "1")` into a single-key
+`Mapping{"!circle": "1"}` because
+`TagPreservingMapAccess::next_value_seed` handed the inner
+`Value` to a tag-blind `&'de Value` Deserializer. Fixed by
+re-wrapping the inner value in
+`crate::de::Deserializer::with_options_preserving_tags(...)` so
+nested `Value::Tagged` survives every layer of the data-binding
+return path. Restores YAML test suite C4HZ ("Spec Example 2.24
+Global Tags") to the strict-pass set — strict compliance back
+to **100.0% (387/387)**.
+
 ### Added — `to_string_value` / `to_writer_value` for lossless `Value::Tagged` emit
 
 - **`noyalib::to_string_value(&Value) -> Result<String>`** and

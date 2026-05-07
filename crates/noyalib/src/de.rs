@@ -682,10 +682,7 @@ fn is_value_target<T: 'static + ?Sized>() -> bool {
 /// streaming fast-path → AST loader fallback → policy walk →
 /// `T::deserialize`.
 #[cfg(all(feature = "std", feature = "figment"))]
-pub(crate) fn from_str_typed_no_tag_preserve<T>(
-    s: &str,
-    config: &ParserConfig,
-) -> Result<T>
+pub(crate) fn from_str_typed_no_tag_preserve<T>(s: &str, config: &ParserConfig) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
@@ -956,11 +953,7 @@ where
                 config.ignore_binary_tag_for_string,
             )
         } else {
-            Deserializer::with_options(
-                &value,
-                None,
-                config.ignore_binary_tag_for_string,
-            )
+            Deserializer::with_options(&value, None, config.ignore_binary_tag_for_string)
         };
         T::deserialize(de)
     }
@@ -1279,12 +1272,10 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
                     // a magic-key MapAccess so the outer
                     // `Value::deserialize` visitor reconstructs
                     // `Value::Tagged(...)` losslessly.
-                    self.wrap_err(visitor.visit_map(
-                        crate::value::TagPreservingMapAccess::new(
-                            tagged.tag().as_str(),
-                            tagged.value(),
-                        ),
-                    ))
+                    self.wrap_err(visitor.visit_map(crate::value::TagPreservingMapAccess::new(
+                        tagged.tag().as_str(),
+                        tagged.value(),
+                    )))
                 } else {
                     // Default path: typed targets see through the
                     // tag transparently — `#[derive(Deserialize)]

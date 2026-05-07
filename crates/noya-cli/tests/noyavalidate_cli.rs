@@ -404,10 +404,7 @@ fn schema_and_fix_coerces_quoted_integer() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        stdout.contains("1 fix(es) applied"),
-        "got: {stdout}"
-    );
+    assert!(stdout.contains("1 fix(es) applied"), "got: {stdout}");
     let after = std::fs::read_to_string(&yaml).unwrap();
     assert_eq!(after, "port: 8080\n");
 }

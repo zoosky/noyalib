@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 //! Regression: `Document::span_at` / `entry().get()` must cover the
 //! full tagged-scalar value, not just the `!Tag` prefix. Pre-fix
 //! behaviour returned 6..13 ("!Custom") for `name: !Custom 'app-1'`;

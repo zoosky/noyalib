@@ -902,9 +902,8 @@ fn wrap_with_tag(inner: Value, tag: Option<&(String, String)>) -> Value {
     // `Mapping` variant of `Value` already conveys "seq" /
     // "map" — wrapping in `Tagged` would only confuse downstream
     // matches that key on the variant.
-    let is_core_collection = (handle == "!!"
-        || handle == "tag:yaml.org,2002:")
-        && (suffix == "seq" || suffix == "map");
+    let is_core_collection =
+        (handle == "!!" || handle == "tag:yaml.org,2002:") && (suffix == "seq" || suffix == "map");
     if is_core_collection {
         return inner;
     }

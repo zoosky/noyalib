@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
 //! CST + schema audit with tagged content.
 
 use noyalib::{from_str, validate_against_schema, Value};
@@ -52,8 +55,7 @@ fn cst_coerce_to_schema_through_tagged_value() {
     // `port: !!str "8080"` is a string-tagged scalar — schema
     // says integer. After coerce, the tag should survive (or
     // strip — pin the actual behaviour).
-    let schema: Value =
-        from_str("type: object\nproperties:\n  port: { type: integer }\n").unwrap();
+    let schema: Value = from_str("type: object\nproperties:\n  port: { type: integer }\n").unwrap();
     let mut doc = parse_document("# config\nport: \"8080\"\n").unwrap();
     let n = coerce_to_schema(&mut doc, &schema).unwrap();
     assert_eq!(n, 1);

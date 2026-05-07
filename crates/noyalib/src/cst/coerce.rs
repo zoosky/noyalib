@@ -218,7 +218,8 @@ fn coerce_logical(logical: &str, target: jsonschema::JsonType) -> Option<String>
             // Use the standard noyalib serializer for floats so the
             // emitted form matches the rest of the document
             // (`fast-float` / ryu when on, `core::fmt` otherwise).
-            crate::ser::to_string(&Value::Number(Number::Float(f))).ok()
+            crate::ser::to_string(&Value::Number(Number::Float(f)))
+                .ok()
                 .map(|s| s.trim().to_owned())
         }
         JsonType::Boolean => match logical {

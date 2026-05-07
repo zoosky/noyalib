@@ -343,8 +343,7 @@ fn run() -> ExitCode {
             }
         } else {
             let label = schema_path.display().to_string();
-            let violations =
-                run_schema_validation(&docs, &schema_text, &label, &name, &source);
+            let violations = run_schema_validation(&docs, &schema_text, &label, &name, &source);
             if violations > 0 {
                 return ExitCode::from(1);
             }

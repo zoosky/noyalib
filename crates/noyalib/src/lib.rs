@@ -513,8 +513,7 @@ pub use schema_validate::{coerce_to_schema, validate_against_schema, validate_ag
 pub use ser::{
     to_fmt_writer, to_fmt_writer_with_config, to_string, to_string_multi,
     to_string_multi_with_config, to_string_value, to_string_value_with_config,
-    to_string_with_config, to_value, FlowStyle, ScalarStyle, Serializer,
-    SerializerConfig,
+    to_string_with_config, to_value, FlowStyle, ScalarStyle, Serializer, SerializerConfig,
 };
 #[cfg(feature = "std")]
 pub use ser::{
