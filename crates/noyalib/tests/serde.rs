@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// Helper for round-trip testing
 fn test_serde<T>(value: &T, expected_yaml_contains: &[&str])
 where
-    T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug,
+    T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug + 'static,
 {
     let yaml = to_string(value).unwrap();
     for expected in expected_yaml_contains {

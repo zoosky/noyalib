@@ -96,7 +96,7 @@ use serde::de::DeserializeOwned;
 /// ```
 pub fn parse<T>(input: &str) -> Result<Vec<T>>
 where
-    T: DeserializeOwned + Send,
+    T: DeserializeOwned + Send + 'static,
 {
     let chunks = split(input);
     chunks

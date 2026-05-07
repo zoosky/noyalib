@@ -228,7 +228,7 @@ pub fn try_load_all(input: &str) -> Result<DocumentIterator> {
 /// deserialized into the target type.
 pub fn load_all_as<T>(input: &str) -> Result<Vec<T>>
 where
-    T: for<'de> serde::Deserialize<'de>,
+    T: for<'de> serde::Deserialize<'de> + 'static,
 {
     let parse_config = parser::ParseConfig::from(&ParserConfig::default());
 

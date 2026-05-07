@@ -646,9 +646,74 @@ pub enum DuplicateKeyPolicy {
 /// ```
 pub fn from_str<T>(s: &str) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     from_str_with_config(s, &ParserConfig::default())
+}
+
+/// Compile-time-ish check: is the deserialise target `T` exactly
+/// [`Value`]? Used by [`from_str_with_config`] / [`from_value`]
+/// to enable the tag-preserving fast-path on
+/// [`Deserializer::deserialize_any`] only when the caller wants a
+/// `Value`. For typed targets (`#[derive(Deserialize)] struct`,
+/// scalars, enums, …) the standard transparent-tag behaviour
+/// stays in place.
+///
+/// `Value` is `'static`, so [`std::any::TypeId::of`] is well-formed
+/// here. The check returns `false` for any other `T`, including
+/// `Spanned<Value>` and `Vec<Value>` (where the outer wrapper has
+/// a distinct `TypeId`).
+fn is_value_target<T: 'static + ?Sized>() -> bool {
+    use core::any::TypeId;
+    TypeId::of::<T>() == TypeId::of::<Value>()
+}
+
+/// Internal typed-deserialise entry that does **not** require
+/// `T: 'static` and never engages the tag-preserving fast-path.
+///
+/// Used by integrations whose external trait signatures expose
+/// `T: for<'de> Deserialize<'de>` without a `'static` bound (e.g.
+/// the [`figment`] crate's [`figment::Format::from_str`]
+/// signature). In those contexts the caller has already
+/// type-erased through `T = ProfileFigure` etc., and a tag-
+/// preserving Value reconstitution would never apply anyway.
+///
+/// Mirrors [`from_str_with_config`] in every other respect:
+/// streaming fast-path → AST loader fallback → policy walk →
+/// `T::deserialize`.
+#[cfg(all(feature = "std", feature = "figment"))]
+pub(crate) fn from_str_typed_no_tag_preserve<T>(
+    s: &str,
+    config: &ParserConfig,
+) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let stream_eligible = config.merge_key_policy == MergeKeyPolicy::Auto
+        && !config.ignore_binary_tag_for_string
+        && config.policies.is_empty();
+    if stream_eligible {
+        if let Some(res) = crate::streaming::from_str_streaming(s, config) {
+            return res;
+        }
+    }
+    let parse_config = parser::ParseConfig::from(config);
+    let (value, span_tree) = parser::parse_one(s, &parse_config)?;
+    for p in &config.policies {
+        p.check_value(&value)?;
+    }
+    let spans = span_context::build_span_map(&value, &span_tree);
+    let ctx = span_context::SpanContext {
+        spans,
+        source: s.into(),
+    };
+    let _guard = span_context::set_span_context(ctx);
+    let de = Deserializer::with_options(
+        &value,
+        Some(_guard.as_ref()),
+        config.ignore_binary_tag_for_string,
+    );
+    T::deserialize(de)
 }
 
 /// Strict deserialise: like [`from_str`] but errors if `s`
@@ -686,7 +751,7 @@ where
 #[cfg(all(feature = "std", feature = "strict-deserialise"))]
 pub fn from_str_strict<T>(s: &str) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     let unknown = std::sync::Mutex::new(Vec::<String>::new());
     let value: Value = from_str_with_config(s, &ParserConfig::default())?;
@@ -748,7 +813,7 @@ where
 #[cfg(all(feature = "std", feature = "strict-deserialise"))]
 pub fn from_slice_strict<T>(b: &[u8]) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     let s = core::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
     from_str_strict(s)
@@ -785,7 +850,7 @@ where
 pub fn from_reader_strict<R, T>(mut reader: R) -> Result<T>
 where
     R: io::Read,
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     let mut s = String::new();
     let _ = reader.read_to_string(&mut s).map_err(Error::Io)?;
@@ -825,7 +890,7 @@ where
 /// ```
 pub fn from_str_with_config<T>(s: &str, config: &ParserConfig) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     // Try streaming path first (faster, no intermediate Value AST).
     // The streaming path bakes in YAML 1.2 semantics:
@@ -857,22 +922,47 @@ where
             source: s.into(),
         };
         let _guard = span_context::set_span_context(ctx);
-        let de = Deserializer::with_options(
-            &value,
-            Some(_guard.as_ref()),
-            config.ignore_binary_tag_for_string,
-        );
+        // Tag-preserving fast-path: when the caller's `T` is
+        // `Value` (the only type with a `Tagged` variant), enable
+        // the magic-key surfacing in
+        // [`Deserializer::deserialize_any`] so custom-tag scalars
+        // like `!Custom 'hi'` survive as
+        // `Value::Tagged(...)` instead of being unwrapped to the
+        // inner value (which is the right behaviour for typed
+        // targets but lossy for `Value`).
+        let de = if is_value_target::<T>() {
+            Deserializer::with_options_preserving_tags(
+                &value,
+                Some(_guard.as_ref()),
+                config.ignore_binary_tag_for_string,
+            )
+        } else {
+            Deserializer::with_options(
+                &value,
+                Some(_guard.as_ref()),
+                config.ignore_binary_tag_for_string,
+            )
+        };
         T::deserialize(de)
     }
 
     #[cfg(not(feature = "std"))]
     {
         let value = parser::parse_one_value(s, &parse_config)?;
-        T::deserialize(Deserializer::with_options(
-            &value,
-            None,
-            config.ignore_binary_tag_for_string,
-        ))
+        let de = if is_value_target::<T>() {
+            Deserializer::with_options_preserving_tags(
+                &value,
+                None,
+                config.ignore_binary_tag_for_string,
+            )
+        } else {
+            Deserializer::with_options(
+                &value,
+                None,
+                config.ignore_binary_tag_for_string,
+            )
+        };
+        T::deserialize(de)
     }
 }
 
@@ -896,7 +986,7 @@ where
 /// ```
 pub fn from_slice<T>(b: &[u8]) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     let s = core::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
     from_str(s)
@@ -919,7 +1009,7 @@ where
 /// ```
 pub fn from_slice_with_config<T>(b: &[u8], config: &ParserConfig) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     let s = core::str::from_utf8(b).map_err(|e| Error::Deserialize(e.to_string()))?;
     from_str_with_config(s, config)
@@ -953,7 +1043,7 @@ where
 pub fn from_reader<R, T>(reader: R) -> Result<T>
 where
     R: io::Read,
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     from_reader_with_config(reader, &ParserConfig::default())
 }
@@ -980,7 +1070,7 @@ where
 pub fn from_reader_with_config<R, T>(mut reader: R, config: &ParserConfig) -> Result<T>
 where
     R: io::Read,
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
     let mut s = String::new();
     let _ = reader.read_to_string(&mut s).map_err(Error::Io)?;
@@ -1009,9 +1099,14 @@ where
 /// ```
 pub fn from_value<T>(value: &Value) -> Result<T>
 where
-    T: for<'de> Deserialize<'de>,
+    T: for<'de> Deserialize<'de> + 'static,
 {
-    T::deserialize(Deserializer::new(value))
+    let de = if is_value_target::<T>() {
+        Deserializer::with_options_preserving_tags(value, None, false)
+    } else {
+        Deserializer::new(value)
+    };
+    T::deserialize(de)
 }
 
 /// A YAML deserializer.
@@ -1036,6 +1131,19 @@ pub struct Deserializer<'de> {
     /// `"ABCD"` (no base64 decode). Default `false` preserves YAML
     /// 1.2 semantics.
     pub(crate) ignore_binary_tag_for_string: bool,
+    /// When `true`, [`Value::Tagged`] is surfaced through the
+    /// magic-key [`crate::value::TagPreservingMapAccess`] so the
+    /// outer [`Value::deserialize`] visitor can reconstruct
+    /// `Value::Tagged(...)` losslessly. When `false` (default), a
+    /// tagged scalar is unwrapped to its inner value — the
+    /// transparent behaviour every typed `T::deserialize` expects.
+    ///
+    /// Set automatically by [`from_str_with_config`] /
+    /// [`from_value`] when the caller's `T` is `Value` (detected
+    /// via [`std::any::TypeId`]). Threaded through every
+    /// `descend()` site so nested tagged values inside a
+    /// `Mapping` / `Sequence` also survive.
+    pub(crate) preserve_tags: bool,
 }
 
 impl<'de> Deserializer<'de> {
@@ -1054,6 +1162,7 @@ impl<'de> Deserializer<'de> {
             value,
             span_ctx: None,
             ignore_binary_tag_for_string: false,
+            preserve_tags: false,
         }
     }
 
@@ -1079,6 +1188,7 @@ impl<'de> Deserializer<'de> {
             value,
             span_ctx: Some(span_ctx),
             ignore_binary_tag_for_string: false,
+            preserve_tags: false,
         }
     }
 
@@ -1095,6 +1205,25 @@ impl<'de> Deserializer<'de> {
             value,
             span_ctx,
             ignore_binary_tag_for_string,
+            preserve_tags: false,
+        }
+    }
+
+    /// Internal constructor used by [`from_str_with_config`] /
+    /// [`from_value`] when the caller's `T` is detected as
+    /// [`Value`] via [`std::any::TypeId`]. Sets `preserve_tags`
+    /// so [`Value::Tagged`] survives the data-binding return
+    /// path. See `Deserializer::preserve_tags` for the contract.
+    pub(crate) fn with_options_preserving_tags(
+        value: &'de Value,
+        span_ctx: Option<&'de span_context::SpanContext>,
+        ignore_binary_tag_for_string: bool,
+    ) -> Self {
+        Deserializer {
+            value,
+            span_ctx,
+            ignore_binary_tag_for_string,
+            preserve_tags: true,
         }
     }
 
@@ -1107,6 +1236,7 @@ impl<'de> Deserializer<'de> {
             value,
             span_ctx: self.span_ctx,
             ignore_binary_tag_for_string: self.ignore_binary_tag_for_string,
+            preserve_tags: self.preserve_tags,
         }
     }
 
@@ -1143,8 +1273,26 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Sequence(_) => self.deserialize_seq(visitor),
             Value::Mapping(_) => self.deserialize_map(visitor),
             Value::Tagged(tagged) => {
-                let de = self.descend(tagged.value());
-                de.deserialize_any(visitor)
+                if self.preserve_tags {
+                    // Tag-preserving path (`from_str::<Value>` /
+                    // `from_value::<Value>`): surface the tag via
+                    // a magic-key MapAccess so the outer
+                    // `Value::deserialize` visitor reconstructs
+                    // `Value::Tagged(...)` losslessly.
+                    self.wrap_err(visitor.visit_map(
+                        crate::value::TagPreservingMapAccess::new(
+                            tagged.tag().as_str(),
+                            tagged.value(),
+                        ),
+                    ))
+                } else {
+                    // Default path: typed targets see through the
+                    // tag transparently — `#[derive(Deserialize)]
+                    // struct Foo { x: i32 }` against `!Foo {x: 1}`
+                    // yields `Foo { x: 1 }`.
+                    let de = self.descend(tagged.value());
+                    de.deserialize_any(visitor)
+                }
             }
         }
     }
@@ -1509,6 +1657,10 @@ pub(crate) struct ValueSeqAccess<'de> {
     iter: core::slice::Iter<'de, Value>,
     span_ctx: Option<&'de span_context::SpanContext>,
     ignore_binary_tag_for_string: bool,
+    /// Mirror of the parent [`Deserializer::preserve_tags`] so
+    /// nested `Value::Tagged(...)` nodes inside a sequence
+    /// survive the data-binding return path.
+    preserve_tags: bool,
 }
 
 impl<'de> ValueSeqAccess<'de> {
@@ -1517,6 +1669,7 @@ impl<'de> ValueSeqAccess<'de> {
             iter: seq.iter(),
             span_ctx: de.span_ctx,
             ignore_binary_tag_for_string: de.ignore_binary_tag_for_string,
+            preserve_tags: de.preserve_tags,
         }
     }
 }
@@ -1530,11 +1683,12 @@ impl<'de> SeqAccess<'de> for ValueSeqAccess<'de> {
     {
         match self.iter.next() {
             Some(value) => {
-                let de = Deserializer::with_options(
+                let de = Deserializer {
                     value,
-                    self.span_ctx,
-                    self.ignore_binary_tag_for_string,
-                );
+                    span_ctx: self.span_ctx,
+                    ignore_binary_tag_for_string: self.ignore_binary_tag_for_string,
+                    preserve_tags: self.preserve_tags,
+                };
                 seed.deserialize(de).map(Some)
             }
             None => Ok(None),
@@ -1547,6 +1701,10 @@ pub(crate) struct ValueMapAccess<'de> {
     value: Option<&'de Value>,
     span_ctx: Option<&'de span_context::SpanContext>,
     ignore_binary_tag_for_string: bool,
+    /// Mirror of the parent [`Deserializer::preserve_tags`] so
+    /// nested `Value::Tagged(...)` nodes inside a mapping survive
+    /// the data-binding return path. See `de::Deserializer` docs.
+    preserve_tags: bool,
 }
 
 impl<'de> ValueMapAccess<'de> {
@@ -1556,6 +1714,19 @@ impl<'de> ValueMapAccess<'de> {
             value: None,
             span_ctx: de.span_ctx,
             ignore_binary_tag_for_string: de.ignore_binary_tag_for_string,
+            preserve_tags: de.preserve_tags,
+        }
+    }
+
+    /// Build the child [`Deserializer`] used to read each map
+    /// value — propagates every per-call toggle including
+    /// `preserve_tags`.
+    fn child_de(&self, value: &'de Value) -> Deserializer<'de> {
+        Deserializer {
+            value,
+            span_ctx: self.span_ctx,
+            ignore_binary_tag_for_string: self.ignore_binary_tag_for_string,
+            preserve_tags: self.preserve_tags,
         }
     }
 }
@@ -1570,11 +1741,7 @@ impl<'de> MapAccess<'de> for ValueMapAccess<'de> {
         match self.iter.next() {
             Some((key, value)) => {
                 self.value = Some(value);
-                let de = Deserializer::with_options(
-                    value,
-                    self.span_ctx,
-                    self.ignore_binary_tag_for_string,
-                );
+                let de = self.child_de(value);
                 let key_de: de::value::StrDeserializer<'de, Error> =
                     key.as_str().into_deserializer();
                 de.wrap_err(seed.deserialize(key_de).map(Some))
@@ -1589,11 +1756,7 @@ impl<'de> MapAccess<'de> for ValueMapAccess<'de> {
     {
         match self.value.take() {
             Some(value) => {
-                let de = Deserializer::with_options(
-                    value,
-                    self.span_ctx,
-                    self.ignore_binary_tag_for_string,
-                );
+                let de = self.child_de(value);
                 let res = seed.deserialize(de);
                 de.wrap_err(res)
             }

@@ -38,7 +38,7 @@
 //!
 //!     pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 //!     where
-//!         T: serde::de::DeserializeOwned,
+//!         T: serde::de::DeserializeOwned + 'static,
 //!         D: Deserializer<'de>,
 //!     {
 //!         noyalib::with::singleton_map_with::deserialize_with(
@@ -184,7 +184,7 @@ where
 ///
 /// fn my_deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 /// where
-///     T: DeserializeOwned,
+///     T: DeserializeOwned + 'static,
 ///     D: Deserializer<'de>,
 /// {
 ///     noyalib::with::singleton_map_with::deserialize_with(deserializer, |s| {
@@ -194,7 +194,7 @@ where
 /// ```
 pub fn deserialize_with<'de, T, D, F>(deserializer: D, transform: F) -> Result<T, D::Error>
 where
-    T: DeserializeOwned,
+    T: DeserializeOwned + 'static,
     D: Deserializer<'de>,
     F: Fn(&str) -> String,
 {

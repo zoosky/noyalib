@@ -69,9 +69,14 @@ impl Format for Yaml {
 
     fn from_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, Self::Error> {
         // figment's `Format::from_str` constrains `T:
-        // DeserializeOwned`, which lines up directly with
-        // noyalib's `from_str` HRTB. Forward to the standard
-        // typed-deserialize entry point.
-        crate::from_str::<T>(s).map_err(|e| FigmentError::from(e.to_string()))
+        // DeserializeOwned` only — no `'static`. Bypass noyalib's
+        // public `from_str` (which adds `'static` to enable the
+        // TypeId-driven tag-preserving path for `Value`) and call
+        // the internal non-tag-preserving entry directly.
+        // figment's typed targets are profile shapes, not `Value`,
+        // so the tag-preserving path would never have applied
+        // anyway.
+        crate::de::from_str_typed_no_tag_preserve::<T>(s, &crate::ParserConfig::default())
+            .map_err(|e| FigmentError::from(e.to_string()))
     }
 }

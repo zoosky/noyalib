@@ -773,6 +773,68 @@ impl Error {
         out
     }
 
+    /// Format the error with source context, capped at `max_chars`
+    /// **ASCII characters** — the bridged-channel-friendly variant
+    /// of [`Self::format_with_source`]. Use when the diagnostic is
+    /// destined for a Slack message, a Sentry tag, a structured
+    /// log field, or any sink with a hard length budget.
+    ///
+    /// # Truncation contract
+    ///
+    /// 1. The output is plain ASCII (the renderer already emits no
+    ///    ANSI escapes, so this is a no-op for that axis).
+    /// 2. If the rendered string is `<= max_chars`, returns it
+    ///    unchanged.
+    /// 3. Otherwise truncates at a UTF-8 character boundary
+    ///    `<= max_chars - 3` and appends an `...` ellipsis so the
+    ///    final length is at most `max_chars`.
+    /// 4. `max_chars` smaller than 3 keeps as much of the prefix
+    ///    as fits and drops the ellipsis (so a `max_chars = 2`
+    ///    yields exactly two characters of the message).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let source = "a: [unclosed";
+    /// let err = from_str::<Value>(source).unwrap_err();
+    /// let short = err.format_with_source_truncated(source, 60);
+    /// assert!(short.len() <= 60);
+    /// // Untrimmed output is the same as `format_with_source`:
+    /// let full = err.format_with_source(source);
+    /// let unbounded = err.format_with_source_truncated(source, full.len() + 100);
+    /// assert_eq!(unbounded, full);
+    /// ```
+    #[must_use]
+    pub fn format_with_source_truncated(&self, source: &str, max_chars: usize) -> String {
+        let full = self.format_with_source(source);
+        truncate_with_ellipsis(full, max_chars)
+    }
+
+    /// Format the error with multi-line `radius` context, capped
+    /// at `max_chars`. Same truncation contract as
+    /// [`Self::format_with_source_truncated`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let source = "a:\n  b:\n    c: [unclosed";
+    /// let err = from_str::<Value>(source).unwrap_err();
+    /// let s = err.format_with_source_radius_truncated(source, 1, 80);
+    /// assert!(s.len() <= 80);
+    /// ```
+    #[must_use]
+    pub fn format_with_source_radius_truncated(
+        &self,
+        source: &str,
+        radius: usize,
+        max_chars: usize,
+    ) -> String {
+        let full = self.format_with_source_radius(source, radius);
+        truncate_with_ellipsis(full, max_chars)
+    }
+
     /// Convert the error into a shared Arc pointer. If the error is
     /// already `Error::Shared`, the inner `Arc` is reused without
     /// double-wrapping.
@@ -881,6 +943,41 @@ impl serde::de::Error for Error {
     fn unknown_field(field: &str, _expected: &'static [&'static str]) -> Self {
         Error::UnknownField(field.to_string())
     }
+}
+
+/// Truncate `s` to at most `max_chars` characters, replacing the
+/// dropped suffix with an ASCII `...` ellipsis. Used by the
+/// `*_truncated` formatters to fit error reports into bounded
+/// log / message-bus channels.
+///
+/// Truncation always lands on a UTF-8 character boundary so the
+/// output is a valid `String`. When `max_chars < 3` the ellipsis
+/// is dropped and the function returns whatever prefix fits.
+fn truncate_with_ellipsis(s: String, max_chars: usize) -> String {
+    let len = s.chars().count();
+    if len <= max_chars {
+        return s;
+    }
+    if max_chars < 3 {
+        // No room for `...` — return the longest character-aligned
+        // prefix that fits.
+        let end = s
+            .char_indices()
+            .nth(max_chars)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+        return s[..end].to_owned();
+    }
+    let keep_chars = max_chars - 3;
+    let end = s
+        .char_indices()
+        .nth(keep_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    let mut out = String::with_capacity(end + 3);
+    out.push_str(&s[..end]);
+    out.push_str("...");
+    out
 }
 
 /// A result type where the error is [`Error`].
@@ -1063,4 +1160,37 @@ fn edit_distance(a: &str, b: &str) -> usize {
 #[cfg_attr(noyalib_coverage, coverage(off))]
 pub(crate) fn invariant_violated(msg: &'static str) -> ! {
     unreachable!("invariant violated: {msg}")
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_with_ellipsis;
+
+    #[test]
+    fn under_budget_passthrough() {
+        assert_eq!(truncate_with_ellipsis("hello".into(), 10), "hello");
+        assert_eq!(truncate_with_ellipsis("hello".into(), 5), "hello");
+    }
+
+    #[test]
+    fn over_budget_truncates_with_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("hello world".into(), 8), "hello...");
+        assert_eq!(truncate_with_ellipsis("0123456789".into(), 5), "01...");
+    }
+
+    #[test]
+    fn tiny_budget_drops_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("hello".into(), 0), "");
+        assert_eq!(truncate_with_ellipsis("hello".into(), 1), "h");
+        assert_eq!(truncate_with_ellipsis("hello".into(), 2), "he");
+    }
+
+    #[test]
+    fn utf8_aligned_at_char_boundary() {
+        // Multi-byte chars — truncation must not split codepoints.
+        let s = "café au lait — décaféiné".to_string();
+        let t = truncate_with_ellipsis(s, 10);
+        assert!(t.is_char_boundary(t.len()));
+        assert_eq!(t.chars().count(), 10);
+    }
 }

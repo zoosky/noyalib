@@ -2316,24 +2316,31 @@ fn loader_tagged_float() {
 
 #[test]
 fn loader_tag_primary_empty_suffix() {
-    // Tag with just ! (empty suffix) -> plain string
+    // Tag with just `!` (empty suffix) — surfaces as
+    // `Value::Tagged("!", String("val"))` on the default
+    // tag-preserving deserialise path. Use `untag()` to skip
+    // through the wrapper for the inner string check, mirroring
+    // how a typed `T::deserialize` would see through it.
     let yaml = "! val\n";
     let v: Value = from_str(yaml).unwrap();
-    assert_eq!(v.as_str(), Some("val"));
+    assert!(matches!(v, Value::Tagged(_)), "tag is preserved");
+    assert_eq!(v.untag_ref().as_str(), Some("val"));
 }
 
 #[test]
 fn loader_custom_tag_with_inner_resolution() {
     let yaml = "!mytag 42\n";
     let v: Value = from_str(yaml).unwrap();
-    // Custom tag wraps the resolved inner value
-    // The tag handle is "!" with suffix "mytag" -> full_tag is "!mytag"
-    // This goes to the unknown tag branch which creates Tagged
-    if let Value::Tagged(t) = &v {
-        assert_eq!(t.tag().as_str(), "!mytag");
-        assert_eq!(t.value().as_i64(), Some(42));
-    }
-    // Some configurations may resolve differently, just ensure no panic
+    // Custom tags wrap an *unresolved* inner string scalar — the
+    // YAML 1.2 schema only resolves plain-scalar types when no
+    // tag is present (`!!int 42` resolves; `!mytag 42` keeps the
+    // string form so the tag's downstream consumer can decide
+    // how to interpret it).
+    let Value::Tagged(t) = &v else {
+        panic!("expected Tagged, got {v:?}");
+    };
+    assert_eq!(t.tag().as_str(), "!mytag");
+    assert_eq!(t.value().as_str(), Some("42"));
 }
 
 // --- loader.rs: estimate_value_size with aliases (line 588) ---

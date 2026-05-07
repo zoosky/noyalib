@@ -7,6 +7,64 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — Custom-tag scalar `Value::Tagged` surfacing on the default deserialise path
+
+- **`from_str::<Value>("!Custom 'hi'")`** now returns
+  `Value::Tagged(Tag("!Custom"), Value::String("hi"))` instead
+  of unwrapping to the inner `Value::String("hi")`. The tag
+  survives the data-binding return path so downstream consumers
+  can dispatch on it. Tagged sequences and tagged mappings
+  already worked via the AST loader; this closes the gap for
+  scalars.
+- **Typed targets are unchanged.** A `#[derive(Deserialize)]
+  struct Foo { x: u8 }` against `!Foo {x: 1}` still sees through
+  the tag — that's the correct behaviour for the typed path and
+  the only one that lets schema-tagged inputs deserialise into
+  bare structs.
+- **Mechanism**: the `from_str_with_config` / `from_value` entry
+  points detect `T == Value` via [`std::any::TypeId`] and engage
+  a `preserve_tags` flag on the noyalib `Deserializer`. When the
+  flag is on, tagged values are surfaced through a magic-key
+  MapAccess that `Value::deserialize`'s visitor recognises and
+  reconstructs as `Value::Tagged`. Other Deserializers
+  (`serde_json`, `figment`, FlatMap-shaped flatten extras) never
+  see the magic shape.
+- **API change**: the public `from_str` / `from_str_with_config`
+  / `from_slice*` / `from_reader*` / `from_value` family now
+  carries a `T: 'static` bound (in addition to the existing
+  `for<'de> Deserialize<'de>`). This is a soft constraint that
+  every real-world `DeserializeOwned` type already satisfies —
+  the HRTB itself disallows borrowed lifetimes — and unlocks the
+  TypeId-driven dispatch above. `figment` integration uses a
+  private non-`'static` typed entry-point so its `Format::from_str`
+  signature stays compatible.
+- 4 regression tests retargeted from the old transparent-unwrap
+  behaviour to the new tag-preserving contract:
+  `tests/de.rs::test_deserialize_tagged_value`,
+  `tests/coverage_100.rs::loader_tag_primary_empty_suffix` and
+  `loader_custom_tag_with_inner_resolution`,
+  `tests/coverage_boost.rs::loader_span_custom_tag_empty_suffix`,
+  `tests/tag_registry.rs::unregistered_tag_on_scalar_falls_back_to_string`
+  and `empty_registry_is_no_op`.
+
+### Added — Truncated error formatters
+
+- **`Error::format_with_source_truncated(source, max_chars)`**
+  and **`Error::format_with_source_radius_truncated(source,
+  radius, max_chars)`** — bridge-channel-friendly variants of
+  the existing snippet renderers. Cap rendered diagnostics at a
+  caller-supplied character budget, truncating on a UTF-8
+  character boundary and appending an ASCII `...` ellipsis. Use
+  for log lines, Slack messages, Sentry tags, or any sink with a
+  hard length budget.
+- Truncation contract: `<= max_chars` characters in the
+  output; UTF-8-aligned cut; `...` appended unless `max_chars <
+  3` (in which case the prefix that fits is returned without an
+  ellipsis).
+- Four unit tests cover the under-budget passthrough, the
+  over-budget ellipsis, the tiny-budget ellipsis-drop, and
+  multi-byte character alignment.
+
 ### Fixed — JSON-style UTF-16 surrogate pair pairing in `\uXXXX` escapes
 
 - Double-quoted YAML scalars now accept `𝄞` (high + low

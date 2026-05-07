@@ -2128,10 +2128,16 @@ fn loader_span_custom_tag() {
 
 #[test]
 fn loader_span_custom_tag_empty_suffix() {
+    // Empty-suffix `!` is a *primary* tag handle, so the result
+    // surfaces as `Value::Tagged("!", String("hello"))` on the
+    // default tag-preserving deserialise path. Use `untag_ref()`
+    // to step through the wrapper for the underlying scalar
+    // check.
     let config = ParserConfig::new();
     let yaml = "! hello";
     let v: Value = from_str_with_config(yaml, &config).unwrap();
-    assert_eq!(v.as_str(), Some("hello"));
+    assert!(matches!(v, Value::Tagged(_)), "tag is preserved");
+    assert_eq!(v.untag_ref().as_str(), Some("hello"));
 }
 
 #[test]

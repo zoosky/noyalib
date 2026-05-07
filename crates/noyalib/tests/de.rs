@@ -13,7 +13,7 @@ use serde::Deserialize;
 /// Helper function to test deserialization
 fn test_de<T>(yaml: &str, expected: &T)
 where
-    T: for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug,
+    T: for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug + 'static,
 {
     let deserialized: T = from_str(yaml).unwrap();
     assert_eq!(*expected, deserialized);
@@ -810,11 +810,14 @@ fn test_map_type_mismatch() {
 
 #[test]
 fn test_deserialize_tagged_value() {
-    // Create a tagged value and deserialize it
+    // Custom-tag scalars now surface as `Value::Tagged(tag, inner)`
+    // on the default deserialise path so the tag is queryable
+    // downstream. The inner is the unresolved string scalar
+    // (per YAML 1.2: tags suppress plain-scalar resolution).
     let yaml = "!custom value\n";
     let value: Value = from_str(yaml).unwrap();
-    // Tagged values should deserialize their inner content
-    assert!(value.is_mapping() || value.is_string());
+    assert!(value.is_tagged(), "tag is preserved");
+    assert_eq!(value.untag_ref().as_str(), Some("value"));
 }
 
 #[test]

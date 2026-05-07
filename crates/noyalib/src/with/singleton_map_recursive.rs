@@ -121,7 +121,7 @@ where
 /// ```
 pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
-    T: DeserializeOwned,
+    T: DeserializeOwned + 'static,
     D: Deserializer<'de>,
 {
     use serde::Deserialize;

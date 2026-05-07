@@ -1338,6 +1338,16 @@ pub fn check_for_tag<T: fmt::Display>(value: &T) -> MaybeTag<String> {
     }
 }
 
+/// Magic key in the [`TagPreservingMapAccess`] map shape that
+/// signals "the next entry is the tag string". Recognised by
+/// `Value::deserialize`'s visitor on the tag-preserving path
+/// driven by [`crate::de::Deserializer::preserve_tags`].
+pub(crate) const TAGGED_VALUE_FIELD_TAG: &str = "$__noyalib_tag";
+
+/// Magic key in the [`TagPreservingMapAccess`] map shape that
+/// signals "the next entry is the inner [`Value`]".
+pub(crate) const TAGGED_VALUE_FIELD_VALUE: &str = "$__noyalib_value";
+
 /// A YAML tag.
 ///
 /// Tags are used in YAML to denote the type of a value.
@@ -1609,6 +1619,91 @@ impl<'de> serde::de::MapAccess<'de> for TaggedValueMapAccess<'de> {
         match self.value.take() {
             Some(value) => seed.deserialize(value),
             None => Err(serde::de::Error::custom("value is missing")),
+        }
+    }
+}
+
+/// MapAccess emitted on the [`TAGGED_VALUE_TYPE_NAME`] code path.
+///
+/// Surfaces a tagged scalar as a two-entry map with magic keys
+/// (`$__noyalib_tag` → tag string; `$__noyalib_value` → inner
+/// `Value`) so [`Value`]'s own visitor can pattern-match the
+/// shape and reconstruct `Value::Tagged(...)` on the
+/// data-binding return path. Distinct from the existing
+/// [`TaggedValueMapAccess`] (which uses the *real* tag as the
+/// map key for typed-enum deserialise) to avoid colliding with
+/// user data that legitimately has a key of the same name.
+pub(crate) struct TagPreservingMapAccess<'de> {
+    state: TagPreservingState<'de>,
+}
+
+#[derive(Clone, Copy)]
+enum TagPreservingState<'de> {
+    EmitTagKey { tag: &'de str, value: &'de Value },
+    EmitTagValue { tag: &'de str, value: &'de Value },
+    EmitValueKey { value: &'de Value },
+    EmitValueValue { value: &'de Value },
+    Done,
+}
+
+impl<'de> TagPreservingMapAccess<'de> {
+    pub(crate) fn new(tag: &'de str, value: &'de Value) -> Self {
+        Self {
+            state: TagPreservingState::EmitTagKey { tag, value },
+        }
+    }
+}
+
+impl<'de> serde::de::MapAccess<'de> for TagPreservingMapAccess<'de> {
+    type Error = crate::Error;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> crate::Result<Option<K::Value>>
+    where
+        K: serde::de::DeserializeSeed<'de>,
+    {
+        match self.state {
+            TagPreservingState::EmitTagKey { tag, value } => {
+                self.state = TagPreservingState::EmitTagValue { tag, value };
+                seed.deserialize(serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(
+                    TAGGED_VALUE_FIELD_TAG,
+                ))
+                .map(Some)
+            }
+            TagPreservingState::EmitValueKey { value } => {
+                self.state = TagPreservingState::EmitValueValue { value };
+                seed.deserialize(serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(
+                    TAGGED_VALUE_FIELD_VALUE,
+                ))
+                .map(Some)
+            }
+            TagPreservingState::Done => Ok(None),
+            // Calling next_key without consuming the previous value
+            // is a serde misuse — surface as a custom error rather
+            // than panicking.
+            TagPreservingState::EmitTagValue { .. } | TagPreservingState::EmitValueValue { .. } => {
+                Err(serde::de::Error::custom(
+                    "TagPreservingMapAccess: next_key called before next_value",
+                ))
+            }
+        }
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> crate::Result<V::Value>
+    where
+        V: serde::de::DeserializeSeed<'de>,
+    {
+        match self.state {
+            TagPreservingState::EmitTagValue { tag, value } => {
+                self.state = TagPreservingState::EmitValueKey { value };
+                seed.deserialize(serde::de::value::BorrowedStrDeserializer::<crate::Error>::new(tag))
+            }
+            TagPreservingState::EmitValueValue { value } => {
+                self.state = TagPreservingState::Done;
+                seed.deserialize(value)
+            }
+            _ => Err(serde::de::Error::custom(
+                "TagPreservingMapAccess: next_value called out of order",
+            )),
         }
     }
 }
@@ -3111,7 +3206,50 @@ impl<'de> Deserialize<'de> for Value {
             where
                 A: MapAccess<'de>,
             {
+                // Tag-preserving fast path: noyalib's own
+                // [`crate::de::Deserializer::deserialize_any`]
+                // routes `Value::Tagged(...)` through a
+                // [`TagPreservingMapAccess`] when its
+                // `preserve_tags` flag is on (set automatically
+                // for `from_str::<Value>` / `from_value::<Value>`
+                // — see [`crate::de::is_value_target`]). The first
+                // key of that map is the [`TAGGED_VALUE_FIELD_TAG`]
+                // sentinel; detect it and reconstruct
+                // `Value::Tagged` so the tag survives the
+                // data-binding return path.
+                //
+                // Other Deserializers (serde_json, FlatMap, …)
+                // never see this magic shape, so this branch is
+                // strictly additive.
+                let first_key: Option<String> = map.next_key()?;
+                if let Some(k) = first_key.as_deref() {
+                    if k == TAGGED_VALUE_FIELD_TAG {
+                        let tag_str: String = map.next_value()?;
+                        let second_key: String = map.next_key()?.ok_or_else(|| {
+                            <A::Error as serde::de::Error>::custom(
+                                "tag-preserving map missing $__noyalib_value entry",
+                            )
+                        })?;
+                        if second_key != TAGGED_VALUE_FIELD_VALUE {
+                            return Err(<A::Error as serde::de::Error>::custom(format!(
+                                "tag-preserving map: expected `{}`, got `{}`",
+                                TAGGED_VALUE_FIELD_VALUE, second_key
+                            )));
+                        }
+                        let inner: Value = map.next_value()?;
+                        return Ok(Value::Tagged(Box::new(TaggedValue::new(
+                            Tag::new(tag_str),
+                            inner,
+                        ))));
+                    }
+                }
+                // Regular mapping path — collect every (k, v) pair
+                // including the (k, v) we already consumed.
                 let mut mapping = Mapping::new();
+                if let Some(k) = first_key {
+                    let v: Value = map.next_value()?;
+                    let _ = mapping.insert(k, v);
+                }
                 while let Some((key, value)) = map.next_entry::<String, Value>()? {
                     let _ = mapping.insert(key, value);
                 }

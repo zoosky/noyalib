@@ -83,12 +83,18 @@ fn registered_tag_on_mapping_strips_and_deserializes() {
 
 #[test]
 fn unregistered_tag_on_scalar_falls_back_to_string() {
-    // Without the registry, the AST resolver preserves unknown tags by
-    // keeping the scalar as its literal string form. This is the legacy
-    // behaviour the registry opts *out of*.
+    // Without the registry, the AST resolver surfaces unknown
+    // custom tags as `Value::Tagged(tag, String(<inner>))` so the
+    // tag is queryable downstream. The registry opts *out of*
+    // that wrapper and lets the typed target see through the
+    // tag — the path the strongly-typed `Celsius` test uses.
     let cfg = ParserConfig::new();
     let v: noyalib::Value = from_str_with_config("!Other 42", &cfg).unwrap();
-    assert_eq!(v.as_str(), Some("42"));
+    let noyalib::Value::Tagged(t) = &v else {
+        panic!("expected Tagged, got {v:?}");
+    };
+    assert_eq!(t.tag().as_str(), "!Other");
+    assert_eq!(t.value().as_str(), Some("42"));
 }
 
 // ── Registry does not affect core YAML tags ──────────────────────────
@@ -108,10 +114,15 @@ fn core_tags_unaffected_by_registry() {
 #[test]
 fn empty_registry_is_no_op() {
     let cfg = ParserConfig::new().tag_registry(Arc::new(TagRegistry::new()));
-    // Empty registry is equivalent to no registry — same AST-fallback
-    // resolution as `unregistered_tag_on_scalar_falls_back_to_string`.
+    // Empty registry is equivalent to no registry — same AST
+    // routing + tag-preserving deserialise. The custom tag
+    // surfaces as `Value::Tagged`; opt out by registering it.
     let v: noyalib::Value = from_str_with_config("!Other 42", &cfg).unwrap();
-    assert_eq!(v.as_str(), Some("42"));
+    let noyalib::Value::Tagged(t) = &v else {
+        panic!("expected Tagged, got {v:?}");
+    };
+    assert_eq!(t.tag().as_str(), "!Other");
+    assert_eq!(t.value().as_str(), Some("42"));
 }
 
 // ── Shared registry across configs ───────────────────────────────────
