@@ -163,18 +163,25 @@ delimited JSON-RPC 2.0.
 
 ## Tools exposed
 
+The v0.0.1 server registers two file-oriented tools — both
+operate on a YAML file at `file: <path>`, not on inline source
+strings, so an agent's edits land on disk losslessly:
+
 | Tool | Arguments | Returns |
 |---|---|---|
-| `parse` | `{ yaml: string }` | The parsed value as JSON. Surfaces parse errors with line / column. |
-| `format` | `{ yaml: string }` | The same document re-emitted via the CST formatter. Comments + indentation preserved. |
-| `get` | `{ yaml: string, path: string }` | The scalar at the dotted path (e.g. `server.port`). |
-| `set` | `{ yaml: string, path: string, value: string }` | The document with the path's value rewritten. Surrounding bytes untouched. |
-| `validate` | `{ yaml: string, schema?: string }` | `{ ok: true }` or a structured violation list. Optional JSON Schema 2020-12 contract. |
+| `noyalib_get` | `{ file: string, path: string }` | The raw source fragment at the dotted/indexed path (e.g. `server.host`, `items[0].name`). No re-quoting; no canonicalisation. |
+| `noyalib_set` | `{ file: string, path: string, value: string }` | The file rewritten via the lossless CST so only the touched span changes; comments, blank lines, and sibling formatting survive byte-for-byte. The `value` is a YAML fragment (`0.0.2`, `"hello"`, `[1, 2, 3]`); a parse failure leaves the file unchanged. |
 
-Every tool's full input + output schema lives in the response
-to `tools/list`. The server also supports the
-`notifications/cancelled` and `notifications/initialized`
-notifications.
+Each tool's full input schema lives in the response to
+`tools/list`. The server also handles the standard
+`initialize` / `initialized` / `notifications/cancelled`
+lifecycle.
+
+Format / parse / validate are not exposed as MCP tools today —
+they're available via the [`noya-cli`](../noya-cli/README.md)
+binaries (`noyafmt`, `noyavalidate`) and the
+[`noyalib`](../noyalib/README.md) library API. Promotion to
+first-class MCP tools is on the v0.0.2+ roadmap.
 
 ---
 

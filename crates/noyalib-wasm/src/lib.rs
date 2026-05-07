@@ -64,6 +64,10 @@ impl WasmDocument {
     }
 
     /// Replace the bytes at `start..end` with `replacement`.
+    ///
+    /// Bound on the JS side as `replaceSpan(start, end, replacement)`
+    /// per JS naming conventions.
+    #[wasm_bindgen(js_name = replaceSpan)]
     pub fn replace_span(
         &mut self,
         start: usize,
@@ -84,6 +88,10 @@ impl WasmDocument {
     }
 
     /// Get the raw source fragment at a dotted path.
+    ///
+    /// Bound on the JS side as `getSource(path)` per JS naming
+    /// conventions.
+    #[wasm_bindgen(js_name = getSource)]
     pub fn get_source(&self, path: &str) -> JsValue {
         match core::document_get_source(&self.inner, path) {
             Some(s) => JsValue::from_str(s),
@@ -91,7 +99,11 @@ impl WasmDocument {
         }
     }
 
-    /// Get the byte range (start, end) for the value at a dotted path.
+    /// Get the byte range `{ start, end }` for the value at a dotted path.
+    ///
+    /// Bound on the JS side as `spanAt(path)` per JS naming
+    /// conventions.
+    #[wasm_bindgen(js_name = spanAt)]
     pub fn span_at(&self, path: &str) -> Result<JsValue, JsError> {
         match core::document_span_at(&self.inner, path) {
             Some((start, end)) => to_js(&WasmSpan { start, end })
@@ -101,6 +113,10 @@ impl WasmDocument {
     }
 
     /// Set a value at a dotted path using a JS object.
+    ///
+    /// Bound on the JS side as `setValue(path, value)` per JS naming
+    /// conventions.
+    #[wasm_bindgen(js_name = setValue)]
     pub fn set_value(&mut self, path: &str, value: JsValue) -> Result<(), JsError> {
         let v: noyalib::Value =
             serde_wasm_bindgen::from_value(value).map_err(|e| JsError::new(&e.to_string()))?;
@@ -120,6 +136,10 @@ impl WasmDocument {
     /// Returns `{ before: string[], inline: string | null }` so the
     /// caller can surface human-authored doc-comments alongside
     /// values — the demo that motivates the entire CST architecture.
+    ///
+    /// Bound on the JS side as `commentsAt(path)` per JS naming
+    /// conventions.
+    #[wasm_bindgen(js_name = commentsAt)]
     pub fn comments_at(&self, path: &str) -> Result<JsValue, JsError> {
         let (before, inline) = core::document_comments_at(&self.inner, path);
         #[derive(Serialize)]
@@ -158,14 +178,16 @@ pub fn stringify(value: JsValue) -> Result<String, JsError> {
     core::value_to_yaml(&v).map_err(|e| JsError::new(&e.to_string()))
 }
 
-/// Validate YAML against the JSON schema.
-#[wasm_bindgen]
+/// Validate YAML against the JSON-compatible schema. Bound on the
+/// JS side as `validateJson(yaml)` per JS naming conventions.
+#[wasm_bindgen(js_name = validateJson)]
 pub fn validate_json(yaml: &str) -> Result<bool, JsError> {
     core::validate_yaml_json(yaml).map_err(|e| JsError::new(&e.to_string()))
 }
 
-/// Get a value at a dotted path from a YAML string.
-#[wasm_bindgen]
+/// Get a value at a dotted path from a YAML string. Bound on the
+/// JS side as `getPath(yaml, path)` per JS naming conventions.
+#[wasm_bindgen(js_name = getPath)]
 pub fn get_path(yaml: &str, path: &str) -> Result<JsValue, JsError> {
     match core::yaml_get_path(yaml, path).map_err(|e| JsError::new(&e.to_string()))? {
         Some(v) => to_js(&v).map_err(|e| JsError::new(&e.to_string())),

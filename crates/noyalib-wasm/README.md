@@ -65,21 +65,28 @@ wasm-pack build --release --target bundler
 import init, {
   parse,
   stringify,
-  validate_json,
-  Document,
+  validateJson,
+  getPath,
+  merge,
+  WasmDocument,
 } from "@noyalib/noyalib-wasm";
 
 await init();          // load the WASM blob
 
-// Plain parse / stringify — like js-yaml.
+// Plain parse / stringify — like js-yaml. Mappings come back as
+// plain JS Objects (not `Map`), so dotted property access works.
 const obj = parse("host: api.example.com\nport: 8080\n");
+console.log(obj.host); // "api.example.com"
 const yaml = stringify(obj);
 
-// Schema validation.
-const valid = validate_json(obj, schema);
+// Indexed read without going through `parse`.
+const port = getPath("port: 8080\n", "port"); // 8080
+
+// JSON-compatible YAML 1.2 schema check.
+validateJson("a: 1\nb: [2, 3]\n"); // true
 
 // Lossless CST edit — comments + indentation preserved.
-const doc = Document.parse(source);
+const doc = new WasmDocument(source);
 doc.set("server.port", "9090");
 fs.writeFileSync("config.yaml", doc.toString());
 ```
@@ -120,16 +127,33 @@ Other differences worth knowing about:
 
 ## Surface
 
+All exports are camelCase, matching JS conventions.
+
+### Free functions
+
 | Export | What it does |
 |---|---|
-| `parse(yaml)` | Parse a YAML document into a JS value. Mirrors `js-yaml`'s `load`. |
-| `stringify(value)` | Serialise a JS value back to YAML. |
-| `validate_json(value, schema)` | Validate a value against a JSON Schema 2020-12 contract. Returns `true` / `false`; the structured-error variant is on the roadmap. |
-| `Document.parse(yaml)` | Open a lossless CST. Returns a `Document` handle. |
-| `Document.set(path, fragment)` | Surgically rewrite a value at a dotted path. The fragment may be a literal scalar (`"9090"`) or a YAML-shaped string. |
-| `Document.get(path)` | Read a value at a dotted path. Returns `null` if missing. |
-| `Document.toString()` | Serialise the CST back to bytes. Byte-identical to the parsed source if no edits were made. |
-| `merge(a, b)` | Deep-merge two YAML documents. Delegates to `noyalib::Value::merge`. |
+| `parse(yaml: string): any` | Parse a YAML document into a JS value. Mappings become plain Objects; sequences become Arrays; scalars become numbers / strings / booleans / null. Mirrors `js-yaml`'s `load`. |
+| `stringify(value: any): string` | Serialise a JS value back to YAML. |
+| `validateJson(yaml: string): boolean` | Validate that the document conforms to the YAML 1.2 JSON-compatible schema (only types JSON allows: null / bool / number / string / array / object). Returns `true` / `false`; structural JSON Schema 2020-12 validation is on the `noyavalidate` CLI roadmap. |
+| `getPath(yaml: string, path: string): any` | Indexed read without going through `parse`. Dotted paths (`"server.host"`); returns `null` if missing. |
+| `merge(base: string, override: string): string` | Deep-merge two YAML documents. Delegates to `noyalib::Value::merge`. |
+
+### `WasmDocument` class — lossless CST
+
+Construct with `new WasmDocument(yaml)`. Every method preserves
+comments and formatting around untouched spans byte-faithfully.
+
+| Method | What it does |
+|---|---|
+| `toString(): string` | Re-emit. Byte-identical to the parsed source if no edits were made. |
+| `get(path: string): any` | Parsed value at a dotted path. Returns `null` if missing. |
+| `getSource(path: string): string \| null` | Raw source fragment at a dotted path (no re-quoting / canonicalisation). |
+| `set(path: string, fragment: string): void` | Surgically rewrite a value at a dotted path. The fragment is a YAML-shaped string (`"9090"`, `"[1,2,3]"`, …). |
+| `setValue(path: string, value: any): void` | Same as `set` but accepts a JS value instead of a YAML fragment. |
+| `spanAt(path: string): { start: number, end: number } \| null` | Byte range of the value at a dotted path. |
+| `commentsAt(path: string): { before: string[], inline: string \| null }` | Comments associated with the node at a path. |
+| `replaceSpan(start: number, end: number, replacement: string): void` | Primitive byte replacement. |
 
 Every function is `async` only via `init()` — once the WASM
 blob is loaded, individual calls are synchronous.

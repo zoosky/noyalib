@@ -581,7 +581,7 @@ Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architectur
 | **Anchors** | Anchors (`&`), aliases (`*`), and merge keys (`<<`). Smart pointer wrappers: `RcAnchor`, `ArcAnchor`, `RcWeakAnchor`, `ArcWeakAnchor`. |
 | **Security** | 7 configurable limits in `ParserConfig`: depth, document size, alias expansions, mapping keys, sequence length, duplicate key policy, strict booleans. `ParserConfig::strict()` for untrusted input. Billion-laughs safe via `max_alias_expansions` with `saturating_add` overflow protection. |
 | **Compat** | YAML 1.1 legacy boolean mode (`legacy_booleans`): resolves `yes`/`no`/`on`/`off`/`y`/`n` as booleans for Docker Compose, GitHub Actions, and other YAML 1.1 tooling. Solves the "Norway problem". |
-| **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings: `parse()`, `stringify()`, `get_path()`, `validate_json()`, `merge()`. Browser demo included. |
+| **WASM** | Compiles to `wasm32-unknown-unknown`. wasm-bindgen bindings (camelCase per JS conventions): `parse()`, `stringify()`, `getPath()`, `validateJson()`, `merge()`, plus the `WasmDocument` class (`toString()`, `get()`, `getSource()`, `set()`, `setValue()`, `spanAt()`, `commentsAt()`, `replaceSpan()`). Browser demo included. |
 | **Errors** | Source locations on all parse errors. `format_with_source()` renders rustc-style diagnostics with `-->` pointer. `#[track_caller]` on all Index panics. `miette::Diagnostic` integration included (`--features miette`) for rich terminal reports with error codes, actionable help text, and source spans. |
 | **no\_std** | Full `#![no_std]` support with `alloc`. Use `default-features = false`. Core parsing (`from_str`, `to_string`, `Value`, schemas) works without `std`. I/O functions (`from_reader`, `to_writer`), `Spanned<T>` deserialization (TLS), and the CST module require the `std` feature. CI enforces `cargo check --no-default-features` on every push. |
 | **CST editing** | Side-table CST (`noyalib::cst`) for byte-faithful round-tripping. `Document::set("server.port", "9090")` rewrites only the touched bytes; comments, blank lines, and sibling formatting survive. `Document::entry(path)` is the chainable mutable handle (16 methods covering set / set_value / remove / insert / insert_value / push_back / insert_after / and_modify / or_insert / or_insert_with / or_insert_value / get / span_at / comments / exists / nested entry, plus smart `items[0]` path composition). `Document::indent_unit()` detects 2-/3-/4-space conventions so inserts conform to the file's existing style. |
@@ -1308,16 +1308,28 @@ posture is built around closing each of those vectors at the
 custom-tag mechanism (`!Foo`, `!!python/object`) is the historical
 RCE vector — a malicious tag can load arbitrary code in legacy
 parsers. noyalib only deserialises into Rust types you've defined
-at compile time, with `#[derive(Deserialize)]`. Custom tags are
-either:
+at compile time, with `#[derive(Deserialize)]`.
 
-- Surfaced as `Value::Tagged(tag, inner)` — pure data, no code path
-  invoked.
-- Routed through an explicit `TagRegistry` you opt into — every
-  recognised tag is one you've named.
+In v0.0.1, custom tags on scalar values are coerced to the
+underlying scalar's resolved type (typically a string for non-core
+tags) — the data flows through, the tag itself is dropped on the
+default `from_str::<Value>` path. To act on tags, opt into a
+[`TagRegistry`](https://docs.rs/noyalib/latest/noyalib/struct.TagRegistry.html):
+every recognised tag is one you've explicitly named. Tagged
+sequences and mappings already route through the AST loader and
+surface as [`Value::Tagged`].
+
+Promoting scalar tag handling to first-class
+[`Value::Tagged`](https://docs.rs/noyalib/latest/noyalib/enum.Value.html#variant.Tagged)
+on the default deserialise path (`!Custom 'hello'` →
+`Value::Tagged("!Custom", String("hello"))`) is on the v0.0.2
+roadmap; track it via
+[issue #N/A](https://github.com/sebastienrousseau/noyalib/issues).
 
 There is no path from a parsed YAML document to running attacker-
 chosen code. Period.
+
+[`Value::Tagged`]: https://docs.rs/noyalib/latest/noyalib/enum.Value.html#variant.Tagged
 
 ### Configurable resource budgets
 

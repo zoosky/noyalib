@@ -153,6 +153,7 @@ impl KeyInterner {
     /// let _ = interner.intern("port");
     /// assert!(interner.get("port").is_some());
     /// ```
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<Arc<str>> {
         self.table
             .get_key_value(key)

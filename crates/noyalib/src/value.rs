@@ -169,6 +169,7 @@ impl Mapping {
     }
 
     /// Returns an iterator over the key-value pairs.
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, String, Value> {
         self.0.iter()
     }
@@ -179,11 +180,13 @@ impl Mapping {
     }
 
     /// Returns an iterator over the keys.
+    #[must_use]
     pub fn keys(&self) -> Keys<'_, String, Value> {
         self.0.keys()
     }
 
     /// Returns an iterator over the values.
+    #[must_use]
     pub fn values(&self) -> Values<'_, String, Value> {
         self.0.values()
     }
@@ -615,6 +618,7 @@ impl MappingAny {
     }
 
     /// Returns an iterator over the key-value pairs.
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, Value, Value> {
         self.0.iter()
     }
@@ -625,11 +629,13 @@ impl MappingAny {
     }
 
     /// Returns an iterator over the keys.
+    #[must_use]
     pub fn keys(&self) -> Keys<'_, Value, Value> {
         self.0.keys()
     }
 
     /// Returns an iterator over the values.
+    #[must_use]
     pub fn values(&self) -> Values<'_, Value, Value> {
         self.0.values()
     }
