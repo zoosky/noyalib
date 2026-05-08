@@ -283,6 +283,23 @@ python3 -m http.server     # or any static-file server
 
 ---
 
+## Compatibility
+
+**MSRV: Rust 1.85.0** stable. The `wasm-bindgen` 0.2 ecosystem
+floors the toolchain at 1.85; the core `noyalib` library
+itself stays at 1.75. CI verifies the floor on every PR via
+the `Per-crate MSRV` workflow job. The bump policy lives in
+[`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#1-msrv-minimum-supported-rust-version).
+
+**Tier-1 WASM targets** (CI-verified each PR via
+`wasm-pack test --node`): `wasm32-unknown-unknown` produced
+under every `wasm-pack` mode — `bundler` (Webpack, Rollup,
+esbuild, Vite), `web` (native ES module), `nodejs` (CJS),
+`deno`, `no-modules`. Cloudflare Workers, Deno, and Bun
+consume the `bundler` target.
+
+---
+
 ## Documentation
 
 - **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):

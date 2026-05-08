@@ -10,6 +10,23 @@
 //! `cargo test` on the rlib side; the bindings in this module are
 //! the thin JsValue conversion shells.
 //!
+//! # Cargo features
+//!
+//! - **`wasm-opt`** *(optional, off by default)* — enables a
+//!   post-build pass that re-runs Binaryen's `wasm-opt -O3 -s`
+//!   on the produced `.wasm` to shrink the bundle (~17% smaller
+//!   on `noyalib-wasm`). Pulls in no extra Rust dependencies; it
+//!   is a build-script feature only. Disable for fastest dev
+//!   builds.
+//!
+//! Optional `noyalib` features pulled in by a downstream wasm-pack
+//! consumer (`schema`, `parallel` …) compile against the
+//! `wasm32-unknown-unknown` target only when their dep tree is
+//! WASM-clean — `parallel` (rayon) requires
+//! `--target wasm32-wasip1-threads`, not the default browser
+//! target. The canonical `noyalib` feature matrix lives in
+//! [`crates/noyalib/src/lib.rs`](https://docs.rs/noyalib).
+//!
 //! # MSRV
 //!
 //! **Rust 1.85.0** stable. The `wasm-bindgen` 0.2 ecosystem
@@ -20,11 +37,29 @@
 //! # Panics
 //!
 //! Public bindings do not panic on well-formed input. Rust-side
-//! errors are converted to `JsError` values that JavaScript
-//! receives as a thrown `Error`. WASM panic *can* terminate
-//! the WebAssembly instance (panic = abort under `[profile.release]`);
-//! integration with `console_error_panic_hook` is wired in
-//! `examples/` so debug builds surface a JS-readable trace.
+//! parse / serialise errors are converted to `JsError` values
+//! that JavaScript receives as a thrown `Error`; the bindings
+//! never `unwrap` user-supplied data. The remaining sources of
+//! panic on the WebAssembly instance are environmental, not
+//! logic, and are documented here for completeness:
+//!
+//! - **WASM linear-memory exhaustion (OOM).** Allocating a Vec
+//!   or String larger than the host's WASM memory limit aborts
+//!   the instance. Browsers default to a 4 GiB cap on
+//!   `wasm32-unknown-unknown`. Bound `noyalib` resource use
+//!   ahead of time via `ParserConfig::strict()` or explicit
+//!   `max_*` budgets to fail with a structured `Error::Budget`
+//!   instead of an OOM abort.
+//! - **Stack overflow.** Pathologically deep YAML (>4096 nested
+//!   nodes by default) is rejected with `Error::RecursionLimitExceeded`
+//!   long before the WASM stack overflows; deliberately
+//!   misconfigured `max_depth` may overflow the host stack.
+//! - **Host abort on `panic = abort`.** Every release build
+//!   uses `panic = abort` (per `Cargo.toml`), so any logic-level
+//!   panic terminates the WebAssembly instance with no chance
+//!   of `catch_unwind`. `console_error_panic_hook` is wired in
+//!   `examples/` so debug builds surface a JS-readable trace
+//!   before the abort.
 //!
 //! # Errors
 //!
@@ -70,6 +105,19 @@
 //! not expose it). Resource-limit gates are inherited from
 //! `noyalib`'s `ParserConfig` defaults. Full posture:
 //! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # API stability and SemVer
+//!
+//! Pre-1.0 (`0.0.x`): the JavaScript-facing API (`parse`,
+//! `stringify`, `WasmDocument` shape, JSON shape of returned
+//! values) is **stable** within a 0.0.x line — bug fixes only.
+//! Adding a new method or option is allowed within a 0.0.x
+//! bump; removing or renaming an exported binding, or changing
+//! the JSON shape of a returned object, is held to a 0.x bump
+//! (e.g. 0.0.x → 0.1.0). The Rust library surface (`WasmDocument`,
+//! `core::*`) is covered by the workspace SemVer policy in
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#2-semver--api-stability).
+//! `cargo-semver-checks` runs in CI on every PR.
 //!
 //! # Documentation
 //!

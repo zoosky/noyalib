@@ -18,6 +18,18 @@
 //!   `clap_mangen` to generate completions and man pages
 //!   respectively.
 //!
+//! # Cargo features
+//!
+//! This crate exposes no optional features of its own — both
+//! binaries always ship with the same dispatch surface. The
+//! transitive `noyalib` dependency is consumed with its **default
+//! feature set** (`std` + the always-on parser / serializer /
+//! Value / CST). To opt into optional `noyalib` features
+//! (`schema`, `parallel`, `miette`, …), pin the version directly
+//! and select features at the consuming binary's `Cargo.toml`;
+//! the `noyalib` feature matrix is canonicalised in
+//! [`crates/noyalib/src/lib.rs`](https://docs.rs/noyalib).
+//!
 //! # MSRV
 //!
 //! **Rust 1.85.0** stable. The `clap_builder` 4.6 dep pulls
@@ -58,6 +70,19 @@
 //! concurrent readers always see either the pre-edit or the
 //! post-edit contents — never a half-written truncation.
 //!
+//! # Performance
+//!
+//! Each YAML file in argv flows through the underlying
+//! `noyalib::cst::parse_document` call (formatter) or
+//! `noyalib::from_str::<Value>` (validator) — both run in
+//! `O(n)` over input bytes. Argv-batch processing is sequential
+//! by design (deterministic exit code on the first failure);
+//! pipelines that need parallelism should fan out via `xargs -P`
+//! at the shell layer rather than burying threading in the CLI.
+//! End-to-end overhead per file: parse + serialise dominates;
+//! argv parsing and file I/O are negligible (<1 ms) for files
+//! up to a few MiB.
+//!
 //! # Security
 //!
 //! `#![forbid(unsafe_code)]` (workspace lint). No FFI. No
@@ -67,6 +92,20 @@
 //! defaults; pass `--strict` to opt into the tighter
 //! `ParserConfig::strict()` preset. Full posture:
 //! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # API stability and SemVer
+//!
+//! Pre-1.0 (`0.0.x`): the argv contract (long flags, exit
+//! codes, stdin/stdout shape) is **stable** within a 0.0.x
+//! line — bug fixes only. Adding a new flag is allowed within
+//! a 0.0.x bump; removing or renaming a flag, or repurposing
+//! an exit code, is held to a 0.x bump (e.g. 0.0.x → 0.1.0).
+//! The Rust library surface (`NoyafmtCli`, `NoyavalidateCli`,
+//! `noyafmt_command`, `noyavalidate_command`) is also covered by
+//! the workspace SemVer policy in
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#2-semver--api-stability).
+//! `cargo-semver-checks` runs in CI on every PR and blocks
+//! accidental SemVer-incompatible changes.
 //!
 //! # Documentation
 //!

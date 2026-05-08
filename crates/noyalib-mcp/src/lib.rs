@@ -9,6 +9,17 @@
 //! directly so coverage no longer depends on standing up a real
 //! stdio process.
 //!
+//! # Cargo features
+//!
+//! This crate exposes no optional features; the MCP tool set
+//! (`noyalib_get`, `noyalib_set`) is fixed. Optional `noyalib`
+//! features pulled in by a downstream packager (`schema`,
+//! `parallel`, …) do not change the MCP wire surface — they
+//! only affect what `noyalib::Error` messages can appear inside
+//! tool-call error envelopes. The canonical `noyalib` feature
+//! matrix lives in
+//! [`crates/noyalib/src/lib.rs`](https://docs.rs/noyalib).
+//!
 //! # MSRV
 //!
 //! **Rust 1.75.0** stable — same as the core `noyalib` library.
@@ -57,6 +68,18 @@
 //! fix for the historical Windows-only `tool_call_set_preserves_comments`
 //! flake.
 //!
+//! # Performance
+//!
+//! Each `tools/call` round-trip goes through one
+//! `noyalib::cst::parse_document` (`O(n)` over input bytes)
+//! and, for `noyalib_set`, one `Document::to_string` emit
+//! (`O(n)` over output bytes). JSON-RPC line framing is
+//! amortised constant-time per message. Tool calls do **not**
+//! cache the parsed CST between requests — every call is a
+//! fresh parse so concurrent edits from outside the MCP server
+//! are always observed. Typical tool-call latency on a 100 KB
+//! YAML file: 1–3 ms parse + emit on commodity hardware.
+//!
 //! # Security
 //!
 //! `#![forbid(unsafe_code)]`. No FFI. No network I/O —
@@ -68,6 +91,20 @@
 //! Resource-limit gates are inherited from `noyalib`'s
 //! `ParserConfig` defaults. Full posture:
 //! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # API stability and SemVer
+//!
+//! Pre-1.0 (`0.0.x`): the MCP wire contract (tool names,
+//! input-schema shapes, error code ranges, `protocolVersion`
+//! string) is **stable** within a 0.0.x line — bug fixes only.
+//! Adding a new tool is allowed within a 0.0.x bump; removing
+//! or renaming a tool, or repurposing an error code, is held
+//! to a 0.x bump (e.g. 0.0.x → 0.1.0). The Rust library
+//! surface (`handle_message`, `dispatch`, `error_str`,
+//! `Request`, `Response`, `ErrorResponse`, `HandleOutcome`) is
+//! covered by the workspace SemVer policy in
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#2-semver--api-stability).
+//! `cargo-semver-checks` runs in CI on every PR.
 //!
 //! # Documentation
 //!

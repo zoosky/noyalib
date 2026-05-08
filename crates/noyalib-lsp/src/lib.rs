@@ -11,6 +11,17 @@
 //! reach the same handlers directly so coverage does not depend on
 //! standing up a real LSP client.
 //!
+//! # Cargo features
+//!
+//! This crate exposes no optional features; the LSP capability
+//! set is fixed at `textDocumentSync` (full), formatting, and
+//! hover. Optional `noyalib` features (`schema`, `parallel`, …)
+//! pulled in by a downstream binary do not change this crate's
+//! wire surface — they only affect what `noyalib::Error` messages
+//! are produced inside diagnostics. The canonical `noyalib`
+//! feature matrix lives in
+//! [`crates/noyalib/src/lib.rs`](https://docs.rs/noyalib).
+//!
 //! # MSRV
 //!
 //! **Rust 1.85.0** stable. The `tower-lsp` and async deps floor
@@ -67,6 +78,19 @@
 //! are inherited from `noyalib`'s `ParserConfig` defaults.
 //! Full posture:
 //! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # API stability and SemVer
+//!
+//! Pre-1.0 (`0.0.x`): the LSP wire contract (method names,
+//! capability flags, JSON-RPC error code ranges, document store
+//! semantics) is **stable** within a 0.0.x line — bug fixes
+//! only. Adding a new LSP capability is allowed within a 0.0.x
+//! bump; removing or repurposing one is held to a 0.x bump
+//! (e.g. 0.0.x → 0.1.0). The Rust library surface (`Server`,
+//! `HandleOutcome`, `Request`, `Response`, `ErrorResponse`) is
+//! covered by the workspace SemVer policy in
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#2-semver--api-stability).
+//! `cargo-semver-checks` runs in CI on every PR.
 //!
 //! # Documentation
 //!

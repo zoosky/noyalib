@@ -248,6 +248,23 @@ Full cookbook: [`pkg/VERIFY.md`](https://github.com/sebastienrousseau/noyalib/bl
 
 ---
 
+## Compatibility
+
+**MSRV: Rust 1.75.0** stable — same floor as the core
+`noyalib` library. The MCP wire surface is text-only JSON-RPC
+and pulls no nightly-only deps. CI verifies the floor on every
+PR via the `Per-crate MSRV` workflow job. The bump policy
+lives in
+[`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#1-msrv-minimum-supported-rust-version).
+
+**Tier-1 platforms** (CI-verified each PR): `aarch64-apple-darwin`,
+`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`. The
+binary writes via atomic file replacement on every platform —
+on Windows via `MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+MOVEFILE_WRITE_THROUGH)` semantics.
+
+---
+
 ## Documentation
 
 - **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):
