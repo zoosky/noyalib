@@ -3,6 +3,7 @@
 
 //! CST + schema audit with tagged content.
 
+#[cfg(feature = "validate-schema")]
 use noyalib::{from_str, validate_against_schema, Value};
 
 #[test]
@@ -36,6 +37,7 @@ fn cst_set_tagged_collection_replacing_tag_only() {
     assert!(after.contains("[10, 20]"));
 }
 
+#[cfg(feature = "validate-schema")]
 #[test]
 fn schema_validates_tagged_value_at_inner_shape() {
     // Schema validation on a tagged scalar should see the inner

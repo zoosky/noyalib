@@ -2435,12 +2435,15 @@ impl<'a> Scanner<'a> {
                         }
                         string.push_str(self.slice_str(start, self.pos));
                     } else {
-                        // Read a character (UTF-8 aware).
+                        // Bulk-copy a content run up to the next interesting
+                        // byte. All needles are ASCII (<0x80) so they never
+                        // appear as UTF-8 continuation bytes — slicing on
+                        // a needle hit is always char-boundary safe.
                         let start = self.pos;
-                        self.advance();
-                        while self.pos < self.input.len() && (self.input[self.pos] & 0xC0) == 0x80 {
-                            self.advance();
-                        }
+                        let len =
+                            crate::simd::clean_prefix_len(&self.input[self.pos..], b"'\n\r \t");
+                        let len = if len == 0 { 1 } else { len };
+                        self.advance_by(len);
                         string.push_str(self.slice_str(start, self.pos));
                     }
                 }
@@ -2633,11 +2636,15 @@ impl<'a> Scanner<'a> {
                         }
                         string.push_str(self.slice_str(start, self.pos));
                     } else {
+                        // Bulk-copy a content run up to the next interesting
+                        // byte. All needles are ASCII (<0x80) so they never
+                        // appear as UTF-8 continuation bytes — slicing on
+                        // a needle hit is always char-boundary safe.
                         let start = self.pos;
-                        self.advance();
-                        while self.pos < self.input.len() && (self.input[self.pos] & 0xC0) == 0x80 {
-                            self.advance();
-                        }
+                        let len =
+                            crate::simd::clean_prefix_len(&self.input[self.pos..], b"\"\\\n\r \t");
+                        let len = if len == 0 { 1 } else { len };
+                        self.advance_by(len);
                         string.push_str(self.slice_str(start, self.pos));
                     }
                 }
