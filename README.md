@@ -25,7 +25,7 @@
 
 - [Install](#install) — Cargo, source
 - [Quick Start](#quick-start) — parse and serialise in ten lines
-- [One-minute migration from `serde_yaml`](#one-minute-migration-from-serde_yaml) — name-for-name mapping
+- [One-minute migration from `serde_yaml` (and the wider ecosystem)](#one-minute-migration-from-serde_yaml-and-the-wider-ecosystem) — name-for-name mapping for `serde_yaml` 0.9, `serde_yml`, `yaml_serde`, `serde-yaml-ng`, `serde-norway`, `serde-yaml-bw`, `serde-saphyr`, `yaml-spanned`
 - [Why this approach?](#why-this-approach) — design rationale
 - [Capabilities in 0.0.1](#capabilities-in-001) — release inventory
 - [Two APIs, one parser](#two-apis-one-parser) — data binding vs. tooling
@@ -198,11 +198,17 @@ features:
 
 ---
 
-## One-minute migration from `serde_yaml`
+## One-minute migration from `serde_yaml` (and the wider ecosystem)
 
-Most call sites are mechanical to update. The full guide is
-[`doc/MIGRATION-FROM-SERDE-YAML.md`](doc/MIGRATION-FROM-SERDE-YAML.md);
-the headline mapping:
+Most call sites are mechanical to update. The full guide —
+covering `serde_yaml` 0.9 plus every actively-published fork
+and adjacent crate — is
+[`doc/MIGRATION-FROM-SERDE-YAML.md`](doc/MIGRATION-FROM-SERDE-YAML.md).
+The headline mapping for `serde_yaml` 0.9 is below; the same
+guide has per-crate sections for `serde_yml`, `yaml_serde`,
+`serde-yaml-ng`, `serde-norway`, `serde-yaml-bw`,
+`serde-saphyr`, and `yaml-spanned` with verified function
+tables for each.
 
 ```diff
 -[dependencies]
@@ -241,6 +247,24 @@ If your call sites can't change at all, enable
 `features = ["compat-serde-yaml"]` and replace `use serde_yaml`
 with `use noyalib::compat::serde_yaml` — every type is
 noyalib-native, no transitive dep on the archived upstream.
+
+### Coming from a different YAML crate?
+
+Verified crates.io state on **2026-05-08**:
+
+| Crate | Version | Drop-in for `serde_yaml`? | Migration to `noyalib` |
+|---|---|---|---|
+| [`serde_yml`](https://crates.io/crates/serde_yml) | `0.0.12` (archived 2025-09) | mostly | path rename — same 7-variant `Value` |
+| [`yaml_serde`](https://crates.io/crates/yaml_serde) | `0.10.4` | yes (Cargo `package =` rename) | path rename — same 7-variant `Value` |
+| [`serde-yaml-ng`](https://crates.io/crates/serde-yaml-ng) | `0.10.0` | yes | path rename — same 7-variant `Value` |
+| [`serde-norway`](https://crates.io/crates/serde-norway) | `0.9.42` | yes | path rename — same 7-variant `Value` |
+| [`serde-yaml-bw`](https://crates.io/crates/serde-yaml-bw) | `2.5.6` | **no** (breaking 2.x) | drop the 8th `Alias` variant; `SerializerBuilder` → `SerializerConfig`; `_with_options` → `_with_config` |
+| [`serde-saphyr`](https://crates.io/crates/serde-saphyr) | `0.0.26` | **no** (no `Value` DOM) | typed `from_str<T>` is the same; `Value` is *added* (not removed); `Options` → `ParserConfig` |
+| [`yaml-spanned`](https://crates.io/crates/yaml-spanned) | `0.0.3` | **no** (parser-only, no `to_string`) | `Spanned<T>` covers the span use case; `noyalib::to_string` adds the missing serializer |
+
+Each crate has a per-section function-mapping table and worked
+examples in
+[`MIGRATION-FROM-SERDE-YAML.md`](doc/MIGRATION-FROM-SERDE-YAML.md#migrating-from-other-yaml-libraries).
 
 The three behavioural differences worth knowing about
 (YAML 1.2 strict booleans, `Tagged` variant, multi-doc API):

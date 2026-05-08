@@ -358,13 +358,16 @@ stdlib `from_str`.
 
 ---
 
-## Migrating from `serde_yaml`
+## Migrating from another YAML crate
 
-The headline diff plus a 13-row name-for-name mapping table sits
-in the
-[workspace README](https://github.com/sebastienrousseau/noyalib#one-minute-migration-from-serde_yaml).
-The deeper guide (behavioural-difference notes, drop-in shim,
-checklist) is
+The headline diff for `serde_yaml` 0.9 plus a name-for-name
+mapping table sits in the
+[workspace README](https://github.com/sebastienrousseau/noyalib#one-minute-migration-from-serde_yaml-and-the-wider-ecosystem).
+The deeper guide also covers `serde_yml`, `yaml_serde`,
+`serde-yaml-ng`, `serde-norway`, `serde-yaml-bw`,
+`serde-saphyr`, and `yaml-spanned` — per-crate function tables,
+behavioural-difference notes, the drop-in shim, and a
+migration checklist:
 [`doc/MIGRATION-FROM-SERDE-YAML.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/MIGRATION-FROM-SERDE-YAML.md).
 
 ---

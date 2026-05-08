@@ -7,6 +7,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Docs — migration paths for the wider YAML ecosystem
+
+`doc/MIGRATION-FROM-SERDE-YAML.md` now covers seven additional
+crates beyond `serde_yaml` 0.9, each with a verified
+function-by-function table (state captured 2026-05-08):
+
+- `serde_yml` (`0.0.12`, archived 2025-09)
+- `yaml_serde` (`0.10.4`, active)
+- `serde-yaml-ng` (`0.10.0`, active — slow cadence)
+- `serde-norway` (`0.9.42`, active)
+- `serde-yaml-bw` (`2.5.6`, active — non-drop-in 2.x)
+- `serde-saphyr` (`0.0.26`, active — no `Value` DOM)
+- `yaml-spanned` (`0.0.3`, parser-only, no `to_string`)
+
+The workspace README and the `noyalib` crate README both link
+into the per-crate sections via a compact compatibility matrix.
+
 ### YAML Test Suite — 100% strict (406/406, 0 skip)
 
 The historical 18-case `SKIP_LIST` (2JQS, 6WLZ, 6CK3, P76L, 6VJK,
