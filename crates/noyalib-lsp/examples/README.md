@@ -2,9 +2,13 @@
 
 # `noyalib-lsp` examples
 
-Editor-driving demos. Each script pipes a sequence of
-Content-Length-framed JSON-RPC 2.0 messages into `noyalib-lsp`
-over stdio and prints the response stream.
+Editor-driving demos and per-editor configuration snippets.
+
+## Protocol-level scripts
+
+Each script pipes a sequence of Content-Length-framed
+JSON-RPC 2.0 messages into `noyalib-lsp` over stdio and prints
+the response stream.
 
 | Script | What it shows |
 |---|---|
@@ -21,6 +25,22 @@ The scripts use `printf` to construct framed messages so they
 work on any POSIX shell (no `jq`, no `node`). Pipe the output
 through `jq -c '.[]'` or `prettier` if you want to format the
 JSON responses for human reading.
+
+## Editor configurations
+
+Drop-in config snippets for the most common editors. Each is a
+copy-paste away from a working "Format-on-save plus inline
+diagnostics" experience:
+
+| File | Editor | What it sets up |
+|---|---|---|
+| [`editor-vscode.md`](editor-vscode.md) | Visual Studio Code | `yaml.serverPath`, format-on-save, optional minimal extension stub |
+| [`editor-neovim.lua`](editor-neovim.lua) | Neovim ≥ 0.10 (lazy.nvim / nvim-lspconfig) | Custom server registration, format-on-save, hover keymaps |
+| [`editor-helix.toml`](editor-helix.toml) | Helix | `languages.toml` entry, auto-format, formatter binding |
+
+If you wire up a different editor and the config is non-obvious,
+PRs adding a new `editor-<name>.{md,lua,toml,json}` snippet are
+welcome.
 
 ## License
 

@@ -12,6 +12,7 @@ which `cargo install noya-cli` arranges).
 | [`format-precommit.sh`](format-precommit.sh) | Drop-in `git pre-commit` hook gating commits on `noyafmt --check`. |
 | [`validate-k8s.sh`](validate-k8s.sh) | CI step that runs `noyavalidate --schema` over a directory of Kubernetes manifests. |
 | [`fix-quoted-numbers.sh`](fix-quoted-numbers.sh) | Walkthrough of the `--fix` autofix flow: quoted scalar → schema-typed integer, with the surrounding comment preserved. |
+| [`ci-pipeline.sh`](ci-pipeline.sh) | Combined `noyafmt --check` + `noyavalidate --schema` gate for `.github/workflows/*.yml` (or any other CI runner). |
 
 ```bash
 # All examples are independent — pick one and run it.

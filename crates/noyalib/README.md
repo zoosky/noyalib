@@ -375,6 +375,12 @@ migration checklist:
 ## Documentation
 
 - **API reference**: <https://docs.rs/noyalib>
+- **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):
+  [`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md)
+- **Migration guides** (`serde_yaml` and 7 other YAML crates):
+  [`doc/MIGRATION.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/MIGRATION.md)
+- **Security policy**:
+  [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md)
 - **Internals (module map, hot paths)**:
   [`doc/internals.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib/doc/internals.md)
 - **Error reference**:

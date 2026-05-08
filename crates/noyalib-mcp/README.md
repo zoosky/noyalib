@@ -250,6 +250,10 @@ Full cookbook: [`pkg/VERIFY.md`](https://github.com/sebastienrousseau/noyalib/bl
 
 ## Documentation
 
+- **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):
+  [`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md)
+- **Security policy**:
+  [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md)
 - **API reference**: <https://docs.rs/noyalib-mcp>
 - **Tools reference (input schemas + error codes)**:
   [`doc/tools-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-mcp/doc/tools-reference.md)

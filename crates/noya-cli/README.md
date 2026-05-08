@@ -246,6 +246,10 @@ Full cookbook including the offline / FIPS-bound flow:
 
 ## Documentation
 
+- **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):
+  [`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md)
+- **Security policy**:
+  [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md)
 - **CLI flag reference**:
   [`doc/cli-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noya-cli/doc/cli-reference.md)
 - **Recipes (CI gates, pre-commit, editor integration)**:

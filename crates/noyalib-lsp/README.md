@@ -261,6 +261,10 @@ range that changed, not the buffer size.
 
 ## Documentation
 
+- **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):
+  [`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md)
+- **Security policy**:
+  [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md)
 - **API reference**: <https://docs.rs/noyalib-lsp>
 - **Editor setup (VS Code, Neovim, Emacs, Helix, Zed, Sublime)**:
   [`doc/editor-setup.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-lsp/doc/editor-setup.md)

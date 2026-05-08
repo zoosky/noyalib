@@ -1558,6 +1558,32 @@ value.interpolate_properties_lossy(&map);
 
 ---
 
+## Documentation
+
+| Document | Covers |
+|---|---|
+| [`doc/POLICIES.md`](doc/POLICIES.md) | MSRV, SemVer & API stability, security & audit pipeline, performance & algorithmic complexity, concurrency guarantees, platform support, the full feature-flag matrix, panic policy, error model, dependency policy, release & changelog policy. **Single source of truth** for engineering posture. |
+| [`doc/MIGRATION.md`](doc/MIGRATION.md) | Umbrella index of migration guides for `serde_yaml` 0.9, `serde_yml`, `yaml_serde`, `serde-yaml-ng`, `serde-norway`, `serde-yaml-bw`, `serde-saphyr`, `yaml-spanned`. Each linked guide is a per-crate function-mapping table + behavioural-difference notes + checklist. |
+| [`SECURITY.md`](SECURITY.md) | Disclosure policy, supported versions, contact, security design summary. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Signed-commit policy, PR guidelines, local-test recipe. |
+| [`CHANGELOG.md`](CHANGELOG.md) | Per-release notes following Keep a Changelog 1.1.0. |
+| [`doc/USER-GUIDE.md`](doc/USER-GUIDE.md) | Long-form usage guide with worked examples for every major feature. |
+| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | Module map, hot-path notes, design decisions. |
+| [`doc/GLOSSARY.md`](doc/GLOSSARY.md) | YAML / serde terminology reference. |
+| [`crates/noyalib/doc/internals.md`](crates/noyalib/doc/internals.md) | Library internals (parser stages, loader frames, CST green tree). |
+| [`crates/noyalib/doc/errors.md`](crates/noyalib/doc/errors.md) | Error reference — every variant, when it fires, how to handle it. |
+
+The per-crate READMEs at
+[`crates/noyalib`](crates/noyalib/README.md),
+[`crates/noya-cli`](crates/noya-cli/README.md),
+[`crates/noyalib-mcp`](crates/noyalib-mcp/README.md),
+[`crates/noyalib-lsp`](crates/noyalib-lsp/README.md), and
+[`crates/noyalib-wasm`](crates/noyalib-wasm/README.md) document
+the surface specific to each artifact (binaries, MCP tools,
+LSP capabilities, WASM bindings).
+
+---
+
 ## License
 
 Dual-licensed under [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) or [MIT](https://opensource.org/licenses/MIT), at your option.

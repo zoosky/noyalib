@@ -285,6 +285,10 @@ python3 -m http.server     # or any static-file server
 
 ## Documentation
 
+- **Engineering policies** (MSRV, SemVer, security, performance, concurrency, platform support, feature flags):
+  [`doc/POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md)
+- **Security policy**:
+  [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md)
 - **JS API reference**:
   [`doc/js-api.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-wasm/doc/js-api.md)
 - **Bundling (Vite, Webpack, Next.js, Cloudflare Workers, Deno, Bun)**:

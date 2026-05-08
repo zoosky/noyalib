@@ -2,9 +2,13 @@
 
 # `noyalib-mcp` examples
 
-Agent-driving demos. Each script pipes a sequence of
-newline-delimited JSON-RPC 2.0 frames into `noyalib-mcp` over
-stdio and prints the response stream.
+Agent-driving demos and per-host client configuration snippets.
+
+## Protocol-level scripts
+
+Each script pipes a sequence of newline-delimited JSON-RPC 2.0
+frames into `noyalib-mcp` over stdio and prints the response
+stream.
 
 | Script | What it shows |
 |---|---|
@@ -20,6 +24,25 @@ crates/noyalib-mcp/examples/handshake.sh
 The scripts use `printf` / `echo` only (no `jq`, no `node`), so
 they work on any POSIX shell. Pipe through `jq -c .` if you
 want pretty-printed JSON responses for human reading.
+
+## Client configurations
+
+Drop-in config snippets for the most common MCP-host
+applications:
+
+| File | Host | What it sets up |
+|---|---|---|
+| [`client-claude-desktop.json`](client-claude-desktop.json) | Claude Desktop (macOS / Linux / Windows) | `mcpServers.noyalib` block for `claude_desktop_config.json`, with platform-specific install paths |
+| [`client-cursor.md`](client-cursor.md) | Cursor + VS Code with Cline | `mcpServers` JSON for Cursor's MCP pane and `cline.mcpServers` for the Cline extension |
+| [`client-zed.json`](client-zed.json) | Zed | `context_servers.noyalib` block for Zed `settings.json` |
+
+Once registered, the LLM agent in each host can call the two
+`noyalib_*` tools (`tools/list` is the discovery handshake; the
+agent decides when to invoke based on user intent).
+
+If you wire up a different MCP host and the config is
+non-obvious, PRs adding a `client-<name>.{md,json}` snippet are
+welcome.
 
 ## License
 
