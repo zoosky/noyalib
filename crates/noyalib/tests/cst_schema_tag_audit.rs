@@ -64,6 +64,7 @@ fn cst_coerce_to_schema_through_tagged_value() {
     assert!(after.contains("# config"));
 }
 
+#[cfg(feature = "schema")]
 #[test]
 fn schema_for_yaml_emits_tagged_value_correctly() {
     use noyalib::{schema_for_yaml, JsonSchema};

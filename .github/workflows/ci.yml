@@ -232,6 +232,25 @@ jobs:
       - name: cargo vet check
         run: cargo vet --locked
 
+  cargo-machete:
+    name: cargo-machete (unused-dep gate)
+    # Catches dependencies declared in `Cargo.toml` that are no
+    # longer referenced anywhere in the crate. Keeps the dep
+    # tree honest as the workspace grows: a removed feature or
+    # refactor that orphans a `[dependencies]` entry surfaces
+    # here rather than slowly bloating the lockfile.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-machete
+        run: cargo install --locked cargo-machete
+      - name: cargo machete
+        run: cargo machete
+
   reuse-lint:
     name: REUSE.software compliance
     # Every source file in this crate carries an SPDX license header.

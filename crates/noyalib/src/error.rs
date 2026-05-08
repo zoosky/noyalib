@@ -1151,6 +1151,55 @@ impl Default for RenderOptions {
     }
 }
 
+impl RenderOptions {
+    /// Construct with all defaults (`crop_radius = 2`,
+    /// `color = false`). Equivalent to [`RenderOptions::default()`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RenderOptions;
+    /// let opts = RenderOptions::new();
+    /// assert_eq!(opts.crop_radius, 2);
+    /// assert!(!opts.color);
+    /// ```
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the crop radius (lines of context on each side of
+    /// the offending line). `0` collapses to a single-line render.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RenderOptions;
+    /// let opts = RenderOptions::new().crop_radius(4);
+    /// assert_eq!(opts.crop_radius, 4);
+    /// ```
+    #[must_use]
+    pub fn crop_radius(mut self, radius: usize) -> Self {
+        self.crop_radius = radius;
+        self
+    }
+
+    /// Toggle ANSI colour escape codes on rendered output.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RenderOptions;
+    /// let opts = RenderOptions::new().color(true);
+    /// assert!(opts.color);
+    /// ```
+    #[must_use]
+    pub fn color(mut self, on: bool) -> Self {
+        self.color = on;
+        self
+    }
+}
+
 /// A windowed slice of source text around an error location.
 ///
 /// Used internally by [`Error::render_with_options`] and exposed
