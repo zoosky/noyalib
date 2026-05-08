@@ -23,23 +23,35 @@
 
 ## Contents
 
+**Getting started**
+
 - [Install](#install) — Cargo, source
 - [Quick Start](#quick-start) — parse and serialise in ten lines
+
+**The noyalib ecosystem** (library + four satellite crates)
+
+- [The noyalib ecosystem](#the-noyalib-ecosystem) — `noyalib`, `noya-cli`, `noyalib-lsp`, `noyalib-mcp`, `noyalib-wasm` at a glance
+
+**Library reference**
+
 - [One-minute migration from `serde_yaml` (and the wider ecosystem)](#one-minute-migration-from-serde_yaml-and-the-wider-ecosystem) — name-for-name mapping for `serde_yaml` 0.9, `serde_yml`, `yaml_serde`, `serde-yaml-ng`, `serde-norway`, `serde-yaml-bw`, `serde-saphyr`, `yaml-spanned`
 - [Why this approach?](#why-this-approach) — design rationale
 - [Capabilities in 0.0.1](#capabilities-in-001) — release inventory
 - [Two APIs, one parser](#two-apis-one-parser) — data binding vs. tooling
-- [Tooling](#tooling) — `noyafmt`, `noyavalidate`, MCP, WASM
-- [Ecosystem comparison](#ecosystem-comparison) — feature matrix
-- [Benchmarks](#benchmarks) — measurements vs. other libraries
+- [Ecosystem comparison](#ecosystem-comparison) — short matrix; full table at [`doc/COMPARISON.md`](doc/COMPARISON.md)
+- [Benchmarks](#benchmarks) — headline numbers; full table at [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md)
 - [Features](#features) — module-level capability list
 - [Custom tags ("just data")](#custom-tags-just-data) — `Value::Tagged`, untag, registry
 - [Library Usage](#library-usage) — deserialise, serialise, values, spans
 - [Configuration](#configuration) — parser and serialiser options
 - [Examples](#examples) — runnable example index
+
+**Operational**
+
 - [When not to use noyalib](#when-not-to-use-noyalib) — limitations
 - [Development](#development) — make targets, fuzzing, CI
 - [Security](#security) — guarantees and compliance
+- [Documentation](#documentation) — all reference docs
 - [License](#license)
 
 ---
@@ -195,6 +207,57 @@ features:
     Ok(())
 }
 ```
+
+---
+
+## The noyalib ecosystem
+
+Five crates ship from this workspace. The library is the core;
+the four satellites wrap it for specific delivery surfaces.
+
+| Crate | What it is | Use case |
+|---|---|---|
+| **`noyalib`** | Library — YAML 1.2 parser, serializer, lossless CST, JSON Schema validator | Embed YAML support in any Rust binary or library. |
+| **`noya-cli`** | Two binaries: `noyafmt` (formatter), `noyavalidate` (schema validator + autofixer) | CI gates, pre-commit hooks, ad-hoc command-line use. |
+| **`noyalib-lsp`** | Language Server Protocol server | Editor integration — VS Code, Neovim, Helix, Emacs, Zed, Sublime, IntelliJ. |
+| **`noyalib-mcp`** | Model Context Protocol server | LLM agent tooling — Claude Desktop, Cursor, Continue.dev, Zed assistant, mcp.run. |
+| **`noyalib-wasm`** | `wasm-bindgen` wrapper around the library | Browser, Node, Cloudflare Workers, Deno, any WASM-capable host. |
+
+### Install the binaries
+
+```bash
+# CLI tools (noyafmt + noyavalidate)
+cargo install noya-cli
+
+# LSP server
+cargo install noyalib-lsp
+
+# MCP server
+cargo install noyalib-mcp
+
+# WASM bundle
+npm install @noyalib/noyalib-wasm
+```
+
+Per-crate READMEs cover the surface specific to each artifact:
+
+- **CLI**: [`crates/noya-cli/README.md`](crates/noya-cli/README.md) — flags, exit codes, recipes.
+- **LSP**: [`crates/noyalib-lsp/README.md`](crates/noyalib-lsp/README.md) — capabilities, editor configs.
+- **MCP**: [`crates/noyalib-mcp/README.md`](crates/noyalib-mcp/README.md) — tools, host configs.
+- **WASM**: [`crates/noyalib-wasm/README.md`](crates/noyalib-wasm/README.md) — JS API, bundling.
+
+### Per-host quick links
+
+| If you use… | Drop-in config |
+|---|---|
+| **VS Code / JetBrains / Neovim / Helix / Emacs / Zed / Sublime** | [editor configs in `noyalib-lsp/examples/`](crates/noyalib-lsp/examples/) |
+| **Claude Desktop / Cursor / Continue.dev / Zed assistant / hosted MCP** | [client configs in `noyalib-mcp/examples/`](crates/noyalib-mcp/examples/) |
+| **GitHub Actions / pre-commit / Helm / Compose / pyproject-adjacent YAML** | [validation gates in `noya-cli/examples/`](crates/noya-cli/examples/) |
+| **Vite / Webpack / Next.js / Cloudflare Workers / Deno / Bun** | [bundling guide](crates/noyalib-wasm/doc/bundling.md) |
+
+The rest of this README covers the **library** surface
+(`noyalib` itself). For the satellite crates, jump straight to
+their READMEs above.
 
 ---
 
@@ -388,213 +451,56 @@ variant for callers that already know the alias's source position.
 
 ---
 
-## Tooling
-
-Built on top of the lossless CST:
-
-- **`noyafmt`** — CLI formatter (and `noyalib::cst::format` API)
-  that rewrites YAML into a canonical style while preserving
-  comments and directives. Run `cargo run --bin noyafmt -- <file>`.
-- **`noyavalidate`** — validates YAML syntax and, optionally, a
-  JSON Schema 2020-12 contract. `--schema PATH` enforces the
-  contract; `--fix` rewrites the input through the lossless CST
-  formatter; both flags compose. Build with `cargo build
-  --features noyavalidate`.
-- **`noyalib-mcp`** — Model Context Protocol server (separate
-  workspace member) exposing `parse`, `format`, `get`, `set`, and
-  `validate` tools so an MCP-aware agent can manipulate YAML
-  through a typed interface.
-- **`noyalib-wasm`** — `wasm-bindgen` wrapper exposing the
-  `Document` API to JavaScript / TypeScript. Lets browser-based
-  YAML editors run the lossless edit path without leaving the
-  browser.
-- **`noyalib-lsp`** — Language Server Protocol implementation
-  built on the lossless CST. Speaks the standard LSP wire format
-  over stdio so any conforming editor can use it directly:
-
-  ```bash
-  # Install the server binary into ~/.cargo/bin (preferred).
-  cargo install --path crates/noyalib-lsp
-  # …or build from a checkout without installing globally:
-  cargo build -p noyalib-lsp --release  # → target/release/noyalib-lsp
-  ```
-
-  - **Neovim** (`lspconfig`):
-
-    ```lua
-    require("lspconfig.configs").noyalib = {
-      default_config = {
-        cmd = { "noyalib-lsp" },
-        filetypes = { "yaml" },
-        root_dir = require("lspconfig.util").find_git_ancestor,
-      },
-    }
-    require("lspconfig").noyalib.setup {}
-    ```
-
-  - **Zed** — add `"noyalib"` to the YAML `language_servers` list
-    in `~/.config/zed/settings.json` and point the binary path at
-    the build above.
-  - **VS Code** — a published extension is on the roadmap; in the
-    interim, any `vscode-languageclient`-shaped extension can spawn
-    `noyalib-lsp` over stdio.
-
----
-
 ## Ecosystem comparison
 
-How noyalib lines up against the other Rust YAML libraries it is
-likely to be evaluated alongside. Cells reflect the state of the
-named crates as of **2026-05** (verified against the latest
-crates.io release of each); corrections welcome via PR.
+`noyalib` is the only Rust YAML implementation that **passes
+all 406 active YAML 1.2 Test Suite cases under strict
+comparison** and ships a lossless CST, native LSP, MCP server,
+WASM bundle, JSON Schema validator, and schema-driven autofix
+in one workspace.
 
-| | noyalib | serde\_yml | serde\_yaml\_ng | saphyr | yaml-rust2 | rust-yaml |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **YAML Test Suite** | 100% strict (387/387) | — | — | — | — | — |
-| **Pure Rust** | Yes | No (C-FFI) | No (C-FFI) | Yes | Yes | Yes |
-| **Zero `unsafe`** | Yes | No | No | Yes | Yes | Yes |
-| **Serde integration** | Yes | Yes | Yes | Yes | No | Yes |
-| **Streaming deser** | Yes | No | No | No | No | No |
-| **`#![no_std]`** | Yes | No | No | No | No | No |
-| **Zero-copy scalars** | Yes | No | No | No | No | Yes |
-| **SIMD scanning** | Yes (memchr + bitmask) | No | No | No | No | No |
-| **SWAR numeric parse** | Yes | No | No | No | No | No |
-| **Parallel multi-doc** | Yes (`parallel::parse`) | No | No | No | No | No |
-| **DoS hardened** | 7 budgets | Basic | Basic | Yes | No | Yes |
-| **Pluggable policies** | Yes (`policy::Policy`) | No | No | No | No | No |
-| **Secret interpolation** | Yes (`${VAR}`) | No | No | Yes | No | No |
-| **CST manipulation** | Yes (`cst::Document`) | No | No | No | No | No |
-| **Native LSP** | Yes (`noyalib-lsp`) | No | No | No | No | No |
-| **MCP server** | Yes (`noyalib-mcp`) | No | No | No | No | No |
-| **JSON Schema codegen** | Yes (`schema_for`) | No | No | No | No | No |
-| **JSON Schema validate** | Yes (`validate_against_schema`) | No | No | No | No | No |
-| **Schema-driven autofix** | Yes (`coerce_to_schema`) | No | No | No | No | No |
-| **`miette` diagnostics** | Yes | No | No | No | No | No |
-| **WASM** | 338 KB | No | No | No | No | No |
-| **Source spans** | Yes | No | No | Yes | No | No |
-| **YAML 1.1 compat** | Yes | Yes | Yes | No | Yes | No |
-| **Serialization** | Yes | Yes | Yes | Yes | No | No |
-| **Path queries** | `query("..name")` | No | No | No | No | No |
-| **Zero-copy AST** | `BorrowedValue<'a>` | No | No | No | No | Partial |
+The full feature matrix — every row, every column, with the
+reading-the-table notes — lives at
+**[`doc/COMPARISON.md`](doc/COMPARISON.md)** so the README
+stays fast to scan.
+
+Quick orientation:
+
+| Crate | Drop-in for `serde_yaml`? | Key gap vs noyalib |
+|---|---|---|
+| `serde_yaml` 0.9 | (archived 2024-03) | unmaintained |
+| `serde_yml`, `serde-yaml-ng`, `serde-norway`, `yaml_serde` | yes (path rename) | no streaming deser, no CST, no LSP / MCP / WASM, no JSON Schema |
+| `serde-yaml-bw` | no (breaking 2.x) | no LSP / MCP / WASM, no JSON Schema |
+| `serde-saphyr` | no (no `Value` DOM) | no `Value` DOM, no CST, no LSP / MCP / WASM |
+| `yaml-spanned` | no (read-only) | no serializer, no CST, no LSP / MCP / WASM |
+
+Per-crate migration guides at
+[`doc/MIGRATION.md`](doc/MIGRATION.md).
 
 ---
 
 ## Benchmarks
 
-Benchmarked on Apple M4, Rust 1.94 stable. All libraries compiled with `--release`.
+Headline numbers (Apple M4, Rust 1.94 stable, `--release`):
 
-### Deserialization throughput
+| Operation | noyalib | nearest competitor | speedup |
+|---|---|---|---|
+| Deserialise (nested, 20 fields) | **9.93 µs** | yaml-rust2 13.5 µs | **1.4×** |
+| Typed deserialise (streaming) | **7.67 µs** | serde_yaml_ng 12.6 µs | **1.6×** |
+| Serialise (nested, 20 fields) | **2.54 µs** | serde_yaml_ng 8.04 µs | **3.2×** |
+| Round-trip (deserialise + serialise) | **12.7 µs** | serde_yaml_ng 25.5 µs | **2.0×** |
+| Structural-discovery (1 MiB) | **311 µs** (nightly-SIMD) | memchr loop 2.89 ms | **9.2×** |
+| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | stdlib 24.6 ns | **2.5×** |
 
-| Library | Simple (3 fields) | Nested (20 fields) | Large (500 items) |
-| :--- | ---: | ---: | ---: |
-| **noyalib** | **1.51 us** | **9.93 us** | **0.89 ms** |
-| yaml-rust2 | 2.08 us (1.4x) | 13.5 us (1.4x) | 1.23 ms (1.4x) |
-| serde\_yaml\_ng | 2.82 us (1.9x) | 16.9 us (1.7x) | 1.48 ms (1.7x) |
-| serde-saphyr | 3.29 us (2.2x) | 20.5 us (2.1x) | 1.84 ms (2.1x) |
+The full breakdown — every workload, every comparison library,
+the SWAR pipeline explanation, parallel multi-doc scaling, and
+the project-metrics table — lives at
+**[`doc/BENCHMARKS.md`](doc/BENCHMARKS.md)**.
 
-### Typed deserialization (streaming, no Value AST)
-
-| Library | Simple struct | Nested struct |
-| :--- | ---: | ---: |
-| **noyalib** | **1.34 us** | **7.67 us** |
-| serde\_yaml\_ng | 2.39 us (1.8x) | 12.6 us (1.6x) |
-
-### Serialization throughput
-
-| Library | Simple (3 fields) | Nested (20 fields) |
-| :--- | ---: | ---: |
-| **noyalib** | **330 ns** | **2.54 us** |
-| serde\_yaml\_ng | 1.43 us (4.3x) | 8.04 us (3.2x) |
-
-### Roundtrip (deserialize + serialize)
-
-| Library | Nested (20 fields) |
-| :--- | ---: |
-| **noyalib** | **12.7 us** |
-| serde\_yaml\_ng | 25.5 us (2.0x) |
-
-### SIMD structural-discovery throughput
-
-How fast each library can find every YAML delimiter in a 1 MiB
-real-shaped document. The structural-bitmask path replaces the
-classical "find one delimiter at a time" pattern with a 32-byte
-chunk that drains every delimiter via `mask.trailing_zeros()`
-before reloading. (`benches/structural_bitmask.rs`)
-
-| Path | 4 KiB | 64 KiB | 1 MiB | vs memchr loop |
-| :--- | ---: | ---: | ---: | ---: |
-| scalar (byte-by-byte baseline) | 13.0 us | 206 us | 3.33 ms | 0.86x |
-| memchr + `find_any_of` loop | 11.3 us | 179 us | 2.89 ms | 1.0x |
-| **`StructuralIter` (stable)** | **2.7 us** | **42.3 us** | **681 us** | **4.2x** |
-| **`StructuralIter` (nightly-simd)** | **1.20 us** | **19.7 us** | **311 us** | **9.2x** |
-
-`serde_yaml_ng` and `serde-saphyr` use byte-by-byte structural
-discovery — they sit alongside the `scalar baseline` row and lose
-to the 32-byte-bitmask path by an order of magnitude on the
-1 MiB workload.
-
-### SWAR decimal-integer parsing
-
-Plain-scalar integer resolution via the SIMD-Within-A-Register
-pipeline that folds 8 ASCII digits per `u64` cycle.
-(`benches/numeric_parse.rs`)
-
-| Width | stdlib `from_str` | **SWAR** | speedup |
-| :--- | ---: | ---: | ---: |
-| 8 digits | 8.12 ns | **3.74 ns** | **2.17x** |
-| 19 digits | 22.0 ns | **9.25 ns** | **2.38x** |
-| `i64::MAX` | 24.6 ns | **9.75 ns** | **2.52x** |
-| Bulk parse 1000 ints | 7.93 us | **5.38 us** | **1.47x** |
-
-### Parallel multi-document throughput
-
-Linear scaling across CPU cores for `---`-separated streams
-(telemetry logs, audit exports, Kubernetes-resource snapshots).
-Pre-scan runs in `O(input_len)` on the main thread; the per-
-document parse work distributes across the Rayon thread pool.
-(`benches/streaming_vs_value.rs`, `benches/large_doc_soak.rs`)
-
-```rust
-// Single-threaded baseline:
-let docs: Vec<MyType> = noyalib::load_all_as(yaml)?;
-
-// Parallel (off by default — pulls Rayon under `parallel`
-// feature). Drop-in replacement, scales near-linearly with cores
-// on multi-document inputs:
-let docs: Vec<MyType> = noyalib::parallel::parse(yaml)?;
-```
-
-Other Rust YAML libraries the comparison table below covers run
-single-threaded.
-
-### Architecture validation
-
-| Capability | Measured Impact |
-| :--- | :--- |
-| Streaming deserializer (bypasses Value AST) | **30% faster** (14.0 vs 19.4 us) |
-| `BorrowedValue<'a>` (zero-copy AST) | **18% faster** (16.0 vs 19.4 us) |
-| Zero-copy scanner (`Cow::Borrowed`) | **12% fewer** allocations (6.3 vs 7.1 us) |
-| Span-free path (`from_str` default) | **34% less** overhead (5.6 vs 8.5 us) |
-| FxHasher for Mapping keys | Faster key insertion and lookup |
-| SIMD scanning (`memchr`) | Faster delimiter search on large inputs |
-| Path queries | `value.query("items[*].name")` with `*` and `..` |
-| DoS rejection (billion laughs) | **<3 us** with `ParserConfig::strict()` |
-| DoS rejection (deep nesting) | **<4 us** |
-
-Reproduce: `cargo bench --bench comparison` and `cargo bench --bench architecture`.
-
-### Project metrics
-
-| Metric | Value |
-| :--- | :--- |
-| **Source** | 26,000+ lines across the workspace |
-| **Test suite** | 3,600+ tests + doc-tests + CLI smoke |
-| **YAML Test Suite** | 100% strict compliance: 387/387 attempted cases pass, 0 failures, 19 deliberate skips |
-| **Examples** | 50+ runnable examples + WASM demo |
-| **Coverage** | 95%+ line coverage |
-| **Dependencies** | 5 unconditional + 3 default-on optional (`itoa`, `ryu`, `serde_ignored`) + 12 opt-in optional (`miette`, `garde`, `validator`, `schemars`, `serde_json`, `jsonschema`, `figment`, `rayon`, `serde-saphyr`, plus the three default-on opt-outs) |
-| **WASM binary** | 338 KB (release, LTO) |
-| **MSRV** | Rust 1.75.0 (core); newer for optional features |
+Per-PR drift is tracked by [CodSpeed](https://codspeed.io/);
+algorithmic-complexity guarantees (`O(n)` parser, `O(d)`
+stack, etc.) live in
+[`POLICIES.md` §4](doc/POLICIES.md#4-performance--algorithmic-complexity).
 
 ---
 

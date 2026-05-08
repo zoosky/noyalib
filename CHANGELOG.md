@@ -7,6 +7,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Docs — README refactor: extracted deep weeds, grouped tooling cluster
+
+The workspace README had grown to a 1 593-line full-doc website.
+Two refinements:
+
+- **Extracted** the full Benchmarks tables (deserialise /
+  serialise / SIMD / SWAR / parallel / architecture-validation /
+  project-metrics) into [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md),
+  and the full Ecosystem-comparison feature matrix into
+  [`doc/COMPARISON.md`](doc/COMPARISON.md). The README keeps a
+  ~10-line summary table for each, with a link to the full
+  doc. Reading-the-table notes and the SWAR pipeline
+  walkthrough live in the extracted files.
+- **Re-grouped the tooling cluster.** The "Tooling" section
+  was at line 391; now an ecosystem table sits right after
+  Quick Start (line 213) under "The noyalib ecosystem"
+  covering all five crates (`noyalib`, `noya-cli`,
+  `noyalib-lsp`, `noyalib-mcp`, `noyalib-wasm`) with
+  per-crate install commands and per-host quick-link entries
+  pointing at the editor / MCP / ecosystem-gate config
+  examples. The library-only deep-dive sections (Features,
+  Custom tags, Governance, Policy, etc.) follow below in
+  one block, so the library docs and the tooling docs are
+  cleanly separated.
+
+README size: **1 499 lines** (was 1 593). Two new doc files
+absorbing 238 lines of detail.
+
 ### Docs — per-crate migration guides for the wider YAML ecosystem
 
 Each non-`serde_yaml` Rust YAML crate now has its own dedicated

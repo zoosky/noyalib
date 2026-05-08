@@ -1,0 +1,155 @@
+<!-- SPDX-FileCopyrightText: 2026 Noyalib -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
+# Benchmarks
+
+All numbers below were measured on **Apple M4, Rust 1.94 stable**.
+All libraries compiled with `--release`. Run locally via
+`cargo bench --bench <suite>`.
+
+> **Per-PR drift tracking** — [CodSpeed](https://codspeed.io/)
+> tracks every benchmark across every PR; regressions surface
+> in the *Run criterion benches under CodSpeed* CI job.
+
+For algorithmic-complexity guarantees (`O(n)` parser,
+`O(d)` stack depth, `O(1)` anchor lookup, etc.), see
+[`POLICIES.md` §4 — Performance & algorithmic complexity](POLICIES.md#4-performance--algorithmic-complexity).
+
+## Deserialization throughput
+
+| Library | Simple (3 fields) | Nested (20 fields) | Large (500 items) |
+| :--- | ---: | ---: | ---: |
+| **noyalib** | **1.51 us** | **9.93 us** | **0.89 ms** |
+| yaml-rust2 | 2.08 us (1.4x) | 13.5 us (1.4x) | 1.23 ms (1.4x) |
+| serde\_yaml\_ng | 2.82 us (1.9x) | 16.9 us (1.7x) | 1.48 ms (1.7x) |
+| serde-saphyr | 3.29 us (2.2x) | 20.5 us (2.1x) | 1.84 ms (2.1x) |
+
+## Typed deserialization (streaming, no Value AST)
+
+| Library | Simple struct | Nested struct |
+| :--- | ---: | ---: |
+| **noyalib** | **1.34 us** | **7.67 us** |
+| serde\_yaml\_ng | 2.39 us (1.8x) | 12.6 us (1.6x) |
+
+## Serialization throughput
+
+| Library | Simple (3 fields) | Nested (20 fields) |
+| :--- | ---: | ---: |
+| **noyalib** | **330 ns** | **2.54 us** |
+| serde\_yaml\_ng | 1.43 us (4.3x) | 8.04 us (3.2x) |
+
+## Roundtrip (deserialize + serialize)
+
+| Library | Nested (20 fields) |
+| :--- | ---: |
+| **noyalib** | **12.7 us** |
+| serde\_yaml\_ng | 25.5 us (2.0x) |
+
+## SIMD structural-discovery throughput
+
+How fast each library can find every YAML delimiter in a
+1 MiB real-shaped document. The structural-bitmask path
+replaces the classical "find one delimiter at a time" pattern
+with a 32-byte chunk that drains every delimiter via
+`mask.trailing_zeros()` before reloading.
+(`benches/structural_bitmask.rs`)
+
+| Path | 4 KiB | 64 KiB | 1 MiB | vs memchr loop |
+| :--- | ---: | ---: | ---: | ---: |
+| scalar (byte-by-byte baseline) | 13.0 us | 206 us | 3.33 ms | 0.86x |
+| memchr + `find_any_of` loop | 11.3 us | 179 us | 2.89 ms | 1.0x |
+| **`StructuralIter` (stable)** | **2.7 us** | **42.3 us** | **681 us** | **4.2x** |
+| **`StructuralIter` (nightly-simd)** | **1.20 us** | **19.7 us** | **311 us** | **9.2x** |
+
+`serde_yaml_ng` and `serde-saphyr` use byte-by-byte structural
+discovery — they sit alongside the *scalar baseline* row and
+lose to the 32-byte-bitmask path by an order of magnitude on
+the 1 MiB workload.
+
+## SWAR decimal-integer parsing
+
+Plain-scalar integer resolution via the SIMD-Within-A-Register
+pipeline that folds 8 ASCII digits per `u64` cycle.
+(`benches/numeric_parse.rs`)
+
+| Width | stdlib `from_str` | **SWAR** | speedup |
+| :--- | ---: | ---: | ---: |
+| 8 digits | 8.12 ns | **3.74 ns** | **2.17x** |
+| 19 digits | 22.0 ns | **9.25 ns** | **2.38x** |
+| `i64::MAX` | 24.6 ns | **9.75 ns** | **2.52x** |
+| Bulk parse 1000 ints | 7.93 us | **5.38 us** | **1.47x** |
+
+### How the SWAR pipeline works
+
+The standard library's `i64::from_str` walks one digit at a
+time, branching on each character to validate it's `0..=9`
+and folding into the accumulator with `acc * 10 + digit`.
+SWAR fuses this loop:
+
+1. Load 8 bytes into a `u64` register (one aligned `mov`).
+2. Subtract `b'0'` lane-wise (`sub_packed`).
+3. Validate every byte is `< 10` via a single masked compare.
+4. Combine the eight digits into a single integer with two
+   multiply-and-add rounds (the `0x010A0064...` constant
+   pipeline).
+
+The result is an 8-digit chunk consumed in 6 instructions
+instead of ~24, and `i64::MAX` (19 digits) parses in 9.75 ns
+versus 24.6 ns — a 2.5x speedup. The full pipeline is
+documented inline in
+[`crates/noyalib/src/simd.rs`](../crates/noyalib/src/simd.rs).
+
+Every SWAR pipeline has a portable byte-by-byte fallback that
+Miri verifies under big-endian (`mips64`) so the byte-order
+assumption stays explicit.
+
+## Parallel multi-document throughput
+
+Linear scaling across CPU cores for `---`-separated streams
+(telemetry logs, audit exports, Kubernetes-resource snapshots).
+Pre-scan runs in `O(input_len)` on the main thread; the per-
+document parse work distributes across the Rayon thread pool.
+(`benches/streaming_vs_value.rs`, `benches/large_doc_soak.rs`)
+
+```rust
+// Single-threaded baseline:
+let docs: Vec<MyType> = noyalib::load_all_as(yaml)?;
+
+// Parallel (off by default — pulls Rayon under `parallel`
+// feature). Drop-in replacement, scales near-linearly with cores
+// on multi-document inputs:
+let docs: Vec<MyType> = noyalib::parallel::parse(yaml)?;
+```
+
+Other Rust YAML libraries the comparison table covers run
+single-threaded.
+
+## Architecture validation
+
+| Capability | Measured Impact |
+| :--- | :--- |
+| Streaming deserializer (bypasses Value AST) | **30% faster** (14.0 vs 19.4 us) |
+| `BorrowedValue<'a>` (zero-copy AST) | **18% faster** (16.0 vs 19.4 us) |
+| Zero-copy scanner (`Cow::Borrowed`) | **12% fewer** allocations (6.3 vs 7.1 us) |
+| Span-free path (`from_str` default) | **34% less** overhead (5.6 vs 8.5 us) |
+| FxHasher for Mapping keys | Faster key insertion and lookup |
+| SIMD scanning (`memchr`) | Faster delimiter search on large inputs |
+| Path queries | `value.query("items[*].name")` with `*` and `..` |
+| DoS rejection (billion laughs) | **<3 us** with `ParserConfig::strict()` |
+| DoS rejection (deep nesting) | **<4 us** |
+
+Reproduce: `cargo bench --bench comparison` and
+`cargo bench --bench architecture`.
+
+## Project metrics
+
+| Metric | Value |
+| :--- | :--- |
+| **Source** | 26,000+ lines across the workspace |
+| **Test suite** | 3,686 tests + 431 doctests + CLI smoke + 13 stress/load |
+| **YAML Test Suite** | 100% strict compliance: 406/406 attempted cases pass, 0 failures, 0 deliberate skips |
+| **Examples** | 60+ runnable examples across all crates |
+| **Coverage** | 95%+ function coverage / 92%+ region coverage / 93%+ line coverage (CI-gated) |
+| **Dependencies** | 5 unconditional + 3 default-on optional (`itoa`, `ryu`, `serde_ignored`) + 12 opt-in optional (`miette`, `garde`, `validator`, `schemars`, `serde_json`, `jsonschema`, `figment`, `rayon`, `serde-saphyr`, plus the three default-on opt-outs) |
+| **WASM binary** | 338 KB (release, LTO) |
+| **MSRV** | Rust 1.75.0 (core); newer for optional features (see [POLICIES.md](POLICIES.md#1-msrv-minimum-supported-rust-version)) |
