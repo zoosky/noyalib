@@ -106,6 +106,37 @@ pub struct ParserConfig {
     pub max_mapping_keys: usize,
     /// Maximum number of elements allowed in a single sequence (default: 64k).
     pub max_sequence_length: usize,
+    /// Maximum total parser events emitted across the input
+    /// (default: 1 000 000). Caps event-stream amplification
+    /// independent of recursion depth or alias count. Trips
+    /// [`crate::Error::Budget`] with
+    /// [`crate::BudgetBreach::MaxEvents`].
+    pub max_events: usize,
+    /// Maximum total `Value` nodes built into the AST
+    /// (default: 250 000). Trips
+    /// [`crate::BudgetBreach::MaxNodes`].
+    pub max_nodes: usize,
+    /// Maximum cumulative scalar-byte count across the document
+    /// (default: 64 MB). Distinct from
+    /// [`Self::max_document_length`] (input size) — this caps
+    /// scalar payload after alias expansion. Trips
+    /// [`crate::BudgetBreach::MaxTotalScalarBytes`].
+    pub max_total_scalar_bytes: usize,
+    /// Maximum number of documents in a multi-document stream
+    /// (default: 1 000). Trips
+    /// [`crate::BudgetBreach::MaxDocuments`].
+    pub max_documents: usize,
+    /// Maximum number of merge-key (`<<`) entries across the
+    /// document (default: 10 000). Trips
+    /// [`crate::BudgetBreach::MaxMergeKeys`].
+    pub max_merge_keys: usize,
+    /// Optional alias-to-anchor ratio heuristic for detecting
+    /// billion-laughs amplification patterns
+    /// (default: `Some(10.0)`). When more than `ratio × anchors`
+    /// aliases have been resolved, the parser trips
+    /// [`crate::BudgetBreach::AliasAnchorRatio`]. Set to `None`
+    /// to disable.
+    pub alias_anchor_ratio: Option<f64>,
     /// How to handle duplicate keys in a mapping (default: Last, per YAML 1.2).
     pub duplicate_key_policy: DuplicateKeyPolicy,
     /// If true, only `true` and `false` (lowercase) are accepted as booleans.
@@ -178,6 +209,12 @@ impl Default for ParserConfig {
             max_alias_expansions: 1024,
             max_mapping_keys: 1024 * 64,
             max_sequence_length: 1024 * 64,
+            max_events: 1_000_000,
+            max_nodes: 250_000,
+            max_total_scalar_bytes: 1024 * 1024 * 64, // 64 MB
+            max_documents: 1_000,
+            max_merge_keys: 10_000,
+            alias_anchor_ratio: Some(10.0),
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
             legacy_booleans: false,
@@ -226,6 +263,12 @@ impl ParserConfig {
             max_alias_expansions: 100,
             max_mapping_keys: 1024,
             max_sequence_length: 1024,
+            max_events: 100_000,
+            max_nodes: 25_000,
+            max_total_scalar_bytes: 1024 * 1024, // 1 MB
+            max_documents: 100,
+            max_merge_keys: 1_000,
+            alias_anchor_ratio: Some(5.0),
             strict_booleans: true,
             legacy_booleans: false,
             duplicate_key_policy: DuplicateKeyPolicy::Error,
@@ -394,6 +437,102 @@ impl ParserConfig {
     #[must_use]
     pub fn max_sequence_length(mut self, max: usize) -> Self {
         self.max_sequence_length = max;
+        self
+    }
+
+    /// Set the maximum total parser-event budget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_events(50_000);
+    /// assert_eq!(cfg.max_events, 50_000);
+    /// ```
+    #[must_use]
+    pub fn max_events(mut self, max: usize) -> Self {
+        self.max_events = max;
+        self
+    }
+
+    /// Set the maximum total `Value` node budget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_nodes(10_000);
+    /// assert_eq!(cfg.max_nodes, 10_000);
+    /// ```
+    #[must_use]
+    pub fn max_nodes(mut self, max: usize) -> Self {
+        self.max_nodes = max;
+        self
+    }
+
+    /// Set the maximum cumulative scalar-byte budget.
+    ///
+    /// Distinct from [`Self::max_document_length`] — this caps
+    /// scalar bytes after alias expansion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_total_scalar_bytes(8 * 1024 * 1024);
+    /// assert_eq!(cfg.max_total_scalar_bytes, 8 * 1024 * 1024);
+    /// ```
+    #[must_use]
+    pub fn max_total_scalar_bytes(mut self, max: usize) -> Self {
+        self.max_total_scalar_bytes = max;
+        self
+    }
+
+    /// Set the maximum document count for multi-document streams.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_documents(64);
+    /// assert_eq!(cfg.max_documents, 64);
+    /// ```
+    #[must_use]
+    pub fn max_documents(mut self, max: usize) -> Self {
+        self.max_documents = max;
+        self
+    }
+
+    /// Set the maximum merge-key count budget.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().max_merge_keys(1_000);
+    /// assert_eq!(cfg.max_merge_keys, 1_000);
+    /// ```
+    #[must_use]
+    pub fn max_merge_keys(mut self, max: usize) -> Self {
+        self.max_merge_keys = max;
+        self
+    }
+
+    /// Set the alias-to-anchor ratio heuristic.
+    ///
+    /// Pass `Some(ratio)` to enable the billion-laughs guard,
+    /// `None` to disable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ParserConfig;
+    /// let cfg = ParserConfig::new().alias_anchor_ratio(Some(20.0));
+    /// assert_eq!(cfg.alias_anchor_ratio, Some(20.0));
+    /// ```
+    #[must_use]
+    pub fn alias_anchor_ratio(mut self, ratio: Option<f64>) -> Self {
+        self.alias_anchor_ratio = ratio;
         self
     }
 

@@ -31,6 +31,12 @@ pub struct ParseConfig {
     pub max_alias_expansions: usize,
     pub max_mapping_keys: usize,
     pub max_sequence_length: usize,
+    pub max_events: usize,
+    pub max_nodes: usize,
+    pub max_total_scalar_bytes: usize,
+    pub max_documents: usize,
+    pub max_merge_keys: usize,
+    pub alias_anchor_ratio: Option<f64>,
     pub duplicate_key_policy: DuplicateKeyPolicy,
     pub strict_booleans: bool,
     pub legacy_booleans: bool,
@@ -49,6 +55,12 @@ impl Default for ParseConfig {
             max_alias_expansions: 1024,
             max_mapping_keys: 1024 * 64,
             max_sequence_length: 1024 * 64,
+            max_events: 1_000_000,
+            max_nodes: 250_000,
+            max_total_scalar_bytes: 1024 * 1024 * 64,
+            max_documents: 1_000,
+            max_merge_keys: 10_000,
+            alias_anchor_ratio: Some(10.0),
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
             legacy_booleans: false,
@@ -69,6 +81,12 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             max_alias_expansions: c.max_alias_expansions,
             max_mapping_keys: c.max_mapping_keys,
             max_sequence_length: c.max_sequence_length,
+            max_events: c.max_events,
+            max_nodes: c.max_nodes,
+            max_total_scalar_bytes: c.max_total_scalar_bytes,
+            max_documents: c.max_documents,
+            max_merge_keys: c.max_merge_keys,
+            alias_anchor_ratio: c.alias_anchor_ratio,
             duplicate_key_policy: match c.duplicate_key_policy {
                 crate::de::DuplicateKeyPolicy::First => DuplicateKeyPolicy::First,
                 crate::de::DuplicateKeyPolicy::Last => DuplicateKeyPolicy::Last,
@@ -198,6 +216,14 @@ struct Loader<'a> {
     config: &'a ParseConfig,
     depth: usize,
     in_document: bool,
+    /// Total parser events seen (for `max_events`).
+    event_count: usize,
+    /// Cumulative scalar bytes seen (for `max_total_scalar_bytes`).
+    scalar_bytes: usize,
+    /// Anchor count (for `alias_anchor_ratio` denominator).
+    anchor_count: usize,
+    /// Merge-key occurrences (for `max_merge_keys`).
+    merge_key_count: usize,
 }
 
 #[cfg(feature = "std")]
@@ -212,6 +238,10 @@ impl<'a> Loader<'a> {
             config,
             depth: 0,
             in_document: false,
+            event_count: 0,
+            scalar_bytes: 0,
+            anchor_count: 0,
+            merge_key_count: 0,
         }
     }
 
@@ -223,6 +253,37 @@ impl<'a> Loader<'a> {
         if !self.config.policies.is_empty() {
             run_event_policies(&event, &self.config.policies)?;
         }
+        // ── Budget: total events ─────────────────────────────────
+        self.event_count += 1;
+        if self.event_count > self.config.max_events {
+            return Err(Error::Budget(crate::BudgetBreach::MaxEvents {
+                limit: self.config.max_events,
+                observed: self.event_count,
+            }));
+        }
+        // ── Budget: cumulative scalar bytes (per-Scalar event) ──
+        if let Event::Scalar { value, .. } = &event {
+            self.scalar_bytes = self.scalar_bytes.saturating_add(value.len());
+            if self.scalar_bytes > self.config.max_total_scalar_bytes {
+                return Err(Error::Budget(crate::BudgetBreach::MaxTotalScalarBytes {
+                    limit: self.config.max_total_scalar_bytes,
+                    observed: self.scalar_bytes,
+                }));
+            }
+        }
+        // ── Budget: anchor / alias counters ─────────────────────
+        if let Event::Scalar {
+            anchor: Some(_), ..
+        }
+        | Event::SequenceStart {
+            anchor: Some(_), ..
+        }
+        | Event::MappingStart {
+            anchor: Some(_), ..
+        } = &event
+        {
+            self.anchor_count = self.anchor_count.saturating_add(1);
+        }
         match event {
             Event::StreamStart | Event::StreamEnd => {}
             Event::DocumentStart => {
@@ -230,6 +291,13 @@ impl<'a> Loader<'a> {
                 self.anchor_map.clear();
                 self.alias_count = 0;
                 self.alias_bytes = 0;
+                // Budget: max_documents
+                if self.docs.len() + 1 > self.config.max_documents {
+                    return Err(Error::Budget(crate::BudgetBreach::MaxDocuments {
+                        limit: self.config.max_documents,
+                        observed: self.docs.len() + 1,
+                    }));
+                }
             }
             Event::DocumentEnd => {
                 self.in_document = false;
@@ -241,6 +309,19 @@ impl<'a> Loader<'a> {
                 self.alias_count += 1;
                 if self.alias_count > self.config.max_alias_expansions {
                     return Err(Error::RepetitionLimitExceeded);
+                }
+                // Budget: alias_anchor_ratio heuristic.
+                // Trips when aliases vastly outnumber anchors —
+                // a billion-laughs amplification fingerprint.
+                if let Some(ratio) = self.config.alias_anchor_ratio {
+                    let anchors = self.anchor_count.max(1) as f64;
+                    if (self.alias_count as f64) > ratio * anchors {
+                        return Err(Error::Budget(crate::BudgetBreach::AliasAnchorRatio {
+                            ratio,
+                            anchors: self.anchor_count,
+                            aliases: self.alias_count,
+                        }));
+                    }
                 }
 
                 let (value, span_tree) =
@@ -477,6 +558,13 @@ impl<'a> Loader<'a> {
                     ));
                 }
                 if is_merge && !merge_treat_as_ordinary {
+                    self.merge_key_count = self.merge_key_count.saturating_add(1);
+                    if self.merge_key_count > self.config.max_merge_keys {
+                        return Err(Error::Budget(crate::BudgetBreach::MaxMergeKeys {
+                            limit: self.config.max_merge_keys,
+                            observed: self.merge_key_count,
+                        }));
+                    }
                     merge_values.push(value);
                 } else {
                     if map.len() >= self.config.max_mapping_keys {

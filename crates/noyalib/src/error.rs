@@ -141,6 +141,111 @@ impl fmt::Display for Location {
 
 /// Errors that can occur during YAML serialization or deserialization.
 ///
+/// Identifies which configurable parser budget was breached
+/// when an [`Error::Budget`] is raised.
+///
+/// Each variant carries the configured `limit` and (where
+/// meaningful) the `observed` value at the moment the cap
+/// tripped. Pattern-match on this enum to surface the specific
+/// budget in CLI / LSP / MCP diagnostics.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{BudgetBreach, Error};
+/// let breach = BudgetBreach::MaxNodes { limit: 250_000, observed: 250_001 };
+/// let _e = Error::Budget(breach);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum BudgetBreach {
+    /// Total parser events exceeded `ParserConfig::max_events`.
+    MaxEvents {
+        /// The configured cap.
+        limit: usize,
+        /// The observed event count when the cap tripped.
+        observed: usize,
+    },
+    /// Total `Value` nodes in the AST exceeded
+    /// `ParserConfig::max_nodes`.
+    MaxNodes {
+        /// The configured cap.
+        limit: usize,
+        /// The observed node count when the cap tripped.
+        observed: usize,
+    },
+    /// Cumulative scalar byte count exceeded
+    /// `ParserConfig::max_total_scalar_bytes`.
+    MaxTotalScalarBytes {
+        /// The configured cap, in bytes.
+        limit: usize,
+        /// The observed cumulative scalar bytes when the cap tripped.
+        observed: usize,
+    },
+    /// Multi-document stream exceeded
+    /// `ParserConfig::max_documents`.
+    MaxDocuments {
+        /// The configured cap.
+        limit: usize,
+        /// The observed document count when the cap tripped.
+        observed: usize,
+    },
+    /// Merge-key (`<<`) count exceeded
+    /// `ParserConfig::max_merge_keys`.
+    MaxMergeKeys {
+        /// The configured cap.
+        limit: usize,
+        /// The observed merge-key count when the cap tripped.
+        observed: usize,
+    },
+    /// Alias-to-anchor ratio exceeded
+    /// `ParserConfig::alias_anchor_ratio` — heuristic for
+    /// billion-laughs-style amplification.
+    AliasAnchorRatio {
+        /// The configured ratio cap.
+        ratio: f64,
+        /// Number of anchors observed at the moment the cap tripped.
+        anchors: usize,
+        /// Number of aliases observed at the moment the cap tripped.
+        aliases: usize,
+    },
+}
+
+impl fmt::Display for BudgetBreach {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BudgetBreach::MaxEvents { limit, observed } => write!(
+                f,
+                "max_events budget exceeded: observed {observed} > limit {limit}"
+            ),
+            BudgetBreach::MaxNodes { limit, observed } => write!(
+                f,
+                "max_nodes budget exceeded: observed {observed} > limit {limit}"
+            ),
+            BudgetBreach::MaxTotalScalarBytes { limit, observed } => write!(
+                f,
+                "max_total_scalar_bytes budget exceeded: observed {observed} > limit {limit}"
+            ),
+            BudgetBreach::MaxDocuments { limit, observed } => write!(
+                f,
+                "max_documents budget exceeded: observed {observed} > limit {limit}"
+            ),
+            BudgetBreach::MaxMergeKeys { limit, observed } => write!(
+                f,
+                "max_merge_keys budget exceeded: observed {observed} > limit {limit}"
+            ),
+            BudgetBreach::AliasAnchorRatio {
+                ratio,
+                anchors,
+                aliases,
+            } => write!(
+                f,
+                "alias_anchor_ratio heuristic tripped: {aliases} aliases / {anchors} anchors > {ratio}"
+            ),
+        }
+    }
+}
+
 /// # Examples
 ///
 /// ```
@@ -326,6 +431,30 @@ pub enum Error {
     /// let _e = noyalib::Error::RepetitionLimitExceeded;
     /// ```
     RepetitionLimitExceeded,
+
+    /// A configurable parser budget was exceeded.
+    ///
+    /// Carries a [`BudgetBreach`] identifying which limit fired,
+    /// the configured cap, and (where meaningful) the observed
+    /// value at the moment the cap tripped. Distinct from the
+    /// older [`Error::RecursionLimitExceeded`] /
+    /// [`Error::RepetitionLimitExceeded`] variants — those stay
+    /// for backwards compatibility on the depth / alias-expansion
+    /// limits; new budgets in the v0.0.2 expansion (`max_events`,
+    /// `max_nodes`, `max_total_scalar_bytes`, `max_documents`,
+    /// `max_merge_keys`, `alias_anchor_ratio`) all flow through
+    /// `Error::Budget`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{BudgetBreach, Error};
+    /// let _e = Error::Budget(BudgetBreach::MaxDocuments {
+    ///     limit: 1_000,
+    ///     observed: 1_001,
+    /// });
+    /// ```
+    Budget(BudgetBreach),
 
     /// Unknown anchor encountered.
     ///
@@ -583,6 +712,7 @@ impl fmt::Display for Error {
             }
             Error::DuplicateKey(name) => write!(f, "duplicate key: {name}"),
             Error::RepetitionLimitExceeded => f.write_str("alias expansion limit exceeded"),
+            Error::Budget(breach) => write!(f, "{breach}"),
             Error::UnknownAnchor(name) => write!(f, "unknown anchor: {name}"),
             Error::UnknownAnchorAt { name, location, .. } => {
                 write!(f, "unknown anchor: {name} at {location}")
@@ -1008,6 +1138,7 @@ impl miette::Diagnostic for Error {
             Error::UnknownField(_) => "noyalib::unknown_field",
             Error::RecursionLimitExceeded { .. } => "noyalib::recursion_limit",
             Error::RepetitionLimitExceeded => "noyalib::repetition_limit",
+            Error::Budget(_) => "noyalib::budget",
             Error::UnknownAnchor(_) | Error::UnknownAnchorAt { .. } => "noyalib::unknown_anchor",
             Error::DuplicateKey(_) => "noyalib::duplicate_key",
             Error::EndOfStream => "noyalib::eof",
@@ -1035,6 +1166,9 @@ impl miette::Diagnostic for Error {
             }
             Error::RepetitionLimitExceeded => {
                 Some("increase ParserConfig::max_alias_expansions or reduce alias usage".into())
+            }
+            Error::Budget(_) => {
+                Some("raise the matching ParserConfig::max_* limit or simplify the input".into())
             }
             Error::DuplicateKey(_) => {
                 Some("use DuplicateKeyPolicy::Last or ::Error to control behaviour".into())

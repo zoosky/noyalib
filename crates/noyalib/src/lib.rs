@@ -496,7 +496,7 @@ pub use de::{
     DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig, YamlVersion,
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
-pub use error::{Error, Location, Result};
+pub use error::{BudgetBreach, Error, Location, Result};
 pub use flattened::Flattened;
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};
 pub use path::Path;
