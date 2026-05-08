@@ -69,6 +69,19 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Noyalib"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# ── Examples (per-crate `examples/` directories) ─────────────────
+# Editor configs, MCP host configs, ecosystem schema-gate scripts,
+# and WASM JS / browser demos under each `crates/<name>/examples/`
+# tree. Most are JSON / TOML / shell / Lua / Emacs Lisp / JS files
+# where the inline SPDX comment is awkward (or, for JSON,
+# impossible — JSON has no comment syntax) — so REUSE 3.3
+# annotations cover them in aggregate.
+[[annotations]]
+path = "crates/*/examples/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # ── Test fixtures (in-repo) ───────────────────────────────────────
 [[annotations]]
 path = [

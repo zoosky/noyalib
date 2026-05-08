@@ -40,12 +40,31 @@ pub struct Mapping(FxIndexMap<String, Value>);
 
 impl Mapping {
     /// Creates an empty mapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Mapping;
+    /// let m = Mapping::new();
+    /// assert!(m.is_empty());
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self(FxIndexMap::default())
     }
 
     /// Creates an empty mapping with the specified capacity.
+    ///
+    /// Pre-allocates room for `capacity` entries to avoid
+    /// rehashing during the first inserts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Mapping;
+    /// let m = Mapping::with_capacity(16);
+    /// assert!(m.capacity() >= 16);
+    /// ```
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self(FxIndexMap::with_capacity_and_hasher(
@@ -56,34 +75,86 @@ impl Mapping {
 
     /// Returns the number of key-value pairs the mapping can hold without
     /// reallocating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Mapping;
+    /// let m = Mapping::with_capacity(8);
+    /// assert!(m.capacity() >= 8);
+    /// ```
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.0.capacity()
     }
 
     /// Reserves capacity for at least `additional` more key-value pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Mapping;
+    /// let mut m = Mapping::new();
+    /// m.reserve(64);
+    /// assert!(m.capacity() >= 64);
+    /// ```
     pub fn reserve(&mut self, additional: usize) {
         self.0.reserve(additional);
     }
 
     /// Shrinks the capacity of the mapping as much as possible.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Mapping;
+    /// let mut m = Mapping::with_capacity(64);
+    /// m.shrink_to_fit();
+    /// // capacity may now be 0 or any small implementation-defined value.
+    /// ```
     pub fn shrink_to_fit(&mut self) {
         self.0.shrink_to_fit();
     }
 
     /// Returns the number of key-value pairs in the mapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// assert_eq!(m.len(), 1);
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Returns `true` if the mapping contains no key-value pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Mapping;
+    /// assert!(Mapping::new().is_empty());
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
     /// Clears the mapping, removing all key-value pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.clear();
+    /// assert!(m.is_empty());
+    /// ```
     pub fn clear(&mut self) {
         self.0.clear();
     }
@@ -92,35 +163,100 @@ impl Mapping {
     ///
     /// If the mapping already had this key present, the value is updated,
     /// and the old value is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// assert_eq!(m.insert("a", Value::from(1_i64)), None);
+    /// assert_eq!(m.insert("a", Value::from(2_i64)).and_then(|v| v.as_i64()), Some(1));
+    /// ```
     pub fn insert(&mut self, key: impl Into<String>, value: Value) -> Option<Value> {
         self.0.insert(key.into(), value)
     }
 
     /// Returns `true` if the mapping contains the specified key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// assert!(m.contains_key("a"));
+    /// assert!(!m.contains_key("b"));
+    /// ```
     #[must_use]
     pub fn contains_key(&self, key: &str) -> bool {
         self.0.contains_key(key)
     }
 
     /// Returns a reference to the value corresponding to the key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(1));
+    /// assert!(m.get("b").is_none());
+    /// ```
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.0.get(key)
     }
 
     /// Returns a mutable reference to the value corresponding to the key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// if let Some(v) = m.get_mut("a") {
+    ///     *v = Value::from(2_i64);
+    /// }
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(2));
+    /// ```
     #[must_use]
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
         self.0.get_mut(key)
     }
 
     /// Returns a reference to the key-value pair at the given index.
+    ///
+    /// Indexing follows insertion order (this is an `IndexMap`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("first", Value::from(1_i64));
+    /// m.insert("second", Value::from(2_i64));
+    /// assert_eq!(m.get_index(0).map(|(k, _)| k.as_str()), Some("first"));
+    /// ```
     #[must_use]
     pub fn get_index(&self, index: usize) -> Option<(&String, &Value)> {
         self.0.get_index(index)
     }
 
     /// Returns a mutable reference to the key-value pair at the given index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// if let Some((_, v)) = m.get_index_mut(0) {
+    ///     *v = Value::from(99_i64);
+    /// }
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(99));
+    /// ```
     #[must_use]
     pub fn get_index_mut(&mut self, index: usize) -> Option<(&String, &mut Value)> {
         self.0.get_index_mut(index)
@@ -129,7 +265,19 @@ impl Mapping {
     /// Removes a key from the mapping, returning the value if the key was
     /// present.
     ///
-    /// This operation preserves the order of remaining elements.
+    /// This operation preserves the order of remaining elements
+    /// (uses `shift_remove` semantics, `O(n)`). For order-agnostic
+    /// `O(1)` removal, see [`Mapping::swap_remove`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// assert_eq!(m.remove("a").and_then(|v| v.as_i64()), Some(1));
+    /// assert!(m.remove("a").is_none());
+    /// ```
     pub fn remove(&mut self, key: &str) -> Option<Value> {
         self.0.shift_remove(key)
     }
@@ -137,30 +285,93 @@ impl Mapping {
     /// Removes a key from the mapping, returning the key-value pair if present.
     ///
     /// This operation preserves the order of remaining elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// let (k, v) = m.remove_entry("a").unwrap();
+    /// assert_eq!(k, "a");
+    /// assert_eq!(v.as_i64(), Some(1));
+    /// ```
     pub fn remove_entry(&mut self, key: &str) -> Option<(String, Value)> {
         self.0.shift_remove_entry(key)
     }
 
     /// Removes a key by swapping it with the last element.
     ///
-    /// This is faster than `remove` but does not preserve order.
+    /// This is `O(1)` but does not preserve order. For
+    /// order-preserving removal, see [`Mapping::remove`] or
+    /// [`Mapping::shift_remove`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// m.insert("c", Value::from(3_i64));
+    /// m.swap_remove("a");
+    /// // Order is no longer guaranteed; "c" might now sit where "a" was.
+    /// assert_eq!(m.len(), 2);
+    /// ```
     pub fn swap_remove(&mut self, key: &str) -> Option<Value> {
         self.0.swap_remove(key)
     }
 
     /// Removes a key by shifting all elements after it.
     ///
-    /// This preserves order but is slower than `swap_remove`.
+    /// This preserves order but is `O(n)`. Equivalent to
+    /// [`Mapping::remove`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// m.shift_remove("a");
+    /// assert_eq!(m.iter().next().map(|(k, _)| k.as_str()), Some("b"));
+    /// ```
     pub fn shift_remove(&mut self, key: &str) -> Option<Value> {
         self.0.shift_remove(key)
     }
 
     /// Gets the entry for the given key for in-place manipulation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.entry("counter").or_insert(Value::from(0_i64));
+    /// if let Some(Value::Number(n)) = m.get_mut("counter") {
+    ///     if let Some(c) = n.as_i64() { *n = noyalib::Number::Integer(c + 1); }
+    /// }
+    /// assert_eq!(m.get("counter").and_then(Value::as_i64), Some(1));
+    /// ```
     pub fn entry(&mut self, key: impl Into<String>) -> indexmap::map::Entry<'_, String, Value> {
         self.0.entry(key.into())
     }
 
     /// Retains only the key-value pairs specified by the predicate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// m.insert("c", Value::from(3_i64));
+    /// m.retain(|_k, v| v.as_i64().unwrap_or(0) >= 2);
+    /// assert_eq!(m.len(), 2);
+    /// assert!(!m.contains_key("a"));
+    /// ```
     pub fn retain<F>(&mut self, f: F)
     where
         F: FnMut(&String, &mut Value) -> bool,
@@ -168,79 +379,237 @@ impl Mapping {
         self.0.retain(f);
     }
 
-    /// Returns an iterator over the key-value pairs.
+    /// Returns an iterator over the key-value pairs in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// let total: i64 = m.iter().filter_map(|(_, v)| v.as_i64()).sum();
+    /// assert_eq!(total, 3);
+    /// ```
     #[must_use]
     pub fn iter(&self) -> Iter<'_, String, Value> {
         self.0.iter()
     }
 
-    /// Returns a mutable iterator over the key-value pairs.
+    /// Returns a mutable iterator over the key-value pairs in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Number, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// for (_, v) in m.iter_mut() {
+    ///     if let Value::Number(Number::Integer(n)) = v { *n *= 2; }
+    /// }
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(2));
+    /// ```
     pub fn iter_mut(&mut self) -> IterMut<'_, String, Value> {
         self.0.iter_mut()
     }
 
-    /// Returns an iterator over the keys.
+    /// Returns an iterator over the keys in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// let keys: Vec<&str> = m.keys().map(String::as_str).collect();
+    /// assert_eq!(keys, &["a", "b"]);
+    /// ```
     #[must_use]
     pub fn keys(&self) -> Keys<'_, String, Value> {
         self.0.keys()
     }
 
-    /// Returns an iterator over the values.
+    /// Returns an iterator over the values in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// let sum: i64 = m.values().filter_map(Value::as_i64).sum();
+    /// assert_eq!(sum, 3);
+    /// ```
     #[must_use]
     pub fn values(&self) -> Values<'_, String, Value> {
         self.0.values()
     }
 
-    /// Returns a mutable iterator over the values.
+    /// Returns a mutable iterator over the values in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Number, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(10_i64));
+    /// m.insert("b", Value::from(20_i64));
+    /// for v in m.values_mut() {
+    ///     if let Value::Number(Number::Integer(n)) = v { *n /= 10; }
+    /// }
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(1));
+    /// ```
     pub fn values_mut(&mut self) -> ValuesMut<'_, String, Value> {
         self.0.values_mut()
     }
 
-    /// Returns the first key-value pair.
+    /// Returns the first key-value pair in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// assert_eq!(m.first().map(|(k, _)| k.as_str()), Some("a"));
+    /// ```
     #[must_use]
     pub fn first(&self) -> Option<(&String, &Value)> {
         self.0.first()
     }
 
     /// Returns a mutable reference to the first key-value pair.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// if let Some((_, v)) = m.first_mut() { *v = Value::from(99_i64); }
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(99));
+    /// ```
     #[must_use]
     pub fn first_mut(&mut self) -> Option<(&String, &mut Value)> {
         self.0.first_mut()
     }
 
-    /// Returns the last key-value pair.
+    /// Returns the last key-value pair in insertion order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// assert_eq!(m.last().map(|(k, _)| k.as_str()), Some("b"));
+    /// ```
     #[must_use]
     pub fn last(&self) -> Option<(&String, &Value)> {
         self.0.last()
     }
 
     /// Returns a mutable reference to the last key-value pair.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// if let Some((_, v)) = m.last_mut() { *v = Value::from(99_i64); }
+    /// assert_eq!(m.get("b").and_then(Value::as_i64), Some(99));
+    /// ```
     #[must_use]
     pub fn last_mut(&mut self) -> Option<(&String, &mut Value)> {
         self.0.last_mut()
     }
 
     /// Removes and returns the first key-value pair.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// let (k, _) = m.pop_first().unwrap();
+    /// assert_eq!(k, "a");
+    /// assert_eq!(m.len(), 1);
+    /// ```
     pub fn pop_first(&mut self) -> Option<(String, Value)> {
         self.0.shift_remove_index(0)
     }
 
     /// Removes and returns the last key-value pair.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// let (k, _) = m.pop_last().unwrap();
+    /// assert_eq!(k, "b");
+    /// ```
     pub fn pop_last(&mut self) -> Option<(String, Value)> {
         self.0.pop()
     }
 
-    /// Sorts the mapping by keys.
+    /// Sorts the mapping by keys (lexicographic order).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("c", Value::from(3_i64));
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// m.sort_keys();
+    /// let keys: Vec<&str> = m.keys().map(String::as_str).collect();
+    /// assert_eq!(keys, &["a", "b", "c"]);
+    /// ```
     pub fn sort_keys(&mut self) {
         self.0.sort_keys();
     }
 
     /// Reverses the order of key-value pairs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// m.insert("b", Value::from(2_i64));
+    /// m.reverse();
+    /// assert_eq!(m.first().map(|(k, _)| k.as_str()), Some("b"));
+    /// ```
     pub fn reverse(&mut self) {
         self.0.reverse();
     }
 
     /// Extends the mapping with the contents of an iterator.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.extend([
+    ///     ("a".to_owned(), Value::from(1_i64)),
+    ///     ("b".to_owned(), Value::from(2_i64)),
+    /// ]);
+    /// assert_eq!(m.len(), 2);
+    /// ```
     pub fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (String, Value)>,
@@ -248,7 +617,17 @@ impl Mapping {
         self.0.extend(iter);
     }
 
-    /// Returns the inner `IndexMap`.
+    /// Consumes the mapping and returns its contents as an `IndexMap`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Mapping, Value};
+    /// let mut m = Mapping::new();
+    /// m.insert("a", Value::from(1_i64));
+    /// let inner = m.into_inner();
+    /// assert_eq!(inner.len(), 1);
+    /// ```
     #[must_use]
     pub fn into_inner(self) -> IndexMap<String, Value> {
         // Convert from FxIndexMap to standard IndexMap for public API stability
@@ -256,6 +635,17 @@ impl Mapping {
     }
 
     /// Creates a mapping from an `IndexMap`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexmap::IndexMap;
+    /// use noyalib::{Mapping, Value};
+    /// let mut src = IndexMap::new();
+    /// src.insert("a".to_owned(), Value::from(1_i64));
+    /// let m = Mapping::from_inner(src);
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(1));
+    /// ```
     #[must_use]
     pub fn from_inner(map: IndexMap<String, Value>) -> Self {
         Self(map.into_iter().collect())
@@ -2009,49 +2399,114 @@ pub enum Value {
 }
 
 impl Value {
-    /// Returns true if the value is null.
+    /// Returns `true` if the value is `Value::Null`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::Null.is_null());
+    /// assert!(!Value::from(false).is_null());
+    /// ```
     #[must_use]
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
 
-    /// Returns true if the value is a boolean.
+    /// Returns `true` if the value is a boolean.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::from(true).is_bool());
+    /// assert!(!Value::from(1_i64).is_bool());
+    /// ```
     #[must_use]
     pub fn is_bool(&self) -> bool {
         matches!(self, Value::Bool(_))
     }
 
-    /// Returns true if the value is a number.
+    /// Returns `true` if the value is a number (integer or float).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::from(42_i64).is_number());
+    /// assert!(Value::from(1.5).is_number());
+    /// assert!(!Value::from("42").is_number());
+    /// ```
     #[must_use]
     pub fn is_number(&self) -> bool {
         matches!(self, Value::Number(_))
     }
 
-    /// Returns true if the value is a string.
+    /// Returns `true` if the value is a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::from("hello").is_string());
+    /// assert!(!Value::from(42_i64).is_string());
+    /// ```
     #[must_use]
     pub fn is_string(&self) -> bool {
         matches!(self, Value::String(_))
     }
 
-    /// Returns true if the value is a sequence.
+    /// Returns `true` if the value is a sequence (YAML list).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("[1, 2, 3]").unwrap();
+    /// assert!(v.is_sequence());
+    /// ```
     #[must_use]
     pub fn is_sequence(&self) -> bool {
         matches!(self, Value::Sequence(_))
     }
 
-    /// Returns true if the value is a mapping.
+    /// Returns `true` if the value is a mapping (YAML map).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("a: 1\nb: 2\n").unwrap();
+    /// assert!(v.is_mapping());
+    /// ```
     #[must_use]
     pub fn is_mapping(&self) -> bool {
         matches!(self, Value::Mapping(_))
     }
 
-    /// Returns true if the value is tagged.
+    /// Returns `true` if the value is tagged (custom YAML tag).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("!Custom 'hello'\n").unwrap();
+    /// assert!(v.is_tagged());
+    /// ```
     #[must_use]
     pub fn is_tagged(&self) -> bool {
         matches!(self, Value::Tagged(_))
     }
 
     /// Returns the value as a boolean if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert_eq!(Value::from(true).as_bool(), Some(true));
+    /// assert_eq!(Value::from("true").as_bool(), None);
+    /// ```
     #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -2061,6 +2516,14 @@ impl Value {
     }
 
     /// Returns `Some(())` if the value is null, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert_eq!(Value::Null.as_null(), Some(()));
+    /// assert_eq!(Value::from(0_i64).as_null(), None);
+    /// ```
     #[must_use]
     pub fn as_null(&self) -> Option<()> {
         match self {
@@ -2069,7 +2532,18 @@ impl Value {
         }
     }
 
-    /// Returns the value as an i64 if it is an integer.
+    /// Returns the value as an `i64` if it is an integer.
+    ///
+    /// Floats return `None` even when the underlying value is a
+    /// whole number; the type tag is part of the test.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert_eq!(Value::from(42_i64).as_i64(), Some(42));
+    /// assert_eq!(Value::from(1.5).as_i64(), None);
+    /// ```
     #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
@@ -2078,7 +2552,17 @@ impl Value {
         }
     }
 
-    /// Returns the value as a u64 if it is a non-negative integer.
+    /// Returns the value as a `u64` if it is a non-negative integer.
+    ///
+    /// Negative integers return `None`. Floats also return `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert_eq!(Value::from(42_i64).as_u64(), Some(42));
+    /// assert_eq!(Value::from(-1_i64).as_u64(), None);
+    /// ```
     #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
@@ -2087,7 +2571,19 @@ impl Value {
         }
     }
 
-    /// Returns the value as an f64 if it is a number.
+    /// Returns the value as an `f64` if it is a number.
+    ///
+    /// Integers are widened to `f64` (with the usual `i64 → f64`
+    /// precision loss for magnitudes above 2^53).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert_eq!(Value::from(42_i64).as_f64(), Some(42.0));
+    /// assert_eq!(Value::from(1.5).as_f64(), Some(1.5));
+    /// assert_eq!(Value::from("42").as_f64(), None);
+    /// ```
     #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
         match self {
@@ -2096,7 +2592,15 @@ impl Value {
         }
     }
 
-    /// Returns true if the value is an integer that fits in i64.
+    /// Returns `true` if the value is an integer that fits in `i64`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::from(42_i64).is_i64());
+    /// assert!(!Value::from(1.5).is_i64());
+    /// ```
     #[must_use]
     pub fn is_i64(&self) -> bool {
         match self {
@@ -2105,7 +2609,15 @@ impl Value {
         }
     }
 
-    /// Returns true if the value is a non-negative integer that fits in u64.
+    /// Returns `true` if the value is a non-negative integer that fits in `u64`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::from(42_i64).is_u64());
+    /// assert!(!Value::from(-1_i64).is_u64());
+    /// ```
     #[must_use]
     pub fn is_u64(&self) -> bool {
         match self {
@@ -2114,13 +2626,29 @@ impl Value {
         }
     }
 
-    /// Returns true if the value is a number (always convertible to f64).
+    /// Returns `true` if the value is a number (always convertible to `f64`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert!(Value::from(42_i64).is_f64());
+    /// assert!(Value::from(1.5).is_f64());
+    /// ```
     #[must_use]
     pub fn is_f64(&self) -> bool {
         matches!(self, Value::Number(_))
     }
 
     /// Returns the value as a string slice if it is a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Value;
+    /// assert_eq!(Value::from("hello").as_str(), Some("hello"));
+    /// assert_eq!(Value::from(42_i64).as_str(), None);
+    /// ```
     #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -2130,6 +2658,14 @@ impl Value {
     }
 
     /// Returns the value as a sequence if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("[1, 2, 3]").unwrap();
+    /// assert_eq!(v.as_sequence().map(|s| s.len()), Some(3));
+    /// ```
     #[must_use]
     pub fn as_sequence(&self) -> Option<&Sequence> {
         match self {
@@ -2139,6 +2675,17 @@ impl Value {
     }
 
     /// Returns the value as a mutable sequence if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let mut v: Value = from_str("[1, 2]").unwrap();
+    /// if let Some(seq) = v.as_sequence_mut() {
+    ///     seq.push(Value::from(3_i64));
+    /// }
+    /// assert_eq!(v.as_sequence().unwrap().len(), 3);
+    /// ```
     #[must_use]
     pub fn as_sequence_mut(&mut self) -> Option<&mut Sequence> {
         match self {
@@ -2148,6 +2695,15 @@ impl Value {
     }
 
     /// Returns the value as a mapping if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("a: 1\nb: 2\n").unwrap();
+    /// let m = v.as_mapping().unwrap();
+    /// assert_eq!(m.get("a").and_then(Value::as_i64), Some(1));
+    /// ```
     #[must_use]
     pub fn as_mapping(&self) -> Option<&Mapping> {
         match self {
@@ -2157,6 +2713,17 @@ impl Value {
     }
 
     /// Returns the value as a mutable mapping if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let mut v: Value = from_str("a: 1\n").unwrap();
+    /// if let Some(m) = v.as_mapping_mut() {
+    ///     m.insert("b", Value::from(2_i64));
+    /// }
+    /// assert_eq!(v.as_mapping().unwrap().len(), 2);
+    /// ```
     #[must_use]
     pub fn as_mapping_mut(&mut self) -> Option<&mut Mapping> {
         match self {
@@ -2166,6 +2733,15 @@ impl Value {
     }
 
     /// Returns the value as a tagged value if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("!Custom 'hi'\n").unwrap();
+    /// let tv = v.as_tagged().unwrap();
+    /// assert_eq!(tv.tag().as_str(), "!Custom");
+    /// ```
     #[must_use]
     pub fn as_tagged(&self) -> Option<&TaggedValue> {
         match self {
@@ -2175,6 +2751,19 @@ impl Value {
     }
 
     /// Returns the value as a mutable tagged value if it is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Tag, Value};
+    /// let mut v: Value = from_str("!A 'x'\n").unwrap();
+    /// if let Some(tv) = v.as_tagged_mut() {
+    ///     // mutate inner via value_mut
+    ///     *tv.value_mut() = Value::from("y");
+    /// }
+    /// assert_eq!(v.as_tagged().unwrap().value().as_str(), Some("y"));
+    /// # let _ = Tag::new("!A");
+    /// ```
     #[must_use]
     pub fn as_tagged_mut(&mut self) -> Option<&mut TaggedValue> {
         match self {
@@ -2184,12 +2773,34 @@ impl Value {
     }
 
     /// Index into a sequence or mapping.
+    ///
+    /// Accepts a string key (for mappings) or a `usize` index
+    /// (for sequences).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("a: [1, 2, 3]\n").unwrap();
+    /// assert_eq!(v.get("a").unwrap().get(0).and_then(Value::as_i64), Some(1));
+    /// ```
     #[must_use]
     pub fn get<I: ValueIndex>(&self, index: I) -> Option<&Value> {
         index.index_into(self)
     }
 
     /// Mutably index into a sequence or mapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let mut v: Value = from_str("a: 1\n").unwrap();
+    /// if let Some(slot) = v.get_mut("a") {
+    ///     *slot = Value::from(2_i64);
+    /// }
+    /// assert_eq!(v.get("a").and_then(Value::as_i64), Some(2));
+    /// ```
     #[must_use]
     pub fn get_mut<I: ValueIndex>(&mut self, index: I) -> Option<&mut Value> {
         index.index_into_mut(self)
@@ -2777,6 +3388,16 @@ impl Value {
     /// If the value is `Value::Tagged`, the inner value is returned
     /// (recursively untagged). Sequences and mappings have their elements
     /// recursively untagged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("!Custom 'hi'\n").unwrap();
+    /// assert!(v.is_tagged());
+    /// let untagged = v.untag();
+    /// assert_eq!(untagged.as_str(), Some("hi"));
+    /// ```
     #[must_use]
     pub fn untag(self) -> Self {
         match self {
@@ -2795,6 +3416,14 @@ impl Value {
     /// If the value is `Value::Tagged`, returns a reference to the inner value
     /// (recursively following tags). Does not recurse into sequences or
     /// mappings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let v: Value = from_str("!Custom 'hi'\n").unwrap();
+    /// assert_eq!(v.untag_ref().as_str(), Some("hi"));
+    /// ```
     #[must_use]
     pub fn untag_ref(&self) -> &Self {
         match self {
@@ -2808,6 +3437,15 @@ impl Value {
     /// If the value is `Value::Tagged`, returns a mutable reference to the
     /// inner value (recursively following tags). Does not recurse into
     /// sequences or mappings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let mut v: Value = from_str("!Custom 'hi'\n").unwrap();
+    /// *v.untag_mut() = Value::from("bye");
+    /// assert_eq!(v.untag_ref().as_str(), Some("bye"));
+    /// ```
     #[must_use]
     pub fn untag_mut(&mut self) -> &mut Self {
         match self {
