@@ -37,10 +37,14 @@ diagnostics" experience:
 | [`editor-vscode.md`](editor-vscode.md) | Visual Studio Code | `yaml.serverPath`, format-on-save, optional minimal extension stub |
 | [`editor-neovim.lua`](editor-neovim.lua) | Neovim ≥ 0.10 (lazy.nvim / nvim-lspconfig) | Custom server registration, format-on-save, hover keymaps |
 | [`editor-helix.toml`](editor-helix.toml) | Helix | `languages.toml` entry, auto-format, formatter binding |
+| [`editor-emacs.el`](editor-emacs.el) | Emacs ≥ 29 (built-in eglot) | `eglot-server-programs` entry, format-on-save hook, keymaps for hover / format / rename |
+| [`editor-zed.json`](editor-zed.json) | Zed | `lsp.noyalib-lsp` block, `format_on_save: on`, distinct from the MCP context-server config |
+| [`editor-sublime.json`](editor-sublime.json) | Sublime Text (LSP package) | `clients.noyalib-lsp` block, syntax selectors for YAML / Jinja2 / Helm |
+| [`editor-intellij.md`](editor-intellij.md) | IntelliJ IDEA / RustRover / GoLand / PyCharm | LSP4IJ plugin recipe (Community + Ultimate) |
 
 If you wire up a different editor and the config is non-obvious,
-PRs adding a new `editor-<name>.{md,lua,toml,json}` snippet are
-welcome.
+PRs adding a new `editor-<name>.{md,lua,toml,json,el}` snippet
+are welcome.
 
 ## License
 

@@ -35,6 +35,8 @@ applications:
 | [`client-claude-desktop.json`](client-claude-desktop.json) | Claude Desktop (macOS / Linux / Windows) | `mcpServers.noyalib` block for `claude_desktop_config.json`, with platform-specific install paths |
 | [`client-cursor.md`](client-cursor.md) | Cursor + VS Code with Cline | `mcpServers` JSON for Cursor's MCP pane and `cline.mcpServers` for the Cline extension |
 | [`client-zed.json`](client-zed.json) | Zed | `context_servers.noyalib` block for Zed `settings.json` |
+| [`client-continue-dev.md`](client-continue-dev.md) | Continue.dev (VS Code + JetBrains) | `mcpServers.noyalib` block for `~/.continue/config.{json,yaml}`, plus `autoAllowedTools` hardening note |
+| [`hosted-mcp-run.md`](hosted-mcp-run.md) | Remote / hosted gateways (mcp.run, mcp-proxy, Docker / Kubernetes) | Sidecar deployment, stdio→SSE / HTTP brokers, container Dockerfile, hardening notes |
 
 Once registered, the LLM agent in each host can call the two
 `noyalib_*` tools (`tools/list` is the discovery handshake; the

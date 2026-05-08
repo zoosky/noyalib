@@ -949,7 +949,18 @@ pub enum Number {
 }
 
 impl Number {
-    /// Returns the number as an i64 if it is an integer.
+    /// Returns the number as an `i64` if it is an integer.
+    ///
+    /// Floats return `None` even when their value happens to be a
+    /// whole number; the type tag is part of the test.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert_eq!(Number::Integer(42).as_i64(), Some(42));
+    /// assert_eq!(Number::Float(1.0).as_i64(), None);
+    /// ```
     #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
@@ -958,7 +969,18 @@ impl Number {
         }
     }
 
-    /// Returns the number as a u64 if it is a non-negative integer in range.
+    /// Returns the number as a `u64` if it is a non-negative integer.
+    ///
+    /// Negative integers and floats return `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert_eq!(Number::Integer(42).as_u64(), Some(42));
+    /// assert_eq!(Number::Integer(-1).as_u64(), None);
+    /// assert_eq!(Number::Float(1.0).as_u64(), None);
+    /// ```
     #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
@@ -967,7 +989,19 @@ impl Number {
         }
     }
 
-    /// Returns the number as an f64.
+    /// Returns the number as an `f64`.
+    ///
+    /// Always succeeds — integers are widened to `f64` (with the
+    /// usual `i64 → f64` precision loss for magnitudes above
+    /// 2^53), floats pass through unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert_eq!(Number::Integer(42).as_f64(), 42.0);
+    /// assert_eq!(Number::Float(0.5).as_f64(), 0.5);
+    /// ```
     #[must_use]
     pub fn as_f64(&self) -> f64 {
         match self {
@@ -976,43 +1010,98 @@ impl Number {
         }
     }
 
-    /// Returns true if the number is an integer.
+    /// Returns `true` if the number is an integer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Integer(42).is_integer());
+    /// assert!(!Number::Float(1.0).is_integer());
+    /// ```
     #[must_use]
     pub fn is_integer(&self) -> bool {
         matches!(self, Number::Integer(_))
     }
 
-    /// Returns true if the number is a float.
+    /// Returns `true` if the number is a float.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Float(1.0).is_float());
+    /// assert!(!Number::Integer(42).is_float());
+    /// ```
     #[must_use]
     pub fn is_float(&self) -> bool {
         matches!(self, Number::Float(_))
     }
 
-    /// Returns true if the number can be represented as an i64.
+    /// Returns `true` if the number can be represented as an `i64`.
     ///
-    /// This is true for all integer values.
+    /// True for all integer values, false for floats.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Integer(42).is_i64());
+    /// assert!(!Number::Float(42.0).is_i64());
+    /// ```
     #[must_use]
     pub fn is_i64(&self) -> bool {
         matches!(self, Number::Integer(_))
     }
 
-    /// Returns true if the number can be represented as a u64.
+    /// Returns `true` if the number can be represented as a `u64`.
     ///
-    /// This is true for non-negative integer values.
+    /// True for non-negative integers, false otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Integer(42).is_u64());
+    /// assert!(!Number::Integer(-1).is_u64());
+    /// assert!(!Number::Float(1.0).is_u64());
+    /// ```
     #[must_use]
     pub fn is_u64(&self) -> bool {
         matches!(self, Number::Integer(n) if *n >= 0)
     }
 
-    /// Returns true if the number can be represented as an f64.
+    /// Returns `true` if the number can be represented as an `f64`.
     ///
-    /// This is always true as both integers and floats can be converted to f64.
+    /// Always true — both integers and floats convert to `f64`
+    /// (with the usual precision caveats for very large
+    /// integers).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Integer(42).is_f64());
+    /// assert!(Number::Float(1.0).is_f64());
+    /// ```
     #[must_use]
     pub fn is_f64(&self) -> bool {
         true
     }
 
-    /// Returns true if the number is NaN (Not a Number).
+    /// Returns `true` if the number is `NaN` (Not a Number).
+    ///
+    /// Integers are never `NaN` — only floats with the IEEE 754
+    /// NaN bit pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Float(f64::NAN).is_nan());
+    /// assert!(!Number::Float(0.0).is_nan());
+    /// assert!(!Number::Integer(0).is_nan());
+    /// ```
     #[must_use]
     pub fn is_nan(&self) -> bool {
         match self {
@@ -1021,7 +1110,19 @@ impl Number {
         }
     }
 
-    /// Returns true if the number is positive or negative infinity.
+    /// Returns `true` if the number is positive or negative infinity.
+    ///
+    /// Integers are always finite — only `Number::Float(±inf)`
+    /// returns true.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Float(f64::INFINITY).is_infinite());
+    /// assert!(Number::Float(f64::NEG_INFINITY).is_infinite());
+    /// assert!(!Number::Integer(i64::MAX).is_infinite());
+    /// ```
     #[must_use]
     pub fn is_infinite(&self) -> bool {
         match self {
@@ -1030,7 +1131,20 @@ impl Number {
         }
     }
 
-    /// Returns true if the number is neither infinite nor NaN.
+    /// Returns `true` if the number is neither infinite nor `NaN`.
+    ///
+    /// Integers are always finite; floats are finite when neither
+    /// `±∞` nor `NaN`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Number;
+    /// assert!(Number::Integer(0).is_finite());
+    /// assert!(Number::Float(0.5).is_finite());
+    /// assert!(!Number::Float(f64::NAN).is_finite());
+    /// assert!(!Number::Float(f64::INFINITY).is_finite());
+    /// ```
     #[must_use]
     pub fn is_finite(&self) -> bool {
         match self {
@@ -1370,24 +1484,65 @@ pub struct Tag(String);
 
 impl Tag {
     /// Creates a new tag from a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Tag;
+    /// let t = Tag::new("!Custom");
+    /// assert_eq!(t.as_str(), "!Custom");
+    /// ```
     #[must_use]
     pub fn new(tag: impl Into<String>) -> Self {
         Self(tag.into())
     }
 
     /// Returns the tag as a string slice.
+    ///
+    /// The leading `!` (or `!!`) is included; use [`Tag::nobang`]
+    /// for the unprefixed form.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Tag;
+    /// assert_eq!(Tag::new("!Custom").as_str(), "!Custom");
+    /// assert_eq!(Tag::new("!!str").as_str(), "!!str");
+    /// ```
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consumes the tag and returns the inner string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Tag;
+    /// let s: String = Tag::new("!Custom").into_string();
+    /// assert_eq!(s, "!Custom");
+    /// ```
     #[must_use]
     pub fn into_string(self) -> String {
         self.0
     }
 
-    /// Returns the tag string without a leading `!`, if present.
+    /// Returns the tag string with a single leading `!` stripped.
+    ///
+    /// Strips at most one `!` — the YAML 1.2 *primary* tag
+    /// handle. The secondary `!!` handle keeps one `!` after the
+    /// strip (`!!str` → `!str`); use `Tag::as_str().trim_start_matches('!')`
+    /// if you want every `!` removed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::Tag;
+    /// assert_eq!(Tag::new("!Custom").nobang(), "Custom");
+    /// assert_eq!(Tag::new("!!str").nobang(), "!str");
+    /// assert_eq!(Tag::new("plain").nobang(), "plain");
+    /// ```
     #[must_use]
     pub fn nobang(&self) -> &str {
         nobang(&self.0)
@@ -1478,6 +1633,15 @@ pub struct TaggedValue {
 
 impl TaggedValue {
     /// Creates a new tagged value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Tag, TaggedValue, Value};
+    /// let tv = TaggedValue::new(Tag::new("!Custom"), Value::from("hello"));
+    /// assert_eq!(tv.tag().as_str(), "!Custom");
+    /// assert_eq!(tv.value().as_str(), Some("hello"));
+    /// ```
     #[must_use]
     pub fn new(tag: Tag, value: Value) -> Self {
         Self {
@@ -1487,24 +1651,60 @@ impl TaggedValue {
     }
 
     /// Returns a reference to the tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Tag, TaggedValue, Value};
+    /// let tv = TaggedValue::new(Tag::new("!Color"), Value::from("#ff8800"));
+    /// assert_eq!(tv.tag().as_str(), "!Color");
+    /// ```
     #[must_use]
     pub fn tag(&self) -> &Tag {
         &self.tag
     }
 
-    /// Returns a reference to the value.
+    /// Returns a reference to the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Tag, TaggedValue, Value};
+    /// let tv = TaggedValue::new(Tag::new("!Color"), Value::from("#ff8800"));
+    /// assert_eq!(tv.value().as_str(), Some("#ff8800"));
+    /// ```
     #[must_use]
     pub fn value(&self) -> &Value {
         &self.value
     }
 
-    /// Returns a mutable reference to the value.
+    /// Returns a mutable reference to the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Tag, TaggedValue, Value};
+    /// let mut tv = TaggedValue::new(Tag::new("!Color"), Value::from("#000"));
+    /// *tv.value_mut() = Value::from("#ff8800");
+    /// assert_eq!(tv.value().as_str(), Some("#ff8800"));
+    /// ```
     #[must_use]
     pub fn value_mut(&mut self) -> &mut Value {
         &mut self.value
     }
 
-    /// Consumes the tagged value and returns the tag and value.
+    /// Consumes the tagged value and returns the tag and value
+    /// as separate owned components.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{Tag, TaggedValue, Value};
+    /// let tv = TaggedValue::new(Tag::new("!Custom"), Value::from(42_i64));
+    /// let (tag, value) = tv.into_parts();
+    /// assert_eq!(tag.as_str(), "!Custom");
+    /// assert_eq!(value.as_i64(), Some(42));
+    /// ```
     #[must_use]
     pub fn into_parts(self) -> (Tag, Value) {
         (self.tag, *self.value)
