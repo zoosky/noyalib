@@ -75,6 +75,44 @@ fn decode_test_suite_markers(input: &str) -> String {
     out
 }
 
+/// Convert a `noyalib::Value` to a `serde_json::Value` using the
+/// YAML 1.2 *data-model* projection: `Value::Tagged` is unwrapped
+/// (the test-suite expected-JSON omits the tag layer), numbers and
+/// strings become themselves, and collections recurse.
+///
+/// This is *not* the same projection as `Value::serialize` —
+/// serde-bridge convention surfaces `Tagged` as a single-key map
+/// (`{"!Tag": inner}`) for cross-format interop. The test suite's
+/// expected JSON predates that convention, so we use a tag-stripping
+/// projection here.
+fn yaml_value_to_json(v: &Value) -> serde_json::Value {
+    use noyalib::Number;
+    match v {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Number(Number::Integer(n)) => serde_json::json!(*n),
+        Value::Number(Number::Float(f)) => {
+            if f.is_finite() && f.fract() == 0.0 && f.abs() < (i64::MAX as f64) {
+                serde_json::json!(*f as i64)
+            } else {
+                serde_json::json!(*f)
+            }
+        }
+        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::Sequence(seq) => {
+            serde_json::Value::Array(seq.iter().map(yaml_value_to_json).collect())
+        }
+        Value::Mapping(m) => {
+            let obj: serde_json::Map<String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| (k.clone(), yaml_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Tagged(t) => yaml_value_to_json(t.value()),
+    }
+}
+
 /// Compare two JSON values for *semantic* equality, treating
 /// numerically-equal Float/Integer pairs as equal. The YAML 1.2 core
 /// schema resolves a scalar like `450.00` as a float, but the
@@ -211,7 +249,12 @@ fn official_suite() {
                     eprintln!("FAIL {}: expected error, got success", case.id);
                     fail += 1;
                 } else if let Some(ref expected_json) = case.json {
-                    let actual_json = serde_json::to_string(&vals).unwrap();
+                    // Project each parsed `Value` through the
+                    // YAML-data-model JSON conversion (strips
+                    // tag wrappers) so the comparison matches
+                    // the suite's tag-less expected JSON shape.
+                    let actual_vals: Vec<serde_json::Value> =
+                        vals.iter().map(yaml_value_to_json).collect();
 
                     let expected_vals: Vec<serde_json::Value> =
                         serde_json::Deserializer::from_str(expected_json)
@@ -219,15 +262,13 @@ fn official_suite() {
                             .map(|v| v.unwrap_or(serde_json::Value::Null))
                             .collect();
 
-                    // actual_json is a JSON array because vals is a Vec<Value>
-                    let actual_vals_wrapped: serde_json::Value =
-                        serde_json::from_str(&actual_json).unwrap();
-                    let actual_vals = actual_vals_wrapped.as_array().cloned().unwrap_or_default();
-
                     if !json_values_equal(&expected_vals, &actual_vals) {
                         eprintln!("FAIL {}: value mismatch", case.id);
                         eprintln!("  Expected: {expected_json}");
-                        eprintln!("  Actual:   {actual_json}");
+                        eprintln!(
+                            "  Actual:   {}",
+                            serde_json::to_string(&actual_vals).unwrap()
+                        );
                         fail += 1;
                     } else {
                         pass += 1;

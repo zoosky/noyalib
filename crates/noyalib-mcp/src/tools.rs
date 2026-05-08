@@ -115,11 +115,43 @@ fn tool_set(args: &JsonValue) -> Result<JsonValue, (i32, String)> {
     let mut doc = parse_document(&src).map_err(|e| (-32001, format!("parse {file}: {e}")))?;
     doc.set(path, value)
         .map_err(|e| (-32003, format!("set {path} = {value}: {e}")))?;
-    fs::write(file, doc.to_string().as_bytes())
+    write_atomic(file, doc.to_string().as_bytes())
         .map_err(|e| (-32000, format!("write {file}: {e}")))?;
     Ok(ok_text(format!(
         "set {path} = {value} in {file} (lossless: comments and formatting preserved)"
     )))
+}
+
+/// Write `bytes` to `file` atomically: write to a sibling temp
+/// file, fsync it, then `rename` over the target. The rename is
+/// atomic on POSIX and `MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+/// MOVEFILE_WRITE_THROUGH)` semantics on Windows, so concurrent
+/// readers always see either the old or the new contents — never
+/// a half-written truncation. The fsync also closes a Windows
+/// race where `fs::write` returned before the kernel page cache
+/// flushed, leaving a freshly-spawned reader to observe the old
+/// bytes.
+fn write_atomic(file: &str, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::path::Path;
+    let target = Path::new(file);
+    let parent = target.parent().unwrap_or(Path::new("."));
+    let stem = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("noyalib-set");
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = parent.join(format!(".{stem}.{pid}.{nanos}.tmp"));
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, target)
 }
 
 fn arg_str<'a>(args: &'a JsonValue, key: &str) -> Result<&'a str, (i32, String)> {

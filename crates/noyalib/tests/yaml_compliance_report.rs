@@ -29,10 +29,7 @@ use std::path::Path;
 /// Cases excluded from scoring — must stay in sync with
 /// `tests/official_suite.rs::SKIP_LIST` so both runners reason about
 /// the same baseline.
-const SKIP_LIST: &[&str] = &[
-    "2JQS", "6WLZ", "6CK3", "P76L", "6VJK", "UT92", "WZ62", "4ABK", "M7A3", "K527", "9WXW", "V9D5",
-    "CFD4", "KK5P", "M2N8", "M5DY", "RZP5", "XW4D",
-];
+const SKIP_LIST: &[&str] = &[];
 
 /// Decode the YAML Test Suite's visual whitespace markers.
 fn decode_markers(input: &str) -> String {

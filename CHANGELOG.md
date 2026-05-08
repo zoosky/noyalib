@@ -7,6 +7,62 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### YAML Test Suite — 100% strict (406/406, 0 skip)
+
+The historical 18-case `SKIP_LIST` (2JQS, 6WLZ, 6CK3, P76L, 6VJK,
+UT92, WZ62, 4ABK, M7A3, K527, 9WXW, V9D5, CFD4, KK5P, M2N8, M5DY,
+RZP5, XW4D) is gone — the parser now passes every active YAML
+1.2 Test Suite case under strict comparison. The skip list was a
+historical artefact of an earlier parser state; under the
+current scanner + loader those cases produce values that match
+the suite's expected JSON. The lenient `official_suite.rs`
+runner additionally needed a tag-stripping JSON projection
+(`yaml_value_to_json`) to align with the suite's tag-less
+expected shape after the `Value::Tagged` preservation work.
+
+**Both runners now report 406/406 = 100.0% strict, 0 skip, 0 fail.**
+
+### Added — Stress / load test battery (`tests/stress_load.rs`)
+
+13 new regression tests pinning the parser's behaviour under
+pathological input:
+
+- 1 MB single block-scalar document.
+- 10 000-entry mapping / 10 000-item sequence.
+- 1 000-document multi-document stream.
+- 100-level deep nesting + recursion-limit DoS guard at 10 000.
+- Billion-laughs-style alias amplification rejection.
+- 1 MB long plain scalar.
+- 100-iteration parse-emit-reparse stability.
+- Unicode-heavy document (emoji / CJK / RTL).
+- Custom `ParserConfig` low `max_depth` enforcement.
+- 1 000 anchors + aliases within budget.
+
+### Performance — release profile tuned for speed
+
+`[profile.release]` `opt-level` flipped from `"s"` (size) to `3`
+(speed) for the workspace. The library's per-byte scanner
+dispatch inlines and vectorizes meaningfully better at `3`. WASM
+bundle size is managed separately by the `wasm-pack` post-build
+`wasm-opt -Os` pass (see `crates/noyalib-wasm/README.md`),
+keeping the published `.wasm` at its target ~338 KB.
+`overflow-checks = true` is preserved on the security-vs-speed
+trade-off — the parser handles untrusted input and cannot afford
+silent wraparound on indent / depth / size counters.
+
+### Fixed — Windows-only MCP test flake (`tool_call_set_preserves_comments`)
+
+`noyalib_set` previously called `fs::write(file, …)` directly.
+On Windows the test's `read_to_string` could observe stale
+contents because the kernel page-cache hadn't flushed by the
+time the spawned MCP child exited. Replaced with an
+*atomic-write* helper: write to a sibling temp file, `sync_all`,
+then `rename` over the target. The rename is atomic on POSIX
+and on Windows under `MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+MOVEFILE_WRITE_THROUGH)` semantics, so concurrent readers see
+either the old or the new contents — never a half-write or a
+stale cache.
+
 ### Fixed — nested `Value::Tagged` inside a tagged container (C4HZ regression)
 
 `from_str::<Value>("!shape\n- !circle 1\n")` previously collapsed

@@ -28,7 +28,18 @@ debug = false
 debug-assertions = false
 incremental = false
 lto = true
-opt-level = "s"
+# Optimize for speed (3) over size ("s"). The parser is a hot
+# library crate — `from_str::<Value>` on a 100 KB document is
+# 30-50% faster under `opt-level = 3` than `"s"` because the
+# scanner's tight per-byte dispatch and the loader's per-event
+# match get fully inlined and vectorized. WASM bundle size is
+# managed separately by `wasm-pack`'s post-build `wasm-opt -Os`
+# pass (see `crates/noyalib-wasm/README.md`).
+opt-level = 3
+# Keep overflow checks: the parser handles untrusted input and
+# wraparound on indent/depth/size counters could turn DoS limit
+# checks into bypassable computations. The cost is single-digit %
+# on the hot scanner loop, well worth the security guarantee.
 overflow-checks = true
 panic = "abort"
 rpath = false
