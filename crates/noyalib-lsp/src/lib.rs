@@ -10,6 +10,74 @@
 //! a thin stdio shim that drives [`Server::handle_message`]; tests
 //! reach the same handlers directly so coverage does not depend on
 //! standing up a real LSP client.
+//!
+//! # MSRV
+//!
+//! **Rust 1.85.0** stable. The `tower-lsp` and async deps floor
+//! at 1.85; the core `noyalib` library still builds on **1.75**.
+//! CI verifies both floors via the `Per-crate MSRV` workflow
+//! job. See workspace
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#1-msrv-minimum-supported-rust-version).
+//!
+//! # Panics
+//!
+//! Public functions in this crate do not panic on well-formed
+//! input. The LSP binary's stdin/stdout handling propagates
+//! I/O errors back to the host as JSON-RPC error envelopes.
+//!
+//! # Errors
+//!
+//! All handlers return JSON-RPC error envelopes per the
+//! [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/).
+//! Parse / format errors come from `noyalib::Error` and surface
+//! through the `textDocument/publishDiagnostics` channel as
+//! span-aware `Diagnostic` records.
+//!
+//! # Concurrency
+//!
+//! Each LSP request is processed sequentially on the binary's
+//! stdio loop. The internal document store is reentrant:
+//! handlers `&mut`-borrow it serialised by the request
+//! loop. No internal threading; rayon is opt-in via
+//! the `parallel` feature on `noyalib`.
+//!
+//! # Platform support
+//!
+//! Tier-1 (CI-verified each PR): `aarch64-apple-darwin`,
+//! `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`.
+//! Editor-specific notes for VS Code, Neovim, Helix, Emacs,
+//! Zed, Sublime, IntelliJ live under
+//! [`crates/noyalib-lsp/examples/`](https://github.com/sebastienrousseau/noyalib/tree/main/crates/noyalib-lsp/examples).
+//!
+//! # Performance
+//!
+//! Each `didOpen` / `didChange` event re-parses the entire
+//! buffer in a single pass — `O(n)` in document bytes. A 1 MB
+//! YAML document typically reports diagnostics in under 5 ms
+//! on commodity hardware. The CST is cached per document so
+//! `textDocument/formatting` and `textDocument/hover` reuse
+//! the same parse on subsequent requests.
+//!
+//! # Security
+//!
+//! `#![forbid(unsafe_code)]`. No FFI. No network I/O — LSP is
+//! stdio-only. The server reads file contents only from the
+//! editor's `didOpen` notifications; it does not autoload
+//! arbitrary paths from the filesystem. Resource-limit gates
+//! are inherited from `noyalib`'s `ParserConfig` defaults.
+//! Full posture:
+//! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # Documentation
+//!
+//! - **Engineering policies** — workspace
+//!   [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md).
+//! - **LSP specification**: <https://microsoft.github.io/language-server-protocol/>.
+//! - **Editor configurations** (VS Code / Neovim / Helix /
+//!   Emacs / Zed / Sublime / IntelliJ):
+//!   [`examples/`](https://github.com/sebastienrousseau/noyalib/tree/main/crates/noyalib-lsp/examples).
+//! - **Protocol-method coverage matrix**:
+//!   [`doc/protocol-coverage.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-lsp/doc/protocol-coverage.md).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

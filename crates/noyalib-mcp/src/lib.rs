@@ -8,6 +8,77 @@
 //! drives [`handle_message`]; tests reach the same handlers
 //! directly so coverage no longer depends on standing up a real
 //! stdio process.
+//!
+//! # MSRV
+//!
+//! **Rust 1.75.0** stable — same as the core `noyalib` library.
+//! The MCP wire surface is text-only JSON-RPC and pulls no
+//! nightly-only deps. CI verifies the floor via the
+//! `Per-crate MSRV` workflow job. See the workspace
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#1-msrv-minimum-supported-rust-version)
+//! for the bump policy.
+//!
+//! # Panics
+//!
+//! Public functions in this crate do not panic on well-formed
+//! input. The MCP binary `unwrap`s once on stdin acquisition
+//! during boot — that's deliberate, every caller invokes the
+//! binary via a host process that controls the pipe.
+//!
+//! # Errors
+//!
+//! Tool calls return JSON-RPC error envelopes per the
+//! [MCP specification](https://modelcontextprotocol.io). The
+//! error code taxonomy lives in
+//! [`crates/noyalib-mcp/doc/tools-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-mcp/doc/tools-reference.md):
+//! `-32000` (file I/O), `-32001` (parse), `-32002` (path not
+//! found), `-32003` (set), `-32602` (missing arg), `-32601`
+//! (unknown method).
+//!
+//! # Concurrency
+//!
+//! Each MCP request is processed sequentially on the binary's
+//! stdio loop. The host (Claude Desktop, Cursor, Zed, …) is
+//! responsible for not pipelining requests; if it does, the
+//! tool execution is serialised by the loop's `BufRead` reader.
+//!
+//! # Platform support
+//!
+//! Tier-1 (CI-verified each PR): `aarch64-apple-darwin`,
+//! `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`.
+//!
+//! `noyalib_set` writes via an *atomic file replacement*
+//! helper: write to a sibling temp file → `sync_all` →
+//! `rename`. This is naturally atomic on POSIX; on Windows it
+//! uses `MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+//! MOVEFILE_WRITE_THROUGH)` semantics so concurrent readers
+//! always see either the old or the new contents — never a
+//! half-write or a stale-page-cache observation. This was the
+//! fix for the historical Windows-only `tool_call_set_preserves_comments`
+//! flake.
+//!
+//! # Security
+//!
+//! `#![forbid(unsafe_code)]`. No FFI. No network I/O —
+//! `noyalib-mcp` is stdio-only by design; remote hosting goes
+//! through a separate broker (see `examples/hosted-mcp-run.md`).
+//! The server has no auth layer; restrict the working
+//! directory of the spawned process via container mounts /
+//! systemd `ReadWritePaths=` for production deployments.
+//! Resource-limit gates are inherited from `noyalib`'s
+//! `ParserConfig` defaults. Full posture:
+//! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # Documentation
+//!
+//! - **Engineering policies** — workspace
+//!   [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md).
+//! - **MCP specification**: <https://modelcontextprotocol.io>.
+//! - **Tools reference** (input schemas, error codes):
+//!   [`doc/tools-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-mcp/doc/tools-reference.md).
+//! - **Host configurations** (Claude Desktop, Cursor,
+//!   Continue.dev, Zed, hosted gateways):
+//!   [`examples/`](https://github.com/sebastienrousseau/noyalib/tree/main/crates/noyalib-mcp/examples).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

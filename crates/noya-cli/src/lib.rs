@@ -17,6 +17,69 @@
 //!   underlying [`clap::Command`] tree. Used by `clap_complete` and
 //!   `clap_mangen` to generate completions and man pages
 //!   respectively.
+//!
+//! # MSRV
+//!
+//! **Rust 1.85.0** stable. The `clap_builder` 4.6 dep pulls
+//! edition-2024 helpers and floors the MSRV at 1.85; the core
+//! `noyalib` library still builds on **1.75**. CI verifies both
+//! floors via the `Per-crate MSRV` workflow job. The bump
+//! policy is documented in the workspace
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#1-msrv-minimum-supported-rust-version).
+//!
+//! # Panics
+//!
+//! Public functions in this crate do not panic. The two
+//! binaries (`noyafmt`, `noyavalidate`) handle argv-parse
+//! failures via clap's error path — surfaced as exit code `2`,
+//! never as a panic.
+//!
+//! # Errors
+//!
+//! Binary exit codes follow Unix convention:
+//! `0` on success, `1` on a YAML/schema problem, `2` on
+//! argv-parse error. Library-side errors flow through
+//! [`noyalib::Error`] (not re-exported here — call sites
+//! that want library access should depend on `noyalib`
+//! directly).
+//!
+//! # Concurrency
+//!
+//! `NoyafmtCli` / `NoyavalidateCli` are `Send + Sync` (plain
+//! POD parsed-args structs). The `clap::Command` builders
+//! return owned values; cheap to clone. No interior mutability.
+//!
+//! # Platform support
+//!
+//! Tier-1 (CI-verified each PR): `aarch64-apple-darwin`,
+//! `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`. Both
+//! binaries write via an *atomic file replacement* pattern
+//! (write to a sibling temp file → `sync_all` → `rename`), so
+//! concurrent readers always see either the pre-edit or the
+//! post-edit contents — never a half-written truncation.
+//!
+//! # Security
+//!
+//! `#![forbid(unsafe_code)]` (workspace lint). No FFI. No
+//! network I/O. The binaries only read files passed on argv;
+//! they do not read environment variables. Resource-limit
+//! gates are inherited from `noyalib`'s `ParserConfig`
+//! defaults; pass `--strict` to opt into the tighter
+//! `ParserConfig::strict()` preset. Full posture:
+//! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # Documentation
+//!
+//! - **Engineering policies** — workspace
+//!   [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md)
+//!   covers MSRV, SemVer, security, performance, concurrency,
+//!   platform support, feature flags.
+//! - **CLI flag reference**:
+//!   [`doc/cli-reference.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noya-cli/doc/cli-reference.md).
+//! - **Recipes** (pre-commit, CI gate, schema validation, k8s,
+//!   Helm, Compose, GitHub Actions): the
+//!   [`examples/`](https://github.com/sebastienrousseau/noyalib/tree/main/crates/noya-cli/examples)
+//!   directory.
 
 use clap::{CommandFactory, Parser};
 use std::path::PathBuf;

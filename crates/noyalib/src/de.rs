@@ -738,9 +738,9 @@ impl ParserConfig {
 ///
 /// - [`RequireIndent::Unchecked`] (default) — by-spec mode.
 /// - [`RequireIndent::Even`] — every indent delta must be even.
-/// - [`RequireIndent::Divisible(N)`] — every indent delta must
+/// - `RequireIndent::Divisible(N)` — every indent delta must
 ///   be divisible by `N`.
-/// - [`RequireIndent::Uniform(Some(N))`] — every indent delta
+/// - `RequireIndent::Uniform(Some(N))` — every indent delta
 ///   must equal `N`. `None` means "auto-detect from the first
 ///   delta and require the rest to match it".
 ///

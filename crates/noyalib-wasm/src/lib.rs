@@ -9,6 +9,79 @@
 //! The pure-Rust logic lives in [`core`] so it is reachable from
 //! `cargo test` on the rlib side; the bindings in this module are
 //! the thin JsValue conversion shells.
+//!
+//! # MSRV
+//!
+//! **Rust 1.85.0** stable. The `wasm-bindgen` 0.2 ecosystem
+//! pulls helpers floored at 1.85; the core `noyalib` library
+//! still builds on **1.75**. See workspace
+//! [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#1-msrv-minimum-supported-rust-version).
+//!
+//! # Panics
+//!
+//! Public bindings do not panic on well-formed input. Rust-side
+//! errors are converted to `JsError` values that JavaScript
+//! receives as a thrown `Error`. WASM panic *can* terminate
+//! the WebAssembly instance (panic = abort under `[profile.release]`);
+//! integration with `console_error_panic_hook` is wired in
+//! `examples/` so debug builds surface a JS-readable trace.
+//!
+//! # Errors
+//!
+//! Every fallible binding returns `Result<JsValue, JsError>`;
+//! the `JsError` carries the Rust-side `Display` text from
+//! [`noyalib::Error`]. JavaScript callers handle these as
+//! standard thrown errors — `try { … } catch (e) { e.message }`.
+//!
+//! # Concurrency
+//!
+//! WebAssembly is single-threaded on browsers (without
+//! shared-memory + `--enable-experimental-features`). The
+//! bindings hold no internal state outside the `WasmDocument`
+//! handle; multi-document workloads simply construct multiple
+//! handles. Web Workers hosting independent WASM instances are
+//! the recommended way to parallelise on the browser.
+//!
+//! # Platform support
+//!
+//! Builds against every wasm-pack target: `bundler` (Webpack /
+//! Rollup / esbuild / Vite), `web` (native ES module), `nodejs`
+//! (CommonJS), `deno`, `no-modules` (plain global). CI verifies
+//! the `wasm32-unknown-unknown` target each PR via
+//! `wasm-pack test --node`. Cloudflare Workers, Deno, and Bun
+//! consume the `bundler` target via their own packaging step;
+//! see [`crates/noyalib-wasm/doc/bundling.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-wasm/doc/bundling.md).
+//!
+//! # Performance
+//!
+//! Release bundle size: ~338 KB raw, ~140 KB gzip. With the
+//! optional `wasm-opt` post-build pass (`--features wasm-opt`):
+//! ~280 KB raw, ~115 KB gzip. Tree-shaking-friendly: the
+//! `WasmDocument` API and the plain `parse` / `stringify` API
+//! are independent modules; bundlers drop whichever your code
+//! does not import.
+//!
+//! # Security
+//!
+//! `#![forbid(unsafe_code)]`. No `unsafe` outside `wasm-bindgen`'s
+//! own bridge. No network I/O. No filesystem access (browsers
+//! sandbox WASM by default; Node and Deno hosts can grant fs
+//! access to the host process, but this crate's bindings do
+//! not expose it). Resource-limit gates are inherited from
+//! `noyalib`'s `ParserConfig` defaults. Full posture:
+//! [`SECURITY.md`](https://github.com/sebastienrousseau/noyalib/blob/main/SECURITY.md).
+//!
+//! # Documentation
+//!
+//! - **Engineering policies** — workspace
+//!   [`POLICIES.md`](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md).
+//! - **JS API reference**:
+//!   [`doc/js-api.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-wasm/doc/js-api.md).
+//! - **Bundling guide** (Vite, Webpack, Next.js, Cloudflare,
+//!   Deno, Bun):
+//!   [`doc/bundling.md`](https://github.com/sebastienrousseau/noyalib/blob/main/crates/noyalib-wasm/doc/bundling.md).
+//! - **Browser / Node demos**:
+//!   [`examples/`](https://github.com/sebastienrousseau/noyalib/tree/main/crates/noyalib-wasm/examples).
 
 #![forbid(unsafe_code)]
 
