@@ -561,8 +561,25 @@ impl<'a> Scanner<'a> {
     }
 
     /// Slice the original `&str` input without allocation.
+    ///
+    /// Defensive: clamps both indices to the input length and snaps
+    /// any mid-char-boundary index back to the previous code-point
+    /// boundary. This protects the panic-free contract documented
+    /// in [`POLICIES.md` §8] even when an upstream bug leaves the
+    /// scanner position mid-`u8` after a defective advance pattern
+    /// — the scanner may raise an error with a degraded slice but
+    /// never panics on `&str[..]` indexing.
+    ///
+    /// On well-formed input the clamping is a no-op (zero overhead).
+    ///
+    /// [`POLICIES.md` §8]: https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#8-panic-policy
     #[inline]
     fn slice_str(&self, start: usize, end: usize) -> &'a str {
+        let len = self.input_str.len();
+        let end = end.min(len);
+        let start = start.min(end);
+        let start = floor_char_boundary(self.input_str, start);
+        let end = floor_char_boundary(self.input_str, end);
         &self.input_str[start..end]
     }
 
@@ -3023,6 +3040,22 @@ impl<'a> Scanner<'a> {
 
         Ok(string)
     }
+}
+
+/// Snap `index` to the nearest code-point boundary at or below it.
+///
+/// Stable polyfill for `str::floor_char_boundary`, which is
+/// nightly-only as of Rust 1.94. Used by [`Scanner::slice_str`] to
+/// keep the panic-free contract under defective upstream advance
+/// patterns. Defensive — on well-formed input this is a no-op.
+fn floor_char_boundary(s: &str, mut index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    while !s.is_char_boundary(index) {
+        index = index.saturating_sub(1);
+    }
+    index
 }
 
 #[cfg(test)]

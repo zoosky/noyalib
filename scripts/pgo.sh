@@ -48,8 +48,27 @@ set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────
 PGO_TARGET="${PGO_TARGET:-noyafmt}"
-PGO_DATA_DIR="${PGO_DATA_DIR:-target/pgo-data}"
 TRAIN_INPUT="${1:-}"
+
+# Resolve cargo's actual target directory. Honours
+# `CARGO_TARGET_DIR`, `[build].target-dir` in `.cargo/config.toml`,
+# or `[workspace].target-dir` in the root `Cargo.toml` — exactly
+# what `cargo build` itself uses.
+CARGO_TARGET_DIR_RESOLVED="$(
+  cargo metadata --format-version 1 --no-deps 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['target_directory'])" \
+    || echo "${PWD}/target"
+)"
+
+# Always use an absolute path for PGO_DATA_DIR — the
+# rustc-injected `-Cprofile-generate` runtime resolves the
+# directory at process start, before the working directory may
+# have changed.
+PGO_DATA_DIR_RAW="${PGO_DATA_DIR:-${CARGO_TARGET_DIR_RESOLVED}/pgo-data}"
+case "$PGO_DATA_DIR_RAW" in
+  /*) PGO_DATA_DIR="$PGO_DATA_DIR_RAW" ;;
+  *)  PGO_DATA_DIR="${PWD}/${PGO_DATA_DIR_RAW}" ;;
+esac
 
 # ── Toolchain checks ─────────────────────────────────────────────
 if ! command -v llvm-profdata >/dev/null 2>&1; then
@@ -74,13 +93,13 @@ mkdir -p "$PGO_DATA_DIR"
 echo "::group::PGO pass 1 — instrumented build"
 rm -rf "$PGO_DATA_DIR"
 mkdir -p "$PGO_DATA_DIR"
-RUSTFLAGS="-Cprofile-generate=${PWD}/${PGO_DATA_DIR}" \
+RUSTFLAGS="-Cprofile-generate=${PGO_DATA_DIR}" \
   cargo build --release --bin "$PGO_TARGET"
 echo "::endgroup::"
 
 # ── Train ────────────────────────────────────────────────────────
 echo "::group::PGO training run"
-TRAIN_BIN="target/release/$PGO_TARGET"
+TRAIN_BIN="${CARGO_TARGET_DIR_RESOLVED}/release/$PGO_TARGET"
 if [ ! -x "$TRAIN_BIN" ]; then
   echo "✗ instrumented binary not found at $TRAIN_BIN"
   exit 1
@@ -111,12 +130,12 @@ echo "::endgroup::"
 
 # ── Pass 2: optimised build ──────────────────────────────────────
 echo "::group::PGO pass 2 — optimised build"
-RUSTFLAGS="-Cprofile-use=${PWD}/${PGO_DATA_DIR}/merged.profdata" \
+RUSTFLAGS="-Cprofile-use=${PGO_DATA_DIR}/merged.profdata -Cllvm-args=-pgo-warn-missing-function" \
   cargo build --release --bin "$PGO_TARGET"
 echo "::endgroup::"
 
 # ── Report ───────────────────────────────────────────────────────
-FINAL_BIN="target/release/$PGO_TARGET"
+FINAL_BIN="${CARGO_TARGET_DIR_RESOLVED}/release/$PGO_TARGET"
 echo
 echo "✓ PGO build complete"
 echo "  binary: $FINAL_BIN"
