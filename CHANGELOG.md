@@ -7,6 +7,85 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — `Eq`/`Hash` invariant for `Number` floats (signed zero, NaN)
+
+`PartialEq for Number` deliberately treats `+0.0 == -0.0` (per IEEE
+754) and `NaN == NaN` (to satisfy `Eq` reflexivity). The `Hash for
+Number` impl was hashing `f64::to_bits()` directly, which gives
+distinct bit patterns for those equal values — surfaced by the
+ubuntu-nightly `value_hash_consistent` proptest. Normalised both
+edges in the hasher: zero hashes as `0u64` regardless of sign, NaN
+hashes as a fixed quiet-NaN sentinel. Three explicit regression
+tests pinned in `tests/proptest.rs`.
+
+### Performance — bulk-copy quoted-scalar interior runs via SIMD prefix scan
+
+The single- and double-quoted scalar fast paths used to read one
+UTF-8 character at a time inside a `match self.peek()` loop —
+`slice_str + push_str` per char. Replaced with `simd::clean_prefix_len`
+over the appropriate ASCII needle set; semantics are bit-exact, ~30%
+end-to-end on a worst-case 100KB single-quoted ASCII string. All
+needles are ASCII, so slicing on a needle hit is char-boundary safe.
+
+### Performance — Profile-Guided Optimization (PGO) infrastructure
+
+New `scripts/pgo.sh` drives the full LLVM PGO pipeline:
+instrumented build → train against `bench_corpus/` and the YAML
+test suite → `llvm-profdata merge` → optimised rebuild. Documented
+in `doc/PGO.md` and surfaced in `doc/POLICIES.md` §4 as an opt-in
+5–15% extra speedup path on top of the default `cargo build
+--release` numbers. Loader Vec/Mapping pre-sizing via
+`Value::deserialize`'s `SeqAccess`/`MapAccess` `size_hint()` cuts
+the first reallocation on the AST fallback path.
+
+### CI — panic-free contract + unused-dep gate
+
+- `tests/panic_free.rs`: 8 `proptest` properties + 19 historical-input
+  regression cases verify that `from_str`, `from_slice`, `load_all`,
+  and `cst::parse_document` never panic on arbitrary input. CI runs
+  the proptest at the default seed; nightly stress-runs at
+  `PROPTEST_CASES=16384`.
+- `cargo-machete (unused-dep gate)` is now a required CI job —
+  blocks PRs that add a dependency to `Cargo.toml` without using
+  it. Catches accidental fat-tree imports.
+
+### Fixed — defensive char-boundary clamp in `Scanner::slice_str`
+
+Adversarial mixed-quote input (`"A:\r*aa {\"\\¡"`) could land
+`slice_str` mid-codepoint and panic. Added a stable polyfill of
+`str::floor_char_boundary` and clamp both `start` and `end` to
+char boundaries before slicing. Three new fuzz targets in
+`fuzz/fuzz_targets/` cover the new code paths.
+
+### Fixed — Windows-only MCP atomic-write flake
+
+`tool_call_set_preserves_comments` flaked on Windows when a
+concurrent reader observed a half-written file. The `noyalib_set`
+write helper now uses `MoveFileExW(MOVEFILE_REPLACE_EXISTING |
+MOVEFILE_WRITE_THROUGH)` semantics on Windows so concurrent
+readers see either the old or the new contents — never a
+half-write or a stale-page-cache observation.
+
+### Docs — satellite-crate enterprise-readiness sections
+
+`noya-cli`, `noyalib-lsp`, `noyalib-mcp`, `noyalib-wasm` lib.rs
+crate-level doc blocks now match the noyalib core's 12-dimension
+template. Added: `# Cargo features`, `# Performance`, `# API
+stability and SemVer` sections. WASM `# Panics` expanded to
+enumerate WASM-specific abort sources (linear-memory OOM, stack
+overflow on misconfigured `max_depth`, `panic = abort` on the
+host). `noyalib-mcp` and `noyalib-wasm` READMEs now state the
+explicit MSRV (1.75.0 and 1.85.0 respectively) and tier-1
+platform list — bringing them into alignment with the
+`noyalib-lsp` and `noya-cli` READMEs.
+
+### Docs — diagnostic feature-gate fix
+
+`tests/cst_schema_tag_audit.rs` referenced `validate_against_schema`
+unconditionally but the symbol is gated behind
+`feature = "validate-schema"`. Test-crate now compiles cleanly
+under default features as well as `--all-features`.
+
 ### v0.0.2 milestone — implemented in v0.0.1
 
 The seven open issues on the v0.0.2 milestone are closed inside

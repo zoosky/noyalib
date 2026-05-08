@@ -399,6 +399,8 @@ When in `no_std` mode:
 | `robotics` | no | ROS-style overlay/redaction helpers | (none) |
 | `noyavalidate` | no | meta — pulls validate-schema + miette/fancy | (transitive) |
 | `wasm-opt` | no | post-build wasm-opt pass marker (used by `noyalib-wasm`) | (none) |
+| `nightly-simd` | no | enables nightly-only `std::simd` paths in `simd.rs`; gracefully no-ops on stable | (none — gated by `cfg(noyalib_nightly)`) |
+| `compare-saphyr` | no | bench-only — pulls `serde_saphyr` into the comparison harness; never built into a release artefact | `serde_saphyr` (dev-only) |
 
 ### Feature compatibility
 
@@ -411,6 +413,15 @@ When in `no_std` mode:
 - `parallel` is `std`-only — there's no rayon `no_std`.
 - `compat-serde-yaml` is independent and pulls no extra
   deps.
+- `nightly-simd` requires a nightly toolchain at build time;
+  gracefully no-ops to portable scalar fallbacks when built on
+  stable. Not enabled in `default` — opt-in via
+  `cargo +nightly build --features nightly-simd`.
+- `compare-saphyr` is **not** intended for production builds.
+  It compiles in `serde_saphyr` purely so the comparison
+  benches in `crates/noyalib/benches/comparison.rs` can pit
+  `noyalib` head-to-head against it; downstream packagers
+  must not enable this feature in shipped binaries.
 
 ---
 
