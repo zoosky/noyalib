@@ -4050,7 +4050,15 @@ impl<'de> Deserialize<'de> for Value {
             where
                 A: SeqAccess<'de>,
             {
-                let mut vec = Vec::new();
+                // Pre-size from the SeqAccess size_hint when
+                // available — saves up to ~11 reallocations on a
+                // 2 000-element sequence (Vec doubles on each
+                // grow). Falls back to the default growth strategy
+                // when the hint isn't reliable.
+                let mut vec = match seq.size_hint() {
+                    Some(n) if n > 0 && n < 1 << 20 => Vec::with_capacity(n),
+                    _ => Vec::new(),
+                };
                 while let Some(elem) = seq.next_element()? {
                     vec.push(elem);
                 }
@@ -4100,7 +4108,13 @@ impl<'de> Deserialize<'de> for Value {
                 }
                 // Regular mapping path — collect every (k, v) pair
                 // including the (k, v) we already consumed.
-                let mut mapping = Mapping::new();
+                // Pre-size when the MapAccess provides a usable
+                // hint; saves ~10 IndexMap rehashes on large
+                // mappings (capacity grows by ~doubling).
+                let mut mapping = match map.size_hint() {
+                    Some(n) if n > 0 && n < 1 << 20 => Mapping::with_capacity(n),
+                    _ => Mapping::new(),
+                };
                 if let Some(k) = first_key {
                     let v: Value = map.next_value()?;
                     let _ = mapping.insert(k, v);
