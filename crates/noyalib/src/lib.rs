@@ -484,9 +484,11 @@ mod value;
 pub mod with;
 
 pub use anchors::{
-    AnchorRegistry, ArcAnchor, ArcAnchorRegistry, ArcWeakAnchor, RcAnchor, RcWeakAnchor,
+    AnchorRegistry, ArcAnchor, ArcAnchorRegistry, ArcRecursion, ArcRecursive, ArcWeakAnchor,
+    RcAnchor, RcRecursion, RcRecursive, RcWeakAnchor,
 };
 pub use comments::{load_comments, Comment, CommentKind};
+pub use de::RequireIndent;
 #[cfg(feature = "std")]
 pub use de::{from_reader, from_reader_with_config};
 #[cfg(all(feature = "std", feature = "strict-deserialise"))]
@@ -496,7 +498,7 @@ pub use de::{
     DuplicateKeyPolicy, MergeKeyPolicy, ParserConfig, YamlVersion,
 };
 pub use document::{load_all, load_all_as, load_all_with_config, try_load_all};
-pub use error::{BudgetBreach, Error, Location, Result};
+pub use error::{BudgetBreach, CroppedRegion, Error, Location, RenderOptions, Result};
 pub use flattened::Flattened;
 pub use fmt::{Commented, FlowMap, FlowSeq, FoldStr, FoldString, LitStr, LitString, SpaceAfter};
 pub use path::Path;

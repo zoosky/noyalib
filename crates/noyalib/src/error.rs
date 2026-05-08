@@ -1053,6 +1053,209 @@ impl Error {
     pub fn from_shared(arc: Arc<Error>) -> Error {
         Error::Shared(arc)
     }
+
+    /// Render the error in rustc-style with default options.
+    ///
+    /// Equivalent to
+    /// `self.render_with_options(source, &RenderOptions::default())`.
+    ///
+    /// Issue #2 entry point — supersedes [`Self::format_with_source`]
+    /// for new code; that method is preserved for backwards
+    /// compatibility.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, Value};
+    /// let source = "a:\n  b: 1\n   c: 2\n";  // misaligned indent
+    /// let err = from_str::<Value>(source).unwrap_err();
+    /// let rendered = err.render(source);
+    /// assert!(rendered.contains("error"));
+    /// ```
+    pub fn render(&self, source: &str) -> String {
+        self.render_with_options(source, &RenderOptions::default())
+    }
+
+    /// Render the error with caller-controlled options.
+    ///
+    /// `RenderOptions::crop_radius` sets how many lines of context
+    /// surround the offending line; `RenderOptions::color` enables
+    /// terminal ANSI colour codes. The default
+    /// (`RenderOptions::default()`) is `crop_radius = 2`,
+    /// `color = false`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, RenderOptions, Value};
+    /// let source = "a: [unclosed";
+    /// let err = from_str::<Value>(source).unwrap_err();
+    /// let opts = RenderOptions { crop_radius: 1, color: false };
+    /// let rendered = err.render_with_options(source, &opts);
+    /// assert!(rendered.contains("error"));
+    /// ```
+    pub fn render_with_options(&self, source: &str, opts: &RenderOptions) -> String {
+        let plain = if opts.crop_radius == 0 {
+            self.format_with_source(source)
+        } else {
+            self.format_with_source_radius(source, opts.crop_radius)
+        };
+        if opts.color {
+            colorize_render(&plain)
+        } else {
+            plain
+        }
+    }
+}
+
+/// Caller-controlled rendering options for [`Error::render_with_options`].
+///
+/// Defaults to `crop_radius = 2` and `color = false` so the
+/// stable byte-for-byte CI-friendly output stays the default.
+/// Set `color = true` for interactive terminal use.
+///
+/// Construct directly with a struct literal — both fields are
+/// public. Future field additions are tracked as a minor-version
+/// event per the [SemVer policy](https://github.com/sebastienrousseau/noyalib/blob/main/doc/POLICIES.md#2-semver--api-stability).
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::RenderOptions;
+/// let default = RenderOptions::default();
+/// assert_eq!(default.crop_radius, 2);
+/// assert!(!default.color);
+///
+/// // Custom — single-line, coloured.
+/// let custom = RenderOptions { crop_radius: 0, color: true };
+/// assert_eq!(custom.crop_radius, 0);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderOptions {
+    /// Number of source lines to include above and below the
+    /// offending line. `0` collapses to a single-line render.
+    /// Default `2` (rustc-style window).
+    pub crop_radius: usize,
+    /// When `true`, the rendered output includes terminal ANSI
+    /// colour escapes (red `error:`, blue gutter, yellow caret).
+    /// Default `false` so CI logs and golden tests stay stable.
+    pub color: bool,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        RenderOptions {
+            crop_radius: 2,
+            color: false,
+        }
+    }
+}
+
+/// A windowed slice of source text around an error location.
+///
+/// Used internally by [`Error::render_with_options`] and exposed
+/// for callers that want to extract the snippet without
+/// formatting it themselves.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::CroppedRegion;
+/// let src = "line 1\nline 2 — error here\nline 3\nline 4\n";
+/// let region = CroppedRegion::extract(src, 2, 1);
+/// assert_eq!(region.lines.len(), 3);
+/// assert!(region.lines[1].contains("error"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CroppedRegion<'a> {
+    /// The lines extracted from the source — indices `low_line..=high_line`.
+    pub lines: Vec<&'a str>,
+    /// 0-based index in `lines` of the offending line (i.e., the
+    /// line corresponding to the original `target_line` parameter).
+    pub focus_index: usize,
+    /// The 1-based line number of the first line in `lines`.
+    pub low_line: usize,
+    /// The 1-based line number of the offending (focus) line.
+    pub focus_line: usize,
+}
+
+impl<'a> CroppedRegion<'a> {
+    /// Extract a `radius`-line window around `target_line` (1-based)
+    /// from `source`. Out-of-range targets clamp to the available
+    /// lines; an empty source yields an empty region with
+    /// `focus_line = 0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::CroppedRegion;
+    /// let src = "a\nb\nc\nd\ne\n";
+    /// let r = CroppedRegion::extract(src, 3, 1);
+    /// assert_eq!(r.lines, vec!["b", "c", "d"]);
+    /// assert_eq!(r.focus_index, 1);
+    /// assert_eq!(r.focus_line, 3);
+    /// ```
+    pub fn extract(source: &'a str, target_line: usize, radius: usize) -> CroppedRegion<'a> {
+        let all: Vec<&str> = source.lines().collect();
+        if all.is_empty() {
+            return CroppedRegion {
+                lines: Vec::new(),
+                focus_index: 0,
+                low_line: 0,
+                focus_line: 0,
+            };
+        }
+        let target_idx = target_line.saturating_sub(1).min(all.len() - 1);
+        let lo = target_idx.saturating_sub(radius);
+        let hi = (target_idx + radius).min(all.len() - 1);
+        let lines: Vec<&str> = all[lo..=hi].to_vec();
+        CroppedRegion {
+            lines,
+            focus_index: target_idx - lo,
+            low_line: lo + 1,
+            focus_line: target_idx + 1,
+        }
+    }
+}
+
+/// Wrap the rendered `plain` output with ANSI colour escapes —
+/// red for the `error:` header, blue for the gutter, yellow for
+/// the `^` caret. Implementation detail of
+/// [`Error::render_with_options`] when `color = true`.
+fn colorize_render(plain: &str) -> String {
+    const RED: &str = "\x1b[31;1m";
+    const BLUE: &str = "\x1b[34;1m";
+    const YELLOW: &str = "\x1b[33;1m";
+    const RESET: &str = "\x1b[0m";
+
+    let mut out = String::with_capacity(plain.len() + 64);
+    for line in plain.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches('\n');
+        if let Some(rest) = trimmed.strip_prefix("error:") {
+            out.push_str(RED);
+            out.push_str("error:");
+            out.push_str(RESET);
+            out.push_str(rest);
+        } else if trimmed.trim_start().starts_with('|')
+            || trimmed.starts_with("  --> ")
+            || trimmed.contains(" | ")
+        {
+            out.push_str(BLUE);
+            out.push_str(trimmed);
+            out.push_str(RESET);
+        } else if trimmed.trim_start().starts_with('^') {
+            out.push_str(YELLOW);
+            out.push_str(trimmed);
+            out.push_str(RESET);
+        } else {
+            out.push_str(trimmed);
+        }
+        if line.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 impl serde::ser::Error for Error {

@@ -5,6 +5,7 @@
 //!
 //! Converts a stream of [`Event`]s directly into `Vec<(Value, SpanTree)>`.
 
+use crate::de::RequireIndent;
 use crate::error::{Error, Result};
 use crate::parser::events::Event;
 use crate::prelude::*;
@@ -37,6 +38,7 @@ pub struct ParseConfig {
     pub max_documents: usize,
     pub max_merge_keys: usize,
     pub alias_anchor_ratio: Option<f64>,
+    pub require_indent: RequireIndent,
     pub duplicate_key_policy: DuplicateKeyPolicy,
     pub strict_booleans: bool,
     pub legacy_booleans: bool,
@@ -61,6 +63,7 @@ impl Default for ParseConfig {
             max_documents: 1_000,
             max_merge_keys: 10_000,
             alias_anchor_ratio: Some(10.0),
+            require_indent: RequireIndent::Unchecked,
             duplicate_key_policy: DuplicateKeyPolicy::default(),
             strict_booleans: false,
             legacy_booleans: false,
@@ -87,6 +90,7 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             max_documents: c.max_documents,
             max_merge_keys: c.max_merge_keys,
             alias_anchor_ratio: c.alias_anchor_ratio,
+            require_indent: c.require_indent,
             duplicate_key_policy: match c.duplicate_key_policy {
                 crate::de::DuplicateKeyPolicy::First => DuplicateKeyPolicy::First,
                 crate::de::DuplicateKeyPolicy::Last => DuplicateKeyPolicy::Last,

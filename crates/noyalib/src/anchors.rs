@@ -781,3 +781,348 @@ impl<T> ArcAnchorRegistry<T> {
         self.anchors.clear();
     }
 }
+
+// ════════════════════════════════════════════════════════════════
+// Issue #5 — recursive anchor types for cyclic YAML graphs.
+// ════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "std")]
+use std::cell::RefCell;
+#[cfg(feature = "std")]
+use std::sync::{Arc, Mutex};
+
+/// Single-threaded recursive anchor type for cyclic / late-initialised
+/// YAML graphs.
+///
+/// Wraps `Rc<RefCell<Option<T>>>` so a value can be referenced by an
+/// alias *before* the anchor is fully populated — the canonical
+/// shape for self-referential YAML configs (call graphs, scene
+/// trees, doubly-linked structures emitted as anchor + alias).
+///
+/// Access through [`RcRecursive::borrow`] / [`RcRecursive::borrow_mut`]
+/// (not `Deref`) so the interior mutability is always explicit at
+/// the call site — borrow-checker complaints surface in the YAML
+/// code, not in the surrounding logic.
+///
+/// For thread-safe variants see [`ArcRecursive`].
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::RcRecursive;
+/// let r: RcRecursive<String> = RcRecursive::empty();
+/// assert!(r.borrow().is_none());
+/// r.set("hello".to_string());
+/// assert_eq!(r.borrow().as_deref(), Some("hello"));
+/// ```
+#[cfg(feature = "std")]
+pub struct RcRecursive<T>(pub Rc<RefCell<Option<T>>>);
+
+#[cfg(feature = "std")]
+impl<T> Clone for RcRecursive<T> {
+    fn clone(&self) -> Self {
+        RcRecursive(self.0.clone())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: fmt::Debug> fmt::Debug for RcRecursive<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("RcRecursive").field(&self.0).finish()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> Default for RcRecursive<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> RcRecursive<T> {
+    /// Construct an empty (uninitialised) recursive anchor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcRecursive;
+    /// let r: RcRecursive<i32> = RcRecursive::empty();
+    /// assert!(r.borrow().is_none());
+    /// ```
+    #[must_use]
+    pub fn empty() -> Self {
+        RcRecursive(Rc::new(RefCell::new(None)))
+    }
+
+    /// Construct a recursive anchor pre-populated with `value`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcRecursive;
+    /// let r = RcRecursive::new(7_i64);
+    /// assert_eq!(r.borrow().as_ref().copied(), Some(7));
+    /// ```
+    #[must_use]
+    pub fn new(value: T) -> Self {
+        RcRecursive(Rc::new(RefCell::new(Some(value))))
+    }
+
+    /// Borrow the inner value immutably (runtime-checked).
+    pub fn borrow(&self) -> core::cell::Ref<'_, Option<T>> {
+        self.0.borrow()
+    }
+
+    /// Borrow the inner value mutably (runtime-checked).
+    pub fn borrow_mut(&self) -> core::cell::RefMut<'_, Option<T>> {
+        self.0.borrow_mut()
+    }
+
+    /// Replace the inner value, returning the previous one if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::RcRecursive;
+    /// let r = RcRecursive::empty();
+    /// assert!(r.set(1_i32).is_none());
+    /// assert_eq!(r.set(2_i32), Some(1));
+    /// ```
+    pub fn set(&self, value: T) -> Option<T> {
+        self.borrow_mut().replace(value)
+    }
+
+    /// Drop the inner value, returning it if any.
+    pub fn take(&self) -> Option<T> {
+        self.borrow_mut().take()
+    }
+
+    /// Number of strong `Rc` references to this recursive cell.
+    pub fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.0)
+    }
+
+    /// Downgrade to an [`RcRecursion`] weak reference. Useful to
+    /// break alias-only cycles when the anchored value is
+    /// referenced from multiple places — the weak reference does
+    /// not count towards the strong-count, so cycle storage is
+    /// released as soon as the last strong [`RcRecursive`] drops.
+    pub fn downgrade(&self) -> RcRecursion<T> {
+        RcRecursion(Rc::downgrade(&self.0))
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: Serialize> Serialize for RcRecursive<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &*self.borrow() {
+            Some(v) => v.serialize(serializer),
+            None => serializer.serialize_unit(),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for RcRecursive<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(RcRecursive::new)
+    }
+}
+
+/// Single-threaded weak recursive reference — pairs with
+/// [`RcRecursive`].
+///
+/// Use to encode alias-only edges in a cyclic graph that should
+/// not keep the anchored value alive on its own.
+#[cfg(feature = "std")]
+pub struct RcRecursion<T>(pub RcWeak<RefCell<Option<T>>>);
+
+#[cfg(feature = "std")]
+impl<T> Clone for RcRecursion<T> {
+    fn clone(&self) -> Self {
+        RcRecursion(self.0.clone())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: fmt::Debug> fmt::Debug for RcRecursion<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("RcRecursion").finish()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> Default for RcRecursion<T> {
+    fn default() -> Self {
+        RcRecursion(RcWeak::new())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> RcRecursion<T> {
+    /// Attempt to upgrade to a strong [`RcRecursive`]. Returns
+    /// `None` if every strong reference has been dropped.
+    pub fn upgrade(&self) -> Option<RcRecursive<T>> {
+        self.0.upgrade().map(RcRecursive)
+    }
+}
+
+/// Thread-safe recursive anchor type — the [`RcRecursive`]
+/// counterpart for cross-thread / parallel-parse use cases.
+///
+/// Wraps `Arc<Mutex<Option<T>>>`. Access through
+/// [`ArcRecursive::lock`] (rather than a `Deref`) so the locking
+/// is explicit at the call site.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::ArcRecursive;
+/// let r: ArcRecursive<i32> = ArcRecursive::new(42);
+/// assert_eq!(*r.lock(), Some(42));
+/// ```
+#[cfg(feature = "std")]
+pub struct ArcRecursive<T>(pub Arc<Mutex<Option<T>>>);
+
+#[cfg(feature = "std")]
+impl<T> Clone for ArcRecursive<T> {
+    fn clone(&self) -> Self {
+        ArcRecursive(self.0.clone())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: fmt::Debug> fmt::Debug for ArcRecursive<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ArcRecursive").finish()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> Default for ArcRecursive<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> ArcRecursive<T> {
+    /// Construct an empty (uninitialised) thread-safe recursive
+    /// anchor.
+    #[must_use]
+    pub fn empty() -> Self {
+        ArcRecursive(Arc::new(Mutex::new(None)))
+    }
+
+    /// Construct a thread-safe recursive anchor pre-populated
+    /// with `value`.
+    #[must_use]
+    pub fn new(value: T) -> Self {
+        ArcRecursive(Arc::new(Mutex::new(Some(value))))
+    }
+
+    /// Lock the inner cell. Recovers from poisoning rather than
+    /// panicking — the only way the mutex gets poisoned is a
+    /// panic mid-write inside the critical section, and the
+    /// recovered guard is still observable as `None` or as the
+    /// pre-panic value.
+    ///
+    /// Returns a `MutexGuard` over `Option<T>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::ArcRecursive;
+    /// let r = ArcRecursive::new("hi".to_string());
+    /// let guard = r.lock();
+    /// assert_eq!(guard.as_deref(), Some("hi"));
+    /// ```
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, Option<T>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Replace the inner value, returning the previous one if any.
+    pub fn set(&self, value: T) -> Option<T> {
+        self.lock().replace(value)
+    }
+
+    /// Drop the inner value, returning it if any.
+    pub fn take(&self) -> Option<T> {
+        self.lock().take()
+    }
+
+    /// Number of strong `Arc` references to this recursive cell.
+    pub fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+
+    /// Downgrade to an [`ArcRecursion`] weak reference.
+    pub fn downgrade(&self) -> ArcRecursion<T> {
+        ArcRecursion(Arc::downgrade(&self.0))
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: Serialize> Serialize for ArcRecursive<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &*self.lock() {
+            Some(v) => v.serialize(serializer),
+            None => serializer.serialize_unit(),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ArcRecursive<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(ArcRecursive::new)
+    }
+}
+
+/// Thread-safe weak recursive reference — pairs with
+/// [`ArcRecursive`].
+#[cfg(feature = "std")]
+pub struct ArcRecursion<T>(pub ArcWeak<Mutex<Option<T>>>);
+
+#[cfg(feature = "std")]
+impl<T> Clone for ArcRecursion<T> {
+    fn clone(&self) -> Self {
+        ArcRecursion(self.0.clone())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: fmt::Debug> fmt::Debug for ArcRecursion<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ArcRecursion").finish()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> Default for ArcRecursion<T> {
+    fn default() -> Self {
+        ArcRecursion(ArcWeak::new())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> ArcRecursion<T> {
+    /// Attempt to upgrade to a strong [`ArcRecursive`]. Returns
+    /// `None` if every strong reference has been dropped.
+    pub fn upgrade(&self) -> Option<ArcRecursive<T>> {
+        self.0.upgrade().map(ArcRecursive)
+    }
+}

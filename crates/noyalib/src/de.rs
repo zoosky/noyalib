@@ -186,6 +186,10 @@ pub struct ParserConfig {
     /// migrations from YAML 1.1 / Ruby / pyyaml configs that use
     /// the legacy time-of-day notation.
     pub legacy_sexagesimal: bool,
+    /// Indentation-validation mode. See [`RequireIndent`].
+    /// Default: [`RequireIndent::Unchecked`] — accept any
+    /// well-formed YAML indent.
+    pub require_indent: RequireIndent,
     /// Pluggable "Safe YAML" policies, run during parsing.
     ///
     /// Each [`Policy`](crate::policy::Policy) inspects parser
@@ -224,6 +228,7 @@ impl Default for ParserConfig {
             legacy_octal_numbers: false,
             ignore_binary_tag_for_string: false,
             legacy_sexagesimal: false,
+            require_indent: RequireIndent::Unchecked,
             policies: Vec::new(),
         }
     }
@@ -278,6 +283,7 @@ impl ParserConfig {
             legacy_octal_numbers: false,
             ignore_binary_tag_for_string: false,
             legacy_sexagesimal: false,
+            require_indent: RequireIndent::Even,
             policies: Vec::new(),
         }
     }
@@ -518,6 +524,21 @@ impl ParserConfig {
         self
     }
 
+    /// Set the indentation-validation mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{ParserConfig, RequireIndent};
+    /// let cfg = ParserConfig::new().require_indent(RequireIndent::Even);
+    /// assert_eq!(cfg.require_indent, RequireIndent::Even);
+    /// ```
+    #[must_use]
+    pub fn require_indent(mut self, mode: RequireIndent) -> Self {
+        self.require_indent = mode;
+        self
+    }
+
     /// Set the alias-to-anchor ratio heuristic.
     ///
     /// Pass `Some(ratio)` to enable the billion-laughs guard,
@@ -700,6 +721,54 @@ impl ParserConfig {
 ///
 /// # Examples
 ///
+/// Indentation-validation mode for the YAML scanner.
+///
+/// Issue #6 surface — every block-context indent transition is
+/// classified per the chosen mode. The default
+/// ([`RequireIndent::Unchecked`]) accepts any well-formed YAML
+/// indent (the YAML 1.2 spec mandate), which is what every
+/// other Rust YAML parser does.
+///
+/// Stricter modes are useful in pipelines that require uniform
+/// indentation house style (linters, formatters, reviewer
+/// gates) — a config file with mixed `2`-space and `4`-space
+/// indent passes by-spec but fails consistency review.
+///
+/// # Variants
+///
+/// - [`RequireIndent::Unchecked`] (default) — by-spec mode.
+/// - [`RequireIndent::Even`] — every indent delta must be even.
+/// - [`RequireIndent::Divisible(N)`] — every indent delta must
+///   be divisible by `N`.
+/// - [`RequireIndent::Uniform(Some(N))`] — every indent delta
+///   must equal `N`. `None` means "auto-detect from the first
+///   delta and require the rest to match it".
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{ParserConfig, RequireIndent};
+/// let cfg = ParserConfig::new().require_indent(RequireIndent::Even);
+/// assert_eq!(cfg.require_indent, RequireIndent::Even);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum RequireIndent {
+    /// Accept any indent transition the YAML 1.2 spec allows.
+    /// Default.
+    #[default]
+    Unchecked,
+    /// Indent delta must be even (`2`, `4`, `6`, …). The most
+    /// common house-style.
+    Even,
+    /// Indent delta must be divisible by `N`.
+    Divisible(usize),
+    /// `Some(N)`: every indent delta must equal `N`.
+    /// `None`: the first delta sets the standard for the
+    /// document; subsequent deltas must match it.
+    Uniform(Option<usize>),
+}
+
 /// ```
 /// use noyalib::MergeKeyPolicy;
 /// assert_eq!(MergeKeyPolicy::default(), MergeKeyPolicy::Auto);
