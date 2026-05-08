@@ -1644,8 +1644,22 @@ impl Hash for Number {
             }
             Number::Float(n) => {
                 1u8.hash(state);
-                // Use bits for hashing floats - NaN values will hash consistently
-                n.to_bits().hash(state);
+                // Eq/Hash contract: equal values must hash equal. Two
+                // edge cases break naive `to_bits()` hashing:
+                //   - `+0.0 == -0.0` is true under IEEE 754 (and our
+                //     PartialEq), but `to_bits()` gives 0x0000… vs
+                //     0x8000…. Normalise zeros to a single bit pattern.
+                //   - PartialEq treats NaN == NaN as true (so `Eq` is
+                //     reflexive), but distinct NaN payloads have
+                //     distinct bits. Hash a fixed sentinel for NaN.
+                let bits = if n.is_nan() {
+                    0x7FF8_0000_0000_0001
+                } else if *n == 0.0 {
+                    0
+                } else {
+                    n.to_bits()
+                };
+                bits.hash(state);
             }
         }
     }

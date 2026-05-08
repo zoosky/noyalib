@@ -242,6 +242,50 @@ proptest! {
 }
 
 // ============================================================================
+// Eq/Hash invariant — explicit regressions
+// ============================================================================
+//
+// These pin the historical edge cases for `Number`'s Eq/Hash contract
+// so they are always replayed regardless of proptest seed:
+//   - `+0.0 == -0.0` (IEEE 754) — must hash to the same value.
+//   - `NaN == NaN` (we make `Eq` reflexive) — must hash to the same value.
+//   - `Float(1.0)` and `Integer(1)` are NOT equal — they may hash to
+//     different values, but the variant tag in the hasher must keep
+//     them apart in practice.
+
+fn hash_one<T: std::hash::Hash>(t: &T) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
+    let mut h = DefaultHasher::new();
+    t.hash(&mut h);
+    h.finish()
+}
+
+#[test]
+fn number_zero_negative_zero_eq_hash() {
+    let p = Number::Float(0.0);
+    let n = Number::Float(-0.0);
+    assert_eq!(p, n, "+0.0 == -0.0 by IEEE 754");
+    assert_eq!(hash_one(&p), hash_one(&n), "Eq/Hash invariant");
+}
+
+#[test]
+fn number_nan_eq_hash() {
+    let a = Number::Float(f64::NAN);
+    let b = Number::Float(f64::from_bits(0x7FF8_0000_0000_0042));
+    assert_eq!(a, b, "all NaNs compare equal under our reflexive-Eq policy");
+    assert_eq!(hash_one(&a), hash_one(&b), "Eq/Hash invariant");
+}
+
+#[test]
+fn value_zero_negative_zero_eq_hash() {
+    let p = Value::Number(Number::Float(0.0));
+    let n = Value::Number(Number::Float(-0.0));
+    assert_eq!(p, n);
+    assert_eq!(hash_one(&p), hash_one(&n));
+}
+
+// ============================================================================
 // Mapping Properties
 // ============================================================================
 
