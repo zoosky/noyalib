@@ -243,6 +243,25 @@ stays explicit.
 - Measurements above are *single-thread*; see §5 for the
   parallel-parsing story.
 
+### Profile-Guided Optimization (PGO) — opt-in 5-15% on top
+
+The default `cargo install noya-cli` build runs the workspace
+release profile (`opt-level = 3`, `lto = "fat"`,
+`codegen-units = 1`). A two-pass PGO build adds another
+**5-15%** speedup on the parser hot path by laying out
+branches based on the actual execution profile rather than
+LLVM's static heuristics.
+
+PGO is **opt-in**: distro packagers and downstream teams who
+ship the binaries to a wide audience can run
+`scripts/pgo.sh` to produce a PGO'd binary. The full
+pipeline (instrumented build → train against representative
+corpus → optimised rebuild via `llvm-profdata merge`) is
+documented at [`doc/PGO.md`](PGO.md).
+
+Per-host-triple training is required — a Mac-trained
+`merged.profdata` cannot be reused on Linux x86_64.
+
 ### Known performance non-goals
 
 - We do **not** match `serde-saphyr`'s typed-target
