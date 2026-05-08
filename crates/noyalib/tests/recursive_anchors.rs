@@ -157,3 +157,113 @@ fn rc_recursive_empty_serializes_as_null() {
     let json = serde_json::to_string(&r).unwrap();
     assert_eq!(json, "null");
 }
+
+// ── Coverage-completeness tests ─────────────────────────────────
+
+#[test]
+fn rc_recursive_default_is_empty() {
+    let r: RcRecursive<i32> = RcRecursive::default();
+    assert!(r.borrow().is_none());
+}
+
+#[test]
+fn arc_recursive_default_is_empty() {
+    let r: ArcRecursive<i32> = ArcRecursive::default();
+    assert!(r.lock().is_none());
+}
+
+#[test]
+fn rc_recursion_default_is_empty_weak() {
+    let w: RcRecursion<i32> = RcRecursion::default();
+    assert!(w.upgrade().is_none());
+}
+
+#[test]
+fn arc_recursion_default_is_empty_weak() {
+    let w: ArcRecursion<i32> = ArcRecursion::default();
+    assert!(w.upgrade().is_none());
+}
+
+#[test]
+fn rc_recursive_debug_impl() {
+    let r = RcRecursive::new(7_i32);
+    let s = format!("{:?}", r);
+    assert!(s.contains("RcRecursive"));
+}
+
+#[test]
+fn arc_recursive_debug_impl() {
+    let r = ArcRecursive::new(7_i32);
+    let s = format!("{:?}", r);
+    assert!(s.contains("ArcRecursive"));
+}
+
+#[test]
+fn rc_recursion_debug_impl() {
+    let r = RcRecursive::new(1_i32);
+    let w = r.downgrade();
+    let s = format!("{:?}", w);
+    assert!(s.contains("RcRecursion"));
+}
+
+#[test]
+fn arc_recursion_debug_impl() {
+    let r = ArcRecursive::new(1_i32);
+    let w = r.downgrade();
+    let s = format!("{:?}", w);
+    assert!(s.contains("ArcRecursion"));
+}
+
+#[test]
+fn rc_recursive_clone_shares_storage() {
+    let a = RcRecursive::new(1_i32);
+    let b = a.clone();
+    let _ = b.set(2);
+    assert_eq!(a.borrow().as_ref(), Some(&2));
+}
+
+#[test]
+fn arc_recursive_clone_shares_storage() {
+    let a = ArcRecursive::new(1_i32);
+    let b = a.clone();
+    let _ = b.set(2);
+    assert_eq!(*a.lock(), Some(2));
+}
+
+#[test]
+fn rc_recursion_clone() {
+    let r = RcRecursive::new(1_i32);
+    let w1 = r.downgrade();
+    let w2 = w1.clone();
+    assert!(w2.upgrade().is_some());
+}
+
+#[test]
+fn arc_recursion_clone() {
+    let r = ArcRecursive::new(1_i32);
+    let w1 = r.downgrade();
+    let w2 = w1.clone();
+    assert!(w2.upgrade().is_some());
+}
+
+#[test]
+fn rc_recursive_take_on_empty_returns_none() {
+    let r: RcRecursive<i32> = RcRecursive::empty();
+    assert!(r.take().is_none());
+}
+
+#[test]
+fn arc_recursive_take_on_empty_returns_none() {
+    let r: ArcRecursive<i32> = ArcRecursive::empty();
+    assert!(r.take().is_none());
+}
+
+#[test]
+fn arc_recursive_strong_count_tracks_clones() {
+    let r = ArcRecursive::new(1_i32);
+    assert_eq!(r.strong_count(), 1);
+    let r2 = r.clone();
+    assert_eq!(r.strong_count(), 2);
+    drop(r2);
+    assert_eq!(r.strong_count(), 1);
+}

@@ -7,6 +7,45 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### v0.0.2 milestone — implemented in v0.0.1
+
+The seven open issues on the v0.0.2 milestone are closed inside
+v0.0.1 per the "don't pre-emptively phase a bang launch"
+principle. Public API additions:
+
+- **`noyalib::Error::Budget(BudgetBreach)`** + the
+  `BudgetBreach` enum (#3). Six new `ParserConfig` budgets:
+  `max_events`, `max_nodes`, `max_total_scalar_bytes`,
+  `max_documents`, `max_merge_keys`, `alias_anchor_ratio`.
+  Each has a builder method on `ParserConfig`; `strict()`
+  uses tighter caps. Enforced in `Loader::process_event`.
+- **`noyalib::Error::render(source) -> String`** +
+  `render_with_options(source, &RenderOptions)` (#2). New
+  public types `RenderOptions { crop_radius, color }` and
+  `CroppedRegion<'a>` for caller-facing diagnostic
+  rendering. `format_with_source` / `format_with_source_radius`
+  remain for backwards compatibility.
+- **`RcRecursive<T>` / `ArcRecursive<T>` / `RcRecursion<T>` /
+  `ArcRecursion<T>`** (#5). Late-init / cyclic-graph anchor
+  wrappers in `noyalib::anchors`. Access via `.borrow()` /
+  `.lock()`; `Serialize` / `Deserialize` impls delegate to the
+  inner `T`.
+- **`noyalib::RequireIndent`** + `ParserConfig::require_indent`
+  (#6). API surface for indentation-validation modes
+  (`Unchecked`, `Even`, `Divisible(N)`, `Uniform(Option<N>)`).
+  Scanner-side enforcement is a follow-up per the issue's
+  own "Blast Radius" note.
+
+Already-implemented issues confirmed and closed: `!!binary`
+support (#4 — `src/base64.rs`), yaml-test-suite compliance
+runner (#26 — 406/406 strict), streaming anchor event replay
+(#29 — `streaming.rs::anchor_events` + `replay_stack`).
+
+Test coverage: 38 new regression tests across
+`tests/{budget_breach,error_render,require_indent,recursive_anchors}.rs`.
+Coverage gates: **95.63% functions / 93.16% lines / 92.31%
+regions** (all above CI thresholds).
+
 ### Docs — README refactor: extracted deep weeds, grouped tooling cluster
 
 The workspace README had grown to a 1 593-line full-doc website.

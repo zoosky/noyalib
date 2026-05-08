@@ -62,3 +62,24 @@ fn debug_includes_variant_name() {
     assert!(s.contains("Divisible"));
     assert!(s.contains("2"));
 }
+
+#[test]
+fn require_indent_clone_copy_eq() {
+    let a = RequireIndent::Divisible(4);
+    let b = a;
+    assert_eq!(a, b);
+}
+
+#[test]
+fn debug_for_unchecked_variant() {
+    assert_eq!(format!("{:?}", RequireIndent::Unchecked), "Unchecked");
+}
+
+#[test]
+fn debug_for_uniform_variants() {
+    let s = format!("{:?}", RequireIndent::Uniform(Some(2)));
+    assert!(s.contains("Uniform"));
+    let s = format!("{:?}", RequireIndent::Uniform(None));
+    assert!(s.contains("Uniform"));
+    assert!(s.contains("None"));
+}

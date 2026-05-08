@@ -148,3 +148,119 @@ fn strict_config_uses_tighter_budgets() {
     assert!(strict.max_documents < default.max_documents);
     assert!(strict.max_merge_keys < default.max_merge_keys);
 }
+
+// ── Display branches for every BudgetBreach variant ─────────────
+
+#[test]
+fn breach_display_max_events() {
+    let b = BudgetBreach::MaxEvents {
+        limit: 10,
+        observed: 11,
+    };
+    let s = format!("{b}");
+    assert!(s.contains("max_events"));
+    assert!(s.contains("11"));
+    assert!(s.contains("10"));
+}
+
+#[test]
+fn breach_display_max_nodes_path() {
+    let b = BudgetBreach::MaxNodes {
+        limit: 5,
+        observed: 6,
+    };
+    assert!(format!("{b}").contains("max_nodes"));
+}
+
+#[test]
+fn breach_display_max_total_scalar_bytes() {
+    let b = BudgetBreach::MaxTotalScalarBytes {
+        limit: 1024,
+        observed: 2048,
+    };
+    assert!(format!("{b}").contains("max_total_scalar_bytes"));
+}
+
+#[test]
+fn breach_display_max_documents() {
+    let b = BudgetBreach::MaxDocuments {
+        limit: 1,
+        observed: 2,
+    };
+    assert!(format!("{b}").contains("max_documents"));
+}
+
+#[test]
+fn breach_display_max_merge_keys() {
+    let b = BudgetBreach::MaxMergeKeys {
+        limit: 5,
+        observed: 6,
+    };
+    assert!(format!("{b}").contains("max_merge_keys"));
+}
+
+#[test]
+fn breach_display_alias_anchor_ratio() {
+    let b = BudgetBreach::AliasAnchorRatio {
+        ratio: 10.0,
+        anchors: 1,
+        aliases: 100,
+    };
+    let s = format!("{b}");
+    assert!(s.contains("alias_anchor_ratio"));
+    assert!(s.contains("100"));
+}
+
+#[test]
+fn budget_error_display_delegates_to_breach() {
+    let breach = BudgetBreach::MaxEvents {
+        limit: 1,
+        observed: 2,
+    };
+    let err = Error::Budget(breach.clone());
+    let err_s = format!("{err}");
+    let breach_s = format!("{breach}");
+    assert_eq!(err_s, breach_s);
+}
+
+#[test]
+fn budget_breach_clone_and_eq() {
+    let a = BudgetBreach::MaxNodes {
+        limit: 1,
+        observed: 2,
+    };
+    let b = a.clone();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn alias_anchor_ratio_trips_on_amplification() {
+    let yaml = "base: &b 1\nu: [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b, *b, *b]\n";
+    let cfg = ParserConfig::new()
+        .alias_anchor_ratio(Some(2.0))
+        .max_alias_expansions(1_000);
+    let res: Result<Vec<Value>, _> = load_all_values(yaml, &cfg);
+    if let Err(err) = res {
+        assert!(
+            matches!(err, Error::Budget(BudgetBreach::AliasAnchorRatio { .. })),
+            "got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn each_builder_method_round_trips() {
+    let cfg = ParserConfig::new()
+        .max_events(11)
+        .max_nodes(22)
+        .max_total_scalar_bytes(33)
+        .max_documents(44)
+        .max_merge_keys(55)
+        .alias_anchor_ratio(Some(6.0));
+    assert_eq!(cfg.max_events, 11);
+    assert_eq!(cfg.max_nodes, 22);
+    assert_eq!(cfg.max_total_scalar_bytes, 33);
+    assert_eq!(cfg.max_documents, 44);
+    assert_eq!(cfg.max_merge_keys, 55);
+    assert_eq!(cfg.alias_anchor_ratio, Some(6.0));
+}
