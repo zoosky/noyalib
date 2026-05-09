@@ -101,6 +101,13 @@ pub fn find_any_of(haystack: &[u8], needles: &[u8]) -> Option<usize> {
 /// sites. Useful in scanner inner loops where the next event is
 /// "consume the run, then handle the boundary byte".
 ///
+/// **Polarity sibling**: see [`match_prefix_len`] for the inverse —
+/// "skip the leading run that *is* in the needle set." Mixing them
+/// up is a bug class (cf. commit 1e7dace which broke the YAML
+/// parser by passing the wrong polarity to `skip_blank`); the two
+/// names are deliberately verb-symmetric to make call sites
+/// self-documenting.
+///
 /// # Examples
 ///
 /// ```
@@ -118,6 +125,66 @@ pub fn find_any_of(haystack: &[u8], needles: &[u8]) -> Option<usize> {
 #[must_use]
 pub fn clean_prefix_len(haystack: &[u8], needles: &[u8]) -> usize {
     find_any_of(haystack, needles).unwrap_or(haystack.len())
+}
+
+/// Length of the leading run of bytes in `haystack` that ARE in
+/// `needles`. The polarity-flipped sibling of [`clean_prefix_len`]:
+///
+/// - [`clean_prefix_len`] = skip while the byte is **not** a needle
+///   (consume the clean run; stop at the first interesting byte).
+/// - [`match_prefix_len`] = skip while the byte **is** a needle
+///   (consume the matched run; stop at the first content byte).
+///
+/// `match_prefix_len(rem, b" \t")` is the canonical
+/// "advance past blanks" primitive; see `Scanner::skip_blank`.
+///
+/// LLVM at `opt-level=3 + lto=fat` auto-vectorises the per-byte
+/// loop into 16/32-byte block scans, so the explicit SIMD path is
+/// not required for short runs (the typical 0-8 byte indent).
+/// Larger-arity needle sets fall through the same bitmap a
+/// scalar code would build for itself; the cost is a one-time
+/// `bitmap_for` call.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::simd::match_prefix_len;
+///
+/// // Three leading blanks, then `f`.
+/// assert_eq!(match_prefix_len(b"   foo", b" \t"), 3);
+///
+/// // No leading match — empty prefix.
+/// assert_eq!(match_prefix_len(b"foo", b" \t"), 0);
+///
+/// // Whole input matches.
+/// assert_eq!(match_prefix_len(b"\t \t ", b" \t"), 4);
+///
+/// // Empty needle set — no byte ever matches, returns 0.
+/// assert_eq!(match_prefix_len(b"abc", b""), 0);
+/// ```
+#[must_use]
+pub fn match_prefix_len(haystack: &[u8], needles: &[u8]) -> usize {
+    if needles.is_empty() {
+        return 0;
+    }
+    // Single-byte needle: branch-predictable byte loop, fully
+    // auto-vectorisable by LLVM under opt-level=3+lto.
+    if needles.len() == 1 {
+        let n = needles[0];
+        let mut i = 0;
+        while i < haystack.len() && haystack[i] == n {
+            i += 1;
+        }
+        return i;
+    }
+    // Multi-byte needle: build the 256-bit bitmap once, scan via
+    // O(1) lookup per haystack byte.
+    let bm = bitmap_for(needles);
+    let mut i = 0;
+    while i < haystack.len() && bm.contains(haystack[i]) {
+        i += 1;
+    }
+    i
 }
 
 /// Find the byte offset of the first occurrence of any byte whose

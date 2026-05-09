@@ -666,20 +666,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn skip_blank(&mut self) {
-        // Bulk-scan blanks from the byte slice directly — avoids per-byte
-        // bounds checks via peek()/advance() in the common case.
-        // (Previously tried `simd::clean_prefix_len(rem, b" \t")` here;
-        // that primitive returns the prefix that is NOT in the needle set,
-        // i.e. the inverse of what skip-while-blank wants — using it here
-        // silently skipped non-blank bytes (e.g. `#`) and tripped the
-        // leading-comment-then-content fixture. The byte loop is already
-        // unrolled by LLVM at `opt-level=3 + lto`; the SWAR primitive
-        // would need a `match-while` variant to express skip-while-in-set.)
-        let remaining = &self.input[self.pos..];
-        let mut count = 0;
-        while count < remaining.len() && Self::is_blank(remaining[count]) {
-            count += 1;
-        }
+        // `simd::match_prefix_len` is the polarity-correct sibling of
+        // `clean_prefix_len`: counts the leading run that IS in the
+        // needle set (vs. clean_prefix_len which counts the run that
+        // ISN'T). Commit 1e7dace shipped a regression by passing the
+        // wrong polarity here; using the explicitly-named match_prefix_len
+        // primitive eliminates the bug class.
+        let count = crate::simd::match_prefix_len(&self.input[self.pos..], b" \t");
         if count > 0 {
             self.col += count; // blanks never contain newlines
             self.pos += count;
