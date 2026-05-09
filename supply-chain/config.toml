@@ -312,7 +312,7 @@ version = "0.2.16"
 criteria = "safe-to-deploy"
 
 [[exemptions.libyaml-safer]]
-version = "0.1.2"
+version = "0.3.0"
 criteria = "safe-to-run"
 
 [[exemptions.libyml]]
@@ -441,10 +441,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.r-efi]]
 version = "6.0.0"
-criteria = "safe-to-run"
-
-[[exemptions.rand]]
-version = "0.9.4"
 criteria = "safe-to-run"
 
 [[exemptions.rand_xorshift]]
