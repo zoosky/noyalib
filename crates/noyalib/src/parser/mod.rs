@@ -47,15 +47,20 @@ pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, Spa
 
 /// Parse a single YAML document into a `Value` without building a `SpanTree`.
 ///
-/// Used only on `no_std` targets where `SpanTree` construction is
-/// unavailable — the `std` build always uses the span-aware path.
-#[cfg(not(feature = "std"))]
+/// Available on every target. Callers that don't need span data
+/// (e.g. `from_str::<Value>` — `Value` has no span field, so spans
+/// are always discarded) should prefer this over [`parse_one`] to
+/// avoid the per-node `SpanTree` allocation and the subsequent
+/// `build_span_map` walk. `no_std` builds use this exclusively
+/// because `SpanTree` requires `std`-only types.
 pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
     loader::load_one_no_spans(input, config)
 }
 
 /// Parse all YAML documents into `Value`s without building `SpanTree`s.
-#[cfg(not(feature = "std"))]
+///
+/// See [`parse_one_value`] for the rationale.
+#[allow(dead_code)] // exposed for future skip-span entry points
 pub(crate) fn parse_all_values(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
     loader::load_all_no_spans(input, config)
 }

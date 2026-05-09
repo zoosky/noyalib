@@ -664,7 +664,12 @@ fn estimate_value_size(v: &Value) -> usize {
 // always uses the span-aware loader above so `Spanned<T>` fields are
 // populated correctly.
 
-#[cfg(not(feature = "std"))]
+/// Skip-span loader entry point: parse one document into `Value`
+/// without building a `SpanTree`. Available on every target —
+/// `std` builds use this from the [`from_str::<Value>`] fast path
+/// (`Value::deserialize` never consults the span context, so
+/// building one is pure waste). `no_std` builds use it
+/// exclusively.
 pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Value> {
     Ok(load_all_no_spans(input, config)?
         .into_iter()
@@ -672,7 +677,8 @@ pub(crate) fn load_one_no_spans(input: &str, config: &ParseConfig) -> Result<Val
         .unwrap_or(Value::Null))
 }
 
-#[cfg(not(feature = "std"))]
+/// Skip-span loader entry point: parse all documents into
+/// `Value`s without building `SpanTree`s. See [`load_one_no_spans`].
 pub(crate) fn load_all_no_spans(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
     let mut parser = crate::parser::events::Parser::new(input);
     let mut loader = NoSpanLoader::new(config);
@@ -689,7 +695,6 @@ pub(crate) fn load_all_no_spans(input: &str, config: &ParseConfig) -> Result<Vec
     Ok(loader.docs)
 }
 
-#[cfg(not(feature = "std"))]
 #[derive(Debug)]
 enum NoSpanFrame {
     Sequence {
@@ -712,7 +717,6 @@ enum NoSpanFrame {
     },
 }
 
-#[cfg(not(feature = "std"))]
 struct NoSpanLoader<'a> {
     docs: Vec<Value>,
     stack: Vec<NoSpanFrame>,
@@ -724,7 +728,6 @@ struct NoSpanLoader<'a> {
     in_document: bool,
 }
 
-#[cfg(not(feature = "std"))]
 impl<'a> NoSpanLoader<'a> {
     fn new(config: &'a ParseConfig) -> Self {
         NoSpanLoader {

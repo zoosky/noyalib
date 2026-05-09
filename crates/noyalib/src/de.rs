@@ -1115,6 +1115,29 @@ where
 
     let parse_config = parser::ParseConfig::from(config);
 
+    // Skip-span + zero-rewalk fast path: when T == Value, the AST
+    // we just parsed *is* the answer. The default path would
+    // (a) build a `SpanTree` that `Value::deserialize` never
+    // consults, then (b) hand the parsed `Value` back to serde,
+    // which walks it a second time and rebuilds an identical
+    // `Value` via `ValueVisitor::visit_seq` / `visit_map` — pure
+    // waste. Instead, parse via `parse_one_value` (no SpanTree)
+    // and downcast the `Value` directly into `T`. The downcast
+    // is the safe stdlib `Box<dyn Any>::downcast::<T>()` and is
+    // provably correct because `is_value_target::<T>()` already
+    // verified `TypeId::of::<T>() == TypeId::of::<Value>()`.
+    if is_value_target::<T>() {
+        let value = parser::parse_one_value(s, &parse_config)?;
+        for p in &config.policies {
+            p.check_value(&value)?;
+        }
+        let boxed: Box<dyn core::any::Any> = Box::new(value);
+        return boxed
+            .downcast::<T>()
+            .map(|b| *b)
+            .map_err(|_| Error::Deserialize("type mismatch in Value fast path".into()));
+    }
+
     #[cfg(feature = "std")]
     {
         let (value, span_tree) = parser::parse_one(s, &parse_config)?;
@@ -1127,42 +1150,18 @@ where
             source: s.into(),
         };
         let _guard = span_context::set_span_context(ctx);
-        // Tag-preserving fast-path: when the caller's `T` is
-        // `Value` (the only type with a `Tagged` variant), enable
-        // the magic-key surfacing in
-        // [`Deserializer::deserialize_any`] so custom-tag scalars
-        // like `!Custom 'hi'` survive as
-        // `Value::Tagged(...)` instead of being unwrapped to the
-        // inner value (which is the right behaviour for typed
-        // targets but lossy for `Value`).
-        let de = if is_value_target::<T>() {
-            Deserializer::with_options_preserving_tags(
-                &value,
-                Some(_guard.as_ref()),
-                config.ignore_binary_tag_for_string,
-            )
-        } else {
-            Deserializer::with_options(
-                &value,
-                Some(_guard.as_ref()),
-                config.ignore_binary_tag_for_string,
-            )
-        };
+        let de = Deserializer::with_options(
+            &value,
+            Some(_guard.as_ref()),
+            config.ignore_binary_tag_for_string,
+        );
         T::deserialize(de)
     }
 
     #[cfg(not(feature = "std"))]
     {
         let value = parser::parse_one_value(s, &parse_config)?;
-        let de = if is_value_target::<T>() {
-            Deserializer::with_options_preserving_tags(
-                &value,
-                None,
-                config.ignore_binary_tag_for_string,
-            )
-        } else {
-            Deserializer::with_options(&value, None, config.ignore_binary_tag_for_string)
-        };
+        let de = Deserializer::with_options(&value, None, config.ignore_binary_tag_for_string);
         T::deserialize(de)
     }
 }
@@ -1302,12 +1301,19 @@ pub fn from_value<T>(value: &Value) -> Result<T>
 where
     T: for<'de> Deserialize<'de> + 'static,
 {
-    let de = if is_value_target::<T>() {
-        Deserializer::with_options_preserving_tags(value, None, false)
-    } else {
-        Deserializer::new(value)
-    };
-    T::deserialize(de)
+    // Zero-rewalk fast path: when T == Value, the answer is just
+    // `value.clone()`. The default `T::deserialize(de)` route
+    // walks `value` and reconstructs an identical Value via
+    // `ValueVisitor::visit_seq`/`visit_map` — pure waste.
+    if is_value_target::<T>() {
+        let cloned = value.clone();
+        let boxed: Box<dyn core::any::Any> = Box::new(cloned);
+        return boxed
+            .downcast::<T>()
+            .map(|b| *b)
+            .map_err(|_| Error::Deserialize("type mismatch in Value fast path".into()));
+    }
+    T::deserialize(Deserializer::new(value))
 }
 
 /// A YAML deserializer.

@@ -666,13 +666,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn skip_blank(&mut self) {
-        // Bulk-scan blanks from the byte slice directly — avoids per-byte
-        // bounds checks via peek()/advance() in the common case.
+        // SIMD-vectorised: every YAML run begins with a non-trivial
+        // amount of indent on block-style input. The default
+        // byte-by-byte scan is the dominant inner loop on indent-heavy
+        // documents; `simd::clean_prefix_len` routes through memchr2
+        // (NEON / SSE2) so we skip 16-32 bytes per cycle.
         let remaining = &self.input[self.pos..];
-        let mut count = 0;
-        while count < remaining.len() && Self::is_blank(remaining[count]) {
-            count += 1;
-        }
+        let count = crate::simd::clean_prefix_len(remaining, b" \t");
         if count > 0 {
             self.col += count; // blanks never contain newlines
             self.pos += count;
