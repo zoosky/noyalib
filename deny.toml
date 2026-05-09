@@ -4,6 +4,23 @@ all-features = true
 [advisories]
 unmaintained = "workspace"
 yanked = "warn"
+# Bench-only competitor surface — these crates are never compiled
+# into a release artefact. They appear in `crates/noyalib/Cargo.toml`
+# under `[dev-dependencies]` purely so the comparison harness in
+# `crates/noyalib/benches/comparison.rs` can produce honest
+# head-to-head numbers vs every popular Rust YAML library, including
+# the ones flagged unsound or unmaintained by RustSec. The point of
+# the comparison is showing noyalib's safety+speed posture against
+# the alternatives — silencing the advisories on dev-deps lets the
+# audit pipeline reflect that intent without weakening the
+# advisory enforcement on production deps.
+ignore = [
+    # serde_yml: RUSTSEC-2025-0068 (unsound + unmaintained, see also
+    # advisory-db#2395). Bench-only via dev-dep; the maintainer's
+    # prior crate, kept so `cargo bench --bench comparison` covers
+    # the full ecosystem.
+    "RUSTSEC-2025-0068",
+]
 
 [licenses]
 allow = [
