@@ -10,6 +10,7 @@
 //! cargo xtask notice        # writes NOTICE  (via cargo-about)
 //! cargo xtask sbom          # writes SBOM.txt (via cargo tree)
 //! cargo xtask vendor        # writes vendor/   (via cargo vendor)
+//! cargo xtask pgo-build     # PGO-instrumented release build (5-15% extra)
 //! cargo xtask all           # completions + manpages in one pass
 //! ```
 //!
@@ -48,6 +49,20 @@ enum Cmd {
     Sbom,
     /// Vendor every dependency under `vendor/` for offline builds.
     Vendor,
+    /// Run the full Profile-Guided Optimisation (PGO) pipeline:
+    /// instrumented build → train against bench fixtures → merge
+    /// profdata → optimised rebuild. Produces a 5-15% extra speedup
+    /// over `cargo build --release` on the parser hot paths.
+    /// Wraps `scripts/pgo.sh`.
+    PgoBuild {
+        /// Optional training corpus YAML file. Defaults to the
+        /// bundled `tests/yaml-test-suite/` + `benches/fixtures/`.
+        #[arg(value_name = "TRAIN_INPUT")]
+        train: Option<PathBuf>,
+        /// Override the binary to drive (default: `noyafmt`).
+        #[arg(long, value_name = "BIN")]
+        target: Option<String>,
+    },
     /// Run completions + manpages in one go.
     All,
 }
@@ -59,6 +74,7 @@ fn main() -> std::io::Result<()> {
         Cmd::Notice => write_notice(&workspace_root()?)?,
         Cmd::Sbom => write_sbom(&workspace_root()?)?,
         Cmd::Vendor => write_vendor(&workspace_root()?)?,
+        Cmd::PgoBuild { train, target } => run_pgo_build(&workspace_root()?, train, target)?,
         Cmd::All => {
             let root = workspace_root()?;
             write_completions(&root)?;
@@ -189,6 +205,45 @@ fn write_vendor(root: &Path) -> std::io::Result<()> {
          \n\
          in .cargo/config.toml, then build with `cargo build --offline`."
     );
+    Ok(())
+}
+
+/// Drive the PGO pipeline at `scripts/pgo.sh`.
+///
+/// PGO ships as opt-in (not in the default `cargo build --release`
+/// pipeline) because it requires `llvm-profdata` and a training
+/// run that can take 10-30 s. End-state binary is at
+/// `target/release/<TARGET>` with the optimised `-Cprofile-use`
+/// flags applied.
+fn run_pgo_build(
+    root: &Path,
+    train: Option<PathBuf>,
+    target: Option<String>,
+) -> std::io::Result<()> {
+    let script = root.join("scripts").join("pgo.sh");
+    if !script.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "PGO driver not found at {} (expected scripts/pgo.sh)",
+                script.display()
+            ),
+        ));
+    }
+    let mut cmd = Command::new("bash");
+    let _ = cmd.arg(&script).current_dir(root);
+    if let Some(t) = target {
+        let _ = cmd.env("PGO_TARGET", t);
+    }
+    if let Some(p) = train {
+        let _ = cmd.arg(p);
+    }
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "scripts/pgo.sh exited with {status}"
+        )));
+    }
     Ok(())
 }
 

@@ -40,6 +40,11 @@ logging:
 ";
 
 const LARGE_LIST: &str = include_str!("fixtures/large_list.yaml");
+// Real-world-shape fixtures: deep indent, comments, multi-document.
+// `large_list` is synthetic; the two below exercise the parser the way
+// production YAML config files actually do.
+const K8S_DEPLOYMENT: &str = include_str!("fixtures/k8s_deployment.yaml");
+const GITHUB_ACTIONS: &str = include_str!("fixtures/github_actions.yaml");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Simple {
@@ -84,6 +89,8 @@ fn bench_deserialize(c: &mut Criterion) {
         ("simple", SIMPLE),
         ("nested", NESTED),
         ("large_list", LARGE_LIST),
+        // Real-world fixtures: deep indent, comments, anchors.
+        ("github_actions", GITHUB_ACTIONS),
     ] {
         group.bench_with_input(BenchmarkId::new("noyalib", name), yaml, |b, input| {
             b.iter(|| {
@@ -110,6 +117,43 @@ fn bench_deserialize(c: &mut Criterion) {
             });
         });
     }
+
+    // Multi-document load — represents real-world Kubernetes /
+    // Helm / Compose workflows where one file holds 3-30 manifests.
+    // serde_yaml_ng exposes this via `Deserializer::from_str` +
+    // `serde::de::Deserialize::deserialize` per document; yaml-rust2
+    // returns `Vec<Yaml>` from one call.
+    group.bench_with_input(
+        BenchmarkId::new("noyalib", "k8s_multidoc"),
+        K8S_DEPLOYMENT,
+        |b, input| {
+            b.iter(|| {
+                let _ = noyalib::load_all_as::<noyalib::Value>(black_box(input)).unwrap();
+            });
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("serde_yaml_ng", "k8s_multidoc"),
+        K8S_DEPLOYMENT,
+        |b, input| {
+            b.iter(|| {
+                let docs: Vec<serde_yaml_ng::Value> =
+                    serde_yaml_ng::Deserializer::from_str(black_box(input))
+                        .map(|de| Deserialize::deserialize(de).unwrap())
+                        .collect();
+                let _ = docs;
+            });
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("yaml-rust2", "k8s_multidoc"),
+        K8S_DEPLOYMENT,
+        |b, input| {
+            b.iter(|| {
+                let _ = yaml_rust2::YamlLoader::load_from_str(black_box(input)).unwrap();
+            });
+        },
+    );
 
     group.finish();
 }

@@ -255,6 +255,21 @@ fn yaml_compliance_report() {
     let cases = load_suite(&suite_dir);
     let total = cases.len();
 
+    // Hard floor: the bundled `tests/yaml-test-suite/` ships ~400 YAML
+    // test cases. A `total == 0` here is almost certainly the symptom
+    // of a parser regression that broke `from_str(&content)` on the
+    // wrapper itself — `load_suite` silently `continue`s when a wrapper
+    // fails to parse, so without this assertion the test would
+    // vacuously "pass at 100% (0/0)" and let the regression land.
+    // (This was the failure mode that shipped commit 1e7dace.)
+    assert!(
+        total >= 350,
+        "yaml-test-suite loaded {total} cases — expected ≥ 350. \
+         The wrapper-parse `from_str(&content)` may have regressed; \
+         compliance reports become meaningless when the wrapper itself \
+         fails to load.",
+    );
+
     let mut counts: BTreeMap<Outcome, u32> = BTreeMap::new();
     let mut by_tag: BTreeMap<String, BTreeMap<Outcome, u32>> = BTreeMap::new();
     let mut details: Vec<(Outcome, String, String, String)> = Vec::new();
