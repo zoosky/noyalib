@@ -312,7 +312,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: "Coverage report (gates: 95% fn / 92% region / 92% line)"
+      - name: "Coverage report (gates: 95% fn / 92% region / 93% line)"
         env:
           NOYALIB_COVERAGE: '1'
         # Three thresholds:
@@ -347,7 +347,7 @@ jobs:
           cargo +nightly llvm-cov --workspace --all-features --no-fail-fast \
             --ignore-filename-regex 'crates/noyalib-wasm/src/lib\.rs|crates/noyalib-(mcp|lsp)/tests/protocol|crates/xtask/src/main\.rs' \
             --fail-under-functions 95 \
-            --fail-under-lines 92 \
+            --fail-under-lines 93 \
             --fail-under-regions 92
 
   # ── `cargo vendor` + offline build (Phase 7.3) ──────────────────────
