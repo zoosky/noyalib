@@ -328,12 +328,13 @@ cargo bench --bench large_doc_soak
 Reproducible on Apple M-series + ubuntu-latest. Published
 throughput tables sit in the
 [Benchmarks section of the workspace README](https://github.com/sebastienrousseau/noyalib#benchmarks):
-`noyalib` is 1.4–2.2× faster than `yaml-rust2` /
-`serde_yaml_ng` / `serde-saphyr` on simple, nested, and large
-inputs; the structural-bitmask scanner runs 4.2× (stable) /
-9.2× (nightly-simd) over the memchr loop on 1 MiB documents;
-and the SWAR decimal parser runs 2.17–2.52× faster than the
-stdlib `from_str`.
+`noyalib` is **1.42×–4.34× faster than `serde_yaml_ng`** on
+every operation (deserialise, typed deserialise, serialise,
+round-trip), and **1.12×–1.35× faster than `yaml-rust2`** on
+every deserialise fixture. The structural-bitmask scanner runs
+4.2× (stable) / 9.2× (nightly-simd) over the memchr loop on
+1 MiB documents; the SWAR decimal parser runs 2.17–2.52× faster
+than the stdlib `from_str`.
 
 ---
 

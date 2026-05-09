@@ -503,10 +503,10 @@ criterion `--warm-up-time 2 --measurement-time 4`):
 `noyalib` is faster than `serde_yaml_ng` on every operation by
 **1.42×–4.34×**. Against `yaml-rust2` (the heaviest-tuned pure-Rust
 peer), noyalib is **1.12×–1.35×** faster on every fixture; closing
-the remaining gap to ≥ 2× over `yaml-rust2` is scheduled for v0.1.0
+the remaining gap to ≥ 2× over `yaml-rust2` is a separate effort
 because the levers needed (CompactString keys in `Mapping`,
 bump-arena event lifetimes, eliminating the `Value` AST on the
-typed path) require SemVer-breaking refactors out of v0.0.x scope.
+typed path) require SemVer-breaking refactors.
 
 `cargo xtask pgo-build` runs the LLVM profile-guided optimisation
 pipeline and adds 5–15% on top of the numbers above; recommended

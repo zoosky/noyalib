@@ -75,8 +75,7 @@ gap reflects the engineering cost of those guarantees;
 parser in feature shape. The path to ≥ 2× over `yaml-rust2` on
 deserialize runs through SemVer-breaking refactors
 (`CompactString` keys in `Mapping`, bump-arena event lifetimes,
-eliminating the `Value` AST on the typed path) — scheduled for
-v0.1.0, not v0.0.x.
+eliminating the `Value` AST on the typed path).
 
 ## Roundtrip (deserialize + serialize)
 
