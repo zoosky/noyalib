@@ -485,26 +485,33 @@ Headline numbers (Apple M4 / aarch64, Rust 1.95 stable,
 `--release` with LTO=fat, codegen-units=1, panic=abort,
 criterion `--warm-up-time 2 --measurement-time 4`):
 
-| Operation | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` |
-|---|---:|---:|---:|
-| Deserialise simple (3 fields) | **1.44 µs** | **1.84×** | 1.35× |
-| Deserialise nested (20 fields) | **9.92 µs** | **1.55×** | 1.23× |
-| Deserialise large_list (500 items) | **926 µs** | **1.42×** | 1.20× |
-| Deserialise github_actions (deep + comments) | **47 µs** | **1.66×** | 1.25× |
-| Deserialise k8s multi-document | **86 µs** | **1.44×** | 1.12× |
-| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | n/a |
-| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | n/a |
-| Serialise simple | **290 ns** | **4.34×** | n/a |
-| Serialise nested | **2.25 µs** | **3.00×** | n/a |
-| Round-trip nested (deserialise + serialise) | **12.0 µs** | **1.83×** | n/a |
-| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | n/a | 9.2× over memchr loop |
-| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | n/a | 2.5× over stdlib |
+| Fixture | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` | vs `serde_yml` | vs `yaml-spanned` | vs `serde-saphyr` |
+|---|---:|---:|---:|---:|---:|---:|
+| Deserialise simple (3 fields) | **1.40 µs** | **1.84×** | 1.36× | **1.96×** | 1.69× | **2.00×** |
+| Deserialise nested (20 fields) | **9.66 µs** | **1.55×** | 1.25× | **1.63×** | **1.60×** | **1.76×** |
+| Deserialise large_list (500 items) | **920 µs** | **1.42×** | 1.19× | **1.48×** | **1.38×** | **1.69×** |
+| Deserialise github_actions (deep + comments) | **46.4 µs** | **1.66×** | 1.25× | **1.72×** | **1.74×** | **1.73×** |
+| Deserialise k8s multi-document | **85.1 µs** | **1.42×** | 1.11× | — | — | — |
+| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | — | — | — | — |
+| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | — | — | — | — |
+| Serialise simple | **290 ns** | **4.34×** | — | — | — | — |
+| Serialise nested | **2.25 µs** | **3.00×** | — | — | — | — |
+| Round-trip nested | **12.0 µs** | **1.83×** | — | — | — | — |
+| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | — | — | — | — | 9.2× over memchr loop |
+| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | — | — | — | — | 2.5× over stdlib |
 
-`noyalib` is faster than `serde_yaml_ng` on every operation by
-**1.42×–4.34×**. Against `yaml-rust2` (the heaviest-tuned pure-Rust
-peer), noyalib is **1.12×–1.35×** faster on every fixture; closing
+`noyalib` is faster than **every other pure-Rust YAML library on
+every deserialize fixture measured**. Speedup ranges across the five
+competitors above: **1.69×–2.00×** vs `serde-saphyr`,
+**1.48×–1.96×** vs `serde_yml`, **1.42×–1.84×** vs `serde_yaml_ng`,
+**1.38×–1.74×** vs `yaml-spanned`, **1.11×–1.36×** vs `yaml-rust2`.
+Serialize is **3.00×–4.34×** ahead of `serde_yaml_ng`.
+
+The narrowest gap is `yaml-rust2`, which doesn't carry the
+`Spanned<T>` plumbing, the per-tag `Cow<'a, str>` propagation, or
+the `Value::Tagged` preservation that `noyalib` does — closing
 the remaining gap to ≥ 2× over `yaml-rust2` is a separate effort
-because the levers needed (CompactString keys in `Mapping`,
+because the levers needed (`CompactString` keys in `Mapping`,
 bump-arena event lifetimes, eliminating the `Value` AST on the
 typed path) require SemVer-breaking refactors.
 

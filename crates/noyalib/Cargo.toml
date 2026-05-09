@@ -310,6 +310,16 @@ proptest = "1.11"
 serde_yaml_ng = "0.10"
 yaml-rust2 = "0.9"
 rust-yaml = "0.0.5"
+# Bench-only competitor surface. None of these ship transitively
+# in any release artefact — they are dev-deps used exclusively by
+# `crates/noyalib/benches/comparison.rs` for head-to-head Rust
+# YAML benchmarks. See `doc/BENCHMARKS.md` for measured numbers.
+#
+# `serde_yml` is the maintainer's prior crate (a `serde_yaml` 0.9
+# fork). `yaml-spanned` is the closest other span-tracking parser
+# in the ecosystem.
+serde_yml = "0.0"
+yaml-spanned = "0.0"
 # Ecosystem interop verification — proves noyalib's
 # `Deserializer<'de>` works with the standard serde wrappers
 # without any custom integration code.

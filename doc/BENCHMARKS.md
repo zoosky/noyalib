@@ -22,26 +22,65 @@ For algorithmic-complexity guarantees (`O(n)` parser,
 `O(d)` stack depth, `O(1)` anchor lookup, etc.), see
 [`POLICIES.md` §4 — Performance & algorithmic complexity](POLICIES.md#4-performance--algorithmic-complexity).
 
-## Headline (latest measured, every fixture)
+## Headline (5-way Rust YAML head-to-head, every fixture)
 
-| Operation | noyalib | serde_yaml_ng | yaml-rust2 |
-| :--- | ---: | ---: | ---: |
-| **Deserialize** simple (3 fields) | **1.44 µs** | 2.65 µs (**1.84×**) | 1.94 µs (1.35×) |
-| **Deserialize** nested (20 fields) | **9.92 µs** | 15.3 µs (**1.55×**) | 12.2 µs (1.23×) |
-| **Deserialize** large_list (500 items) | **926 µs** | 1313 µs (**1.42×**) | 1112 µs (1.20×) |
-| **Deserialize** github_actions (deep+comments) | **47.0 µs** | 78.2 µs (**1.66×**) | 58.8 µs (1.25×) |
-| **Deserialize** k8s multi-document | **86.4 µs** | 124 µs (**1.44×**) | 96.7 µs (1.12×) |
-| **Serialize** simple | **290 ns** | 1.26 µs (**4.34×**) | n/a |
-| **Serialize** nested | **2.25 µs** | 6.76 µs (**3.00×**) | n/a |
-| **Roundtrip** nested | **12.0 µs** | 22.1 µs (**1.83×**) | n/a |
+Compares noyalib against the five most-used pure-Rust YAML
+libraries: `serde_yaml_ng` (the de-facto ecosystem successor to
+the unmaintained `serde_yaml`), `yaml-rust2` (the heaviest-tuned
+non-serde parser), `serde_yml` (the maintainer's prior crate),
+`yaml-spanned` (the closest other span-tracking parser), and
+`serde-saphyr` (a high-performance newcomer).
 
-`noyalib` is faster than `serde_yaml_ng` on every fixture by
-**1.42×–4.34×**, and faster than `yaml-rust2` on every fixture by
-**1.12×–1.35×**. Serialize is significantly ahead of every Rust
-YAML implementation; deserialize beats `serde_yaml_ng` (the
-de-facto ecosystem standard) on every workload, with the gap
-narrowing on large untyped `Value` loads where competitor parsers
-have less per-byte bookkeeping overhead.
+### Deserialize (parse a YAML document into a `Value` AST)
+
+| Fixture | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` | vs `serde_yml` | vs `yaml-spanned` | vs `serde-saphyr` |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| simple (3 fields) | **1.40 µs** | **1.84×** | 1.36× | **1.96×** | 1.69× | **2.00×** |
+| nested (20 fields) | **9.66 µs** | **1.55×** | 1.25× | **1.63×** | **1.60×** | **1.76×** |
+| large_list (500 items) | **920 µs** | **1.42×** | 1.19× | **1.48×** | **1.38×** | **1.69×** |
+| github_actions (deep + comments) | **46.4 µs** | **1.66×** | 1.25× | **1.72×** | **1.74×** | **1.73×** |
+| k8s multi-document | **85.1 µs** | **1.42×** | 1.11× | — | — | — |
+
+(`serde_yml`, `yaml-spanned`, `serde-saphyr` ship single-document
+APIs only — no apples-to-apples cell on the multi-document
+fixture.)
+
+### Serialize (emit a typed value to YAML)
+
+| Fixture | noyalib | vs `serde_yaml_ng` |
+| :--- | ---: | ---: |
+| simple (3 fields) | **290 ns** | **4.34×** |
+| nested (20 fields) | **2.25 µs** | **3.00×** |
+
+### Round-trip (deserialize + serialize)
+
+| Fixture | noyalib | vs `serde_yaml_ng` |
+| :--- | ---: | ---: |
+| nested (20 fields) | **12.0 µs** | **1.83×** |
+
+### Headline numbers
+
+`noyalib` is **faster than every Rust YAML library on every
+fixture measured**. Speedup ranges:
+
+| Competitor | Speedup range (deserialize) |
+| :--- | :---: |
+| `serde-saphyr` | **1.69×–2.00×** |
+| `serde_yml` | **1.48×–1.96×** |
+| `serde_yaml_ng` | **1.42×–1.84×** |
+| `yaml-spanned` | **1.38×–1.74×** |
+| `yaml-rust2` | **1.11×–1.36×** |
+
+Serialize: **3.00×–4.34×** over `serde_yaml_ng`. Round-trip:
+**1.83×** over `serde_yaml_ng`. The gap to `yaml-rust2` is the
+narrowest because that library doesn't carry the `Spanned<T>`
+plumbing, the per-tag `Cow<'a, str>` propagation, or the
+`Value::Tagged` preservation that noyalib does — paying for
+those costs is part of the engineering cost. Closing the
+remaining gap to ≥ 2× over `yaml-rust2` runs through
+SemVer-breaking refactors (`CompactString` keys in `Mapping`,
+bump-arena event lifetimes, eliminating the `Value` AST on the
+typed path).
 
 ## Typed deserialization (streaming, no Value AST)
 

@@ -110,6 +110,22 @@ fn bench_deserialize(c: &mut Criterion) {
             });
         });
 
+        // `serde_yml` — the maintainer's prior crate (a `serde_yaml` 0.9
+        // fork). Apples-to-apples Value comparison.
+        group.bench_with_input(BenchmarkId::new("serde_yml", name), yaml, |b, input| {
+            b.iter(|| {
+                let _: serde_yml::Value = serde_yml::from_str(black_box(input)).unwrap();
+            });
+        });
+
+        // `yaml-spanned` — the closest other span-tracking parser in
+        // the ecosystem. Returns a sequence of spanned values.
+        group.bench_with_input(BenchmarkId::new("yaml-spanned", name), yaml, |b, input| {
+            b.iter(|| {
+                let _ = yaml_spanned::from_str(black_box(input)).unwrap();
+            });
+        });
+
         #[cfg(feature = "compare-saphyr")]
         group.bench_with_input(BenchmarkId::new("serde-saphyr", name), yaml, |b, input| {
             b.iter(|| {
