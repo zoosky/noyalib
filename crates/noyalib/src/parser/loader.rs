@@ -1010,9 +1010,21 @@ fn wrap_with_tag(inner: Value, tag: Option<&(String, String)>) -> Value {
         return inner;
     }
     Value::Tagged(Box::new(TaggedValue::new(
-        Tag::new(format!("{handle}{suffix}")),
+        Tag::new(concat_str(handle, suffix)),
         inner,
     )))
+}
+
+/// Concatenate two `&str` into a fresh `String` with exactly the
+/// right capacity. Skips the `format!`/`fmt::Arguments` machinery
+/// that allocates an intermediate buffer; on a tagged-scalar-heavy
+/// document this is hit once per scalar.
+#[inline]
+fn concat_str(a: &str, b: &str) -> String {
+    let mut s = String::with_capacity(a.len() + b.len());
+    s.push_str(a);
+    s.push_str(b);
+    s
 }
 
 /// Resolve a tagged scalar into a typed `Value`. Handles the YAML 1.2
@@ -1072,13 +1084,13 @@ fn resolve_tagged_scalar(handle: &str, suffix: &str, value: &str) -> Result<Valu
             },
             "str" => Ok(Value::String(value.to_owned())),
             _ => Ok(Value::Tagged(Box::new(TaggedValue::new(
-                Tag::new(format!("{handle}{suffix}")),
+                Tag::new(concat_str(handle, suffix)),
                 Value::String(value.to_owned()),
             )))),
         }
     } else {
         Ok(Value::Tagged(Box::new(TaggedValue::new(
-            Tag::new(format!("{handle}{suffix}")),
+            Tag::new(concat_str(handle, suffix)),
             Value::String(value.to_owned()),
         ))))
     }
