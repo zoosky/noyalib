@@ -1,12 +1,22 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.num-cmp]]
+who = "Sebastien Rousseau <sebastian.rousseau@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.1.0"
+notes = "Reviewed: 697 lines src + 478 lines tests, zero unsafe blocks, no extern, no FFI. Pure trait-impl mathematical comparison crate (i32 vs u32 etc). Used by jsonschema for cross-type numeric bounds checking. No filesystem/network/process side effects."
 
 [[trusted.addr2line]]
 criteria = "safe-to-deploy"
 user-id = 4415 # Philip Craig (philipc)
 start = "2019-05-01"
+end = "2027-05-09"
+
+[[trusted.ahash]]
+criteria = "safe-to-deploy"
+user-id = 25353 # Tom Kaitchuck (tkaitchuck)
+start = "2019-02-28"
 end = "2027-05-09"
 
 [[trusted.aho-corasick]]
@@ -85,6 +95,12 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 155409 # yescallop
 start = "2024-03-05"
+end = "2027-05-09"
+
+[[trusted.bytecount]]
+criteria = "safe-to-deploy"
+user-id = 2267 # llogiq
+start = "2019-08-27"
 end = "2027-05-09"
 
 [[trusted.bytemuck]]
@@ -175,6 +191,18 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 696 # Nick Fitzgerald (fitzgen)
 start = "2021-10-11"
+end = "2027-05-09"
+
+[[trusted.criterion]]
+criteria = "safe-to-run"
+user-id = 8785 # Brook Heisler (bheisler)
+start = "2019-04-09"
+end = "2027-05-09"
+
+[[trusted.criterion-plot]]
+criteria = "safe-to-run"
+user-id = 8785 # Brook Heisler (bheisler)
+start = "2019-04-09"
 end = "2027-05-09"
 
 [[trusted.crossbeam-deque]]
@@ -273,6 +301,12 @@ user-id = 155409 # yescallop
 start = "2022-04-09"
 end = "2027-05-09"
 
+[[trusted.fraction]]
+criteria = "safe-to-deploy"
+user-id = 3406 # Serge Latyntsev (dnsl48)
+start = "2019-03-28"
+end = "2027-05-09"
+
 [[trusted.futures-core]]
 criteria = "safe-to-deploy"
 user-id = 33035 # Taiki Endo (taiki-e)
@@ -309,6 +343,12 @@ user-id = 5059 # Artyom Pavlov (newpavlov)
 start = "2019-06-28"
 end = "2027-05-09"
 
+[[trusted.half]]
+criteria = "safe-to-run"
+user-id = 3416 # Kathryn Long (starkat99)
+start = "2019-10-04"
+end = "2027-05-09"
+
 [[trusted.hashbrown]]
 criteria = "safe-to-deploy"
 user-id = 2915 # Amanieu d'Antras (Amanieu)
@@ -319,6 +359,18 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 55123 # rust-lang-owner
 start = "2025-04-30"
+end = "2027-05-09"
+
+[[trusted.hashlink]]
+criteria = "safe-to-run"
+user-id = 6715 # kyren
+start = "2019-07-06"
+end = "2027-05-09"
+
+[[trusted.hermit-abi]]
+criteria = "safe-to-run"
+user-id = 91569 # Martin Kröning (mkroening)
+start = "2022-09-06"
 end = "2027-05-09"
 
 [[trusted.icu_locid_transform_data]]
@@ -349,6 +401,12 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 539 # Josh Stone (cuviper)
 start = "2020-01-15"
+end = "2027-05-09"
+
+[[trusted.inlinable_string]]
+criteria = "safe-to-deploy"
+user-id = 144 # Artem (ArtemGr)
+start = "2020-02-04"
 end = "2027-05-09"
 
 [[trusted.is-terminal]]
@@ -405,6 +463,12 @@ user-id = 55123 # rust-lang-owner
 start = "2024-10-26"
 end = "2027-05-09"
 
+[[trusted.libyaml-safer]]
+criteria = "safe-to-run"
+user-id = 154830 # Simon Ask Ulsnes (simonask)
+start = "2024-02-09"
+end = "2027-05-09"
+
 [[trusted.libyml]]
 criteria = "safe-to-run"
 user-id = 186843 # Sebastien Rousseau (sebastienrousseau)
@@ -427,6 +491,12 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-07-07"
+end = "2027-05-09"
+
+[[trusted.memmap2]]
+criteria = "safe-to-run"
+user-id = 35980 # Maarten de Vries (de-vri-es)
+start = "2025-07-13"
 end = "2027-05-09"
 
 [[trusted.miette]]
@@ -489,6 +559,12 @@ user-id = 45449 # Nugine
 start = "2022-07-22"
 end = "2027-05-09"
 
+[[trusted.owo-colors]]
+criteria = "safe-to-deploy"
+user-id = 6738 # Rain (sunshowers)
+start = "2025-02-22"
+end = "2027-05-09"
+
 [[trusted.parking_lot]]
 criteria = "safe-to-deploy"
 user-id = 2915 # Amanieu d'Antras (Amanieu)
@@ -525,6 +601,24 @@ trusted-publisher = "github:taiki-e/pin-project-lite"
 start = "2026-02-27"
 end = "2027-05-09"
 
+[[trusted.plotters]]
+criteria = "safe-to-run"
+user-id = 108598 # Aaron Erhardt (AaronErhardt)
+start = "2023-06-16"
+end = "2027-05-09"
+
+[[trusted.plotters-backend]]
+criteria = "safe-to-run"
+user-id = 108598 # Aaron Erhardt (AaronErhardt)
+start = "2023-06-16"
+end = "2027-05-09"
+
+[[trusted.plotters-svg]]
+criteria = "safe-to-run"
+user-id = 108598 # Aaron Erhardt (AaronErhardt)
+start = "2023-06-16"
+end = "2027-05-09"
+
 [[trusted.prettyplease]]
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
@@ -543,6 +637,18 @@ user-id = 3864 # Sergio Benitez (SergioBenitez)
 start = "2020-10-10"
 end = "2027-05-09"
 
+[[trusted.proptest]]
+criteria = "safe-to-run"
+user-id = 4778 # Jason Lingle (AltSysrq)
+start = "2019-03-24"
+end = "2027-05-09"
+
+[[trusted.proptest]]
+criteria = "safe-to-run"
+user-id = 126501 # Tomas Zemanovic (tzemanovic)
+start = "2026-03-24"
+end = "2027-05-09"
+
 [[trusted.quote]]
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
@@ -559,6 +665,12 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 539 # Josh Stone (cuviper)
 start = "2019-06-13"
+end = "2027-05-09"
+
+[[trusted.redox_syscall]]
+criteria = "safe-to-deploy"
+user-id = 42742 # 4lDO2 (4lDO2)
+start = "2020-07-10"
 end = "2027-05-09"
 
 [[trusted.ref-cast]]
@@ -619,6 +731,12 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-07-08"
+end = "2027-05-09"
+
+[[trusted.rusty-fork]]
+criteria = "safe-to-run"
+user-id = 4778 # Jason Lingle (AltSysrq)
+start = "2019-04-10"
 end = "2027-05-09"
 
 [[trusted.ryu]]
@@ -685,6 +803,12 @@ end = "2027-05-09"
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-08-20"
+end = "2027-05-09"
+
+[[trusted.serde_yaml_ng]]
+criteria = "safe-to-run"
+user-id = 141900 # Antoine Catton (acatton)
+start = "2024-05-03"
 end = "2027-05-09"
 
 [[trusted.serde_yml]]
@@ -933,10 +1057,34 @@ user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2021-11-15"
 end = "2027-05-09"
 
+[[trusted.yaml-rust2]]
+criteria = "safe-to-run"
+user-id = 250563 # Ethiraric
+start = "2024-02-08"
+end = "2027-05-09"
+
+[[trusted.yaml-spanned]]
+criteria = "safe-to-run"
+user-id = 174212 # Roman Dahm (romnn)
+start = "2025-04-20"
+end = "2027-05-09"
+
 [[trusted.yansi]]
 criteria = "safe-to-deploy"
 user-id = 3864 # Sergio Benitez (SergioBenitez)
 start = "2022-03-23"
+end = "2027-05-09"
+
+[[trusted.zerocopy]]
+criteria = "safe-to-deploy"
+user-id = 7178 # Joshua Liebow-Feeser (joshlf)
+start = "2019-02-28"
+end = "2027-05-09"
+
+[[trusted.zerocopy-derive]]
+criteria = "safe-to-deploy"
+user-id = 7178 # Joshua Liebow-Feeser (joshlf)
+start = "2019-02-28"
 end = "2027-05-09"
 
 [[trusted.zerofrom]]

@@ -8,6 +8,13 @@ user-id = 4415
 user-login = "philipc"
 user-name = "Philip Craig"
 
+[[publisher.ahash]]
+version = "0.8.12"
+when = "2025-05-08"
+user-id = 25353
+user-login = "tkaitchuck"
+user-name = "Tom Kaitchuck"
+
 [[publisher.aho-corasick]]
 version = "1.1.4"
 when = "2025-10-28"
@@ -104,6 +111,12 @@ user-id = 696
 user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
+[[publisher.bytecount]]
+version = "0.6.9"
+when = "2025-06-03"
+user-id = 2267
+user-login = "llogiq"
+
 [[publisher.bytemuck]]
 version = "1.25.0"
 when = "2026-01-31"
@@ -183,6 +196,20 @@ when = "2021-10-11"
 user-id = 696
 user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
+
+[[publisher.criterion]]
+version = "0.4.0"
+when = "2022-09-10"
+user-id = 8785
+user-login = "bheisler"
+user-name = "Brook Heisler"
+
+[[publisher.criterion-plot]]
+version = "0.5.0"
+when = "2022-09-10"
+user-id = 8785
+user-login = "bheisler"
+user-name = "Brook Heisler"
 
 [[publisher.crossbeam-deque]]
 version = "0.8.6"
@@ -293,6 +320,13 @@ when = "2024-10-12"
 user-id = 155409
 user-login = "yescallop"
 
+[[publisher.fraction]]
+version = "0.15.4"
+when = "2026-04-21"
+user-id = 3406
+user-login = "dnsl48"
+user-name = "Serge Latyntsev"
+
 [[publisher.futures-core]]
 version = "0.3.32"
 when = "2026-02-15"
@@ -335,6 +369,13 @@ user-id = 5059
 user-login = "newpavlov"
 user-name = "Artyom Pavlov"
 
+[[publisher.half]]
+version = "2.7.1"
+when = "2025-10-14"
+user-id = 3416
+user-login = "starkat99"
+user-name = "Kathryn Long"
+
 [[publisher.hashbrown]]
 version = "0.14.5"
 when = "2024-04-28"
@@ -347,6 +388,19 @@ version = "0.15.5"
 when = "2025-08-07"
 user-id = 55123
 user-login = "rust-lang-owner"
+
+[[publisher.hashlink]]
+version = "0.9.1"
+when = "2024-05-12"
+user-id = 6715
+user-login = "kyren"
+
+[[publisher.hermit-abi]]
+version = "0.5.2"
+when = "2025-06-11"
+user-id = 91569
+user-login = "mkroening"
+user-name = "Martin Kröning"
 
 [[publisher.icu_locid_transform_data]]
 version = "1.5.1"
@@ -382,6 +436,13 @@ when = "2025-06-26"
 user-id = 539
 user-login = "cuviper"
 user-name = "Josh Stone"
+
+[[publisher.inlinable_string]]
+version = "0.1.15"
+when = "2022-01-04"
+user-id = 144
+user-login = "ArtemGr"
+user-name = "Artem"
 
 [[publisher.is-terminal]]
 version = "0.4.17"
@@ -435,6 +496,13 @@ when = "2026-01-24"
 user-id = 55123
 user-login = "rust-lang-owner"
 
+[[publisher.libyaml-safer]]
+version = "0.3.0"
+when = "2025-12-22"
+user-id = 154830
+user-login = "simonask"
+user-name = "Simon Ask Ulsnes"
+
 [[publisher.libyml]]
 version = "0.0.5"
 when = "2024-08-24"
@@ -462,6 +530,13 @@ when = "2026-02-06"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
+
+[[publisher.memmap2]]
+version = "0.9.10"
+when = "2026-02-15"
+user-id = 35980
+user-login = "de-vri-es"
+user-name = "Maarten de Vries"
 
 [[publisher.miette]]
 version = "7.6.0"
@@ -532,6 +607,13 @@ when = "2025-01-15"
 user-id = 45449
 user-login = "Nugine"
 
+[[publisher.owo-colors]]
+version = "4.3.0"
+when = "2026-02-22"
+user-id = 6738
+user-login = "sunshowers"
+user-name = "Rain"
+
 [[publisher.parking_lot]]
 version = "0.12.5"
 when = "2025-10-03"
@@ -565,6 +647,27 @@ version = "0.2.17"
 when = "2026-02-27"
 trusted-publisher = "github:taiki-e/pin-project-lite"
 
+[[publisher.plotters]]
+version = "0.3.7"
+when = "2024-09-08"
+user-id = 108598
+user-login = "AaronErhardt"
+user-name = "Aaron Erhardt"
+
+[[publisher.plotters-backend]]
+version = "0.3.7"
+when = "2024-09-08"
+user-id = 108598
+user-login = "AaronErhardt"
+user-name = "Aaron Erhardt"
+
+[[publisher.plotters-svg]]
+version = "0.3.7"
+when = "2024-09-08"
+user-id = 108598
+user-login = "AaronErhardt"
+user-name = "Aaron Erhardt"
+
 [[publisher.prettyplease]]
 version = "0.2.37"
 when = "2025-08-19"
@@ -585,6 +688,13 @@ when = "2023-07-10"
 user-id = 3864
 user-login = "SergioBenitez"
 user-name = "Sergio Benitez"
+
+[[publisher.proptest]]
+version = "1.11.0"
+when = "2026-03-24"
+user-id = 126501
+user-login = "tzemanovic"
+user-name = "Tomas Zemanovic"
 
 [[publisher.quote]]
 version = "1.0.45"
@@ -613,6 +723,13 @@ when = "2026-04-14"
 user-id = 539
 user-login = "cuviper"
 user-name = "Josh Stone"
+
+[[publisher.redox_syscall]]
+version = "0.5.18"
+when = "2025-10-04"
+user-id = 42742
+user-login = "4lDO2"
+user-name = "4lDO2"
 
 [[publisher.ref-cast]]
 version = "1.0.25"
@@ -682,6 +799,13 @@ when = "2025-08-08"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
+
+[[publisher.rusty-fork]]
+version = "0.3.1"
+when = "2025-10-04"
+user-id = 4778
+user-login = "AltSysrq"
+user-name = "Jason Lingle"
 
 [[publisher.ryu]]
 version = "1.0.23"
@@ -759,6 +883,13 @@ when = "2025-09-15"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
+
+[[publisher.serde_yaml_ng]]
+version = "0.10.0"
+when = "2024-05-26"
+user-id = 141900
+user-login = "acatton"
+user-name = "Antoine Catton"
 
 [[publisher.serde_yml]]
 version = "0.0.12"
@@ -1064,12 +1195,39 @@ version = "0.244.0"
 when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
+[[publisher.yaml-rust2]]
+version = "0.9.0"
+when = "2024-09-25"
+user-id = 250563
+user-login = "Ethiraric"
+
+[[publisher.yaml-spanned]]
+version = "0.0.3"
+when = "2025-12-27"
+user-id = 174212
+user-login = "romnn"
+user-name = "Roman Dahm"
+
 [[publisher.yansi]]
 version = "1.0.1"
 when = "2024-03-13"
 user-id = 3864
 user-login = "SergioBenitez"
 user-name = "Sergio Benitez"
+
+[[publisher.zerocopy]]
+version = "0.8.48"
+when = "2026-03-28"
+user-id = 7178
+user-login = "joshlf"
+user-name = "Joshua Liebow-Feeser"
+
+[[publisher.zerocopy-derive]]
+version = "0.8.48"
+when = "2026-03-28"
+user-id = 7178
+user-login = "joshlf"
+user-name = "Joshua Liebow-Feeser"
 
 [[publisher.zerofrom]]
 version = "0.1.7"
@@ -2134,6 +2292,11 @@ delta = "1.0.1 -> 1.0.3"
 who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
 delta = "1.0.3 -> 1.0.4"
+
+[[audits.isrg.audits.criterion]]
+who = "Brandon Pitman <bran@bran.land>"
+criteria = "safe-to-run"
+delta = "0.4.0 -> 0.5.1"
 
 [[audits.isrg.audits.getrandom]]
 who = "David Cook <dcook@divviup.org>"
