@@ -56,11 +56,3 @@ pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, Spa
 pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
     loader::load_one_no_spans(input, config)
 }
-
-/// Parse all YAML documents into `Value`s without building `SpanTree`s.
-///
-/// See [`parse_one_value`] for the rationale.
-#[allow(dead_code)] // exposed for future skip-span entry points
-pub(crate) fn parse_all_values(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
-    loader::load_all_no_spans(input, config)
-}
