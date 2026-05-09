@@ -1132,10 +1132,14 @@ where
             p.check_value(&value)?;
         }
         let boxed: Box<dyn core::any::Any> = Box::new(value);
-        return boxed
+        // SAFETY-by-construction: `is_value_target::<T>()` already
+        // verified `TypeId::of::<T>() == TypeId::of::<Value>()`, so
+        // the boxed `Value` downcasts to `T` infallibly. `.expect()`
+        // documents the invariant; the path is provably unreachable.
+        let downcast: Box<T> = boxed
             .downcast::<T>()
-            .map(|b| *b)
-            .map_err(|_| Error::Deserialize("type mismatch in Value fast path".into()));
+            .expect("is_value_target proved T == Value");
+        return Ok(*downcast);
     }
 
     #[cfg(feature = "std")]
@@ -1308,10 +1312,10 @@ where
     if is_value_target::<T>() {
         let cloned = value.clone();
         let boxed: Box<dyn core::any::Any> = Box::new(cloned);
-        return boxed
+        let downcast: Box<T> = boxed
             .downcast::<T>()
-            .map(|b| *b)
-            .map_err(|_| Error::Deserialize("type mismatch in Value fast path".into()));
+            .expect("is_value_target proved T == Value");
+        return Ok(*downcast);
     }
     T::deserialize(Deserializer::new(value))
 }
