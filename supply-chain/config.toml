@@ -311,6 +311,14 @@ criteria = "safe-to-deploy"
 version = "0.2.16"
 criteria = "safe-to-deploy"
 
+[[exemptions.libyaml-safer]]
+version = "0.1.2"
+criteria = "safe-to-run"
+
+[[exemptions.libyml]]
+version = "0.0.5"
+criteria = "safe-to-run"
+
 [[exemptions.linux-raw-sys]]
 version = "0.12.1"
 criteria = "safe-to-deploy"
@@ -551,6 +559,10 @@ criteria = "safe-to-run"
 version = "0.10.0"
 criteria = "safe-to-run"
 
+[[exemptions.serde_yml]]
+version = "0.0.12"
+criteria = "safe-to-run"
+
 [[exemptions.slab]]
 version = "0.4.12"
 criteria = "safe-to-deploy"
@@ -578,6 +590,14 @@ criteria = "safe-to-deploy"
 [[exemptions.terminal_size]]
 version = "0.4.4"
 criteria = "safe-to-deploy"
+
+[[exemptions.thiserror]]
+version = "2.0.18"
+criteria = "safe-to-run"
+
+[[exemptions.thiserror-impl]]
+version = "2.0.18"
+criteria = "safe-to-run"
 
 [[exemptions.uncased]]
 version = "0.9.10"
@@ -675,6 +695,10 @@ criteria = "safe-to-deploy"
 version = "0.9.0"
 criteria = "safe-to-run"
 
+[[exemptions.yaml-spanned]]
+version = "0.0.3"
+criteria = "safe-to-run"
+
 [[exemptions.yansi]]
 version = "1.0.1"
 criteria = "safe-to-deploy"
@@ -698,35 +722,3 @@ criteria = "safe-to-deploy"
 [[exemptions.zmij]]
 version = "1.0.21"
 criteria = "safe-to-deploy"
-
-# ── Bench-only competitor crates ────────────────────────────────────
-# Pulled in exclusively as `[dev-dependencies]` under
-# `crates/noyalib/Cargo.toml` so that
-# `crates/noyalib/benches/comparison.rs` can produce honest 5-way
-# head-to-head numbers vs `serde_yml` and `yaml-spanned`. None ship
-# in any release artefact; `safe-to-run` is the cargo-vet criterion
-# for bench/test-only deps.
-
-[[exemptions.serde_yml]]
-version = "0.0.12"
-criteria = "safe-to-run"
-
-[[exemptions.yaml-spanned]]
-version = "0.0.3"
-criteria = "safe-to-run"
-
-[[exemptions.libyaml-safer]]
-version = "0.1.2"
-criteria = "safe-to-run"
-
-[[exemptions.libyml]]
-version = "0.0.5"
-criteria = "safe-to-run"
-
-[[exemptions.thiserror]]
-version = "2.0.18"
-criteria = "safe-to-run"
-
-[[exemptions.thiserror-impl]]
-version = "2.0.18"
-criteria = "safe-to-run"
