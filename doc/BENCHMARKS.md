@@ -3,40 +3,80 @@
 
 # Benchmarks
 
-All numbers below were measured on **Apple M4, Rust 1.94 stable**.
-All libraries compiled with `--release`. Run locally via
-`cargo bench --bench <suite>`.
+All numbers below were measured on **Apple M4 (aarch64-apple-darwin),
+Rust 1.95 stable**, criterion `--warm-up-time 2 --measurement-time 4`.
+All libraries compiled with `--release` (LTO=fat, codegen-units=1,
+panic=abort). Run locally via `cargo bench --bench comparison`.
 
 > **Per-PR drift tracking** — [CodSpeed](https://codspeed.io/)
 > tracks every benchmark across every PR; regressions surface
 > in the *Run criterion benches under CodSpeed* CI job.
+>
+> **PGO** — `cargo xtask pgo-build` runs the full LLVM
+> profile-guided optimisation pipeline (instrument → train against
+> the YAML test suite + `benches/fixtures/` → merge profdata →
+> optimised rebuild). Adds 5-15% on top of the numbers below;
+> recommended for production deployments.
 
 For algorithmic-complexity guarantees (`O(n)` parser,
 `O(d)` stack depth, `O(1)` anchor lookup, etc.), see
 [`POLICIES.md` §4 — Performance & algorithmic complexity](POLICIES.md#4-performance--algorithmic-complexity).
 
-## Deserialization throughput
+## Headline (latest measured, every fixture)
 
-| Library | Simple (3 fields) | Nested (20 fields) | Large (500 items) |
+| Operation | noyalib | serde_yaml_ng | yaml-rust2 |
 | :--- | ---: | ---: | ---: |
-| **noyalib** | **1.51 us** | **9.93 us** | **0.89 ms** |
-| yaml-rust2 | 2.08 us (1.4x) | 13.5 us (1.4x) | 1.23 ms (1.4x) |
-| serde\_yaml\_ng | 2.82 us (1.9x) | 16.9 us (1.7x) | 1.48 ms (1.7x) |
-| serde-saphyr | 3.29 us (2.2x) | 20.5 us (2.1x) | 1.84 ms (2.1x) |
+| **Deserialize** simple (3 fields) | **1.44 µs** | 2.65 µs (**1.84×**) | 1.94 µs (1.35×) |
+| **Deserialize** nested (20 fields) | **9.92 µs** | 15.3 µs (**1.55×**) | 12.2 µs (1.23×) |
+| **Deserialize** large_list (500 items) | **926 µs** | 1313 µs (**1.42×**) | 1112 µs (1.20×) |
+| **Deserialize** github_actions (deep+comments) | **47.0 µs** | 78.2 µs (**1.66×**) | 58.8 µs (1.25×) |
+| **Deserialize** k8s multi-document | **86.4 µs** | 124 µs (**1.44×**) | 96.7 µs (1.12×) |
+| **Serialize** simple | **290 ns** | 1.26 µs (**4.34×**) | n/a |
+| **Serialize** nested | **2.25 µs** | 6.76 µs (**3.00×**) | n/a |
+| **Roundtrip** nested | **12.0 µs** | 22.1 µs (**1.83×**) | n/a |
+
+`noyalib` is faster than `serde_yaml_ng` on every fixture by
+**1.42×–4.34×**, and faster than `yaml-rust2` on every fixture by
+**1.12×–1.35×**. Serialize is significantly ahead of every Rust
+YAML implementation; deserialize beats `serde_yaml_ng` (the
+de-facto ecosystem standard) on every workload, with the gap
+narrowing on large untyped `Value` loads where competitor parsers
+have less per-byte bookkeeping overhead.
 
 ## Typed deserialization (streaming, no Value AST)
 
+`from_str::<T>` walks parser events directly into the typed
+target, bypassing the `Value` AST when the caller asked for a
+typed `T`. The streaming path bakes in YAML 1.2 semantics
+(`<<: *alias` merges natively, `!!binary` is propagated as a
+typed tag).
+
 | Library | Simple struct | Nested struct |
 | :--- | ---: | ---: |
-| **noyalib** | **1.34 us** | **7.67 us** |
-| serde\_yaml\_ng | 2.39 us (1.8x) | 12.6 us (1.6x) |
+| **noyalib** | **1.22 µs** | **7.08 µs** |
+| serde_yaml_ng | 2.10 µs (**1.72×**) | 11.0 µs (**1.55×**) |
 
-## Serialization throughput
+## Why `serialize` is so far ahead
 
-| Library | Simple (3 fields) | Nested (20 fields) |
-| :--- | ---: | ---: |
-| **noyalib** | **330 ns** | **2.54 us** |
-| serde\_yaml\_ng | 1.43 us (4.3x) | 8.04 us (3.2x) |
+The serializer was built around `itoa` / `ryu` direct-write
+buffers (the `fast-int` / `fast-float` features) plus
+SIMD-driven quote-need detection that lets plain ASCII output
+emit borrowed bytes without escaping. `serde_yaml_ng` routes
+through `fmt::Write` and revalidates UTF-8 on output — that's
+the source of the 3-4× gap.
+
+## Why `deserialize` against `yaml-rust2` is closer
+
+`yaml-rust2` is a heavily-tuned parser that doesn't carry the
+`Spanned<T>` plumbing, the per-tag `Cow<'a, str>` propagation, or
+the `Value::Tagged` preservation that `noyalib` does. The 1.12-1.35×
+gap reflects the engineering cost of those guarantees;
+`yaml-rust2` is a good baseline because it's the closest pure-Rust
+parser in feature shape. The path to ≥ 2× over `yaml-rust2` on
+deserialize runs through SemVer-breaking refactors
+(`CompactString` keys in `Mapping`, bump-arena event lifetimes,
+eliminating the `Value` AST on the typed path) — scheduled for
+v0.1.0, not v0.0.x.
 
 ## Roundtrip (deserialize + serialize)
 

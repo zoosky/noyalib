@@ -481,16 +481,36 @@ Per-crate migration guides at
 
 ## Benchmarks
 
-Headline numbers (Apple M4, Rust 1.94 stable, `--release`):
+Headline numbers (Apple M4 / aarch64, Rust 1.95 stable,
+`--release` with LTO=fat, codegen-units=1, panic=abort,
+criterion `--warm-up-time 2 --measurement-time 4`):
 
-| Operation | noyalib | nearest competitor | speedup |
-|---|---|---|---|
-| Deserialise (nested, 20 fields) | **9.93 µs** | yaml-rust2 13.5 µs | **1.4×** |
-| Typed deserialise (streaming) | **7.67 µs** | serde_yaml_ng 12.6 µs | **1.6×** |
-| Serialise (nested, 20 fields) | **2.54 µs** | serde_yaml_ng 8.04 µs | **3.2×** |
-| Round-trip (deserialise + serialise) | **12.7 µs** | serde_yaml_ng 25.5 µs | **2.0×** |
-| Structural-discovery (1 MiB) | **311 µs** (nightly-SIMD) | memchr loop 2.89 ms | **9.2×** |
-| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | stdlib 24.6 ns | **2.5×** |
+| Operation | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` |
+|---|---:|---:|---:|
+| Deserialise simple (3 fields) | **1.44 µs** | **1.84×** | 1.35× |
+| Deserialise nested (20 fields) | **9.92 µs** | **1.55×** | 1.23× |
+| Deserialise large_list (500 items) | **926 µs** | **1.42×** | 1.20× |
+| Deserialise github_actions (deep + comments) | **47 µs** | **1.66×** | 1.25× |
+| Deserialise k8s multi-document | **86 µs** | **1.44×** | 1.12× |
+| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | n/a |
+| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | n/a |
+| Serialise simple | **290 ns** | **4.34×** | n/a |
+| Serialise nested | **2.25 µs** | **3.00×** | n/a |
+| Round-trip nested (deserialise + serialise) | **12.0 µs** | **1.83×** | n/a |
+| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | n/a | 9.2× over memchr loop |
+| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | n/a | 2.5× over stdlib |
+
+`noyalib` is faster than `serde_yaml_ng` on every operation by
+**1.42×–4.34×**. Against `yaml-rust2` (the heaviest-tuned pure-Rust
+peer), noyalib is **1.12×–1.35×** faster on every fixture; closing
+the remaining gap to ≥ 2× over `yaml-rust2` is scheduled for v0.1.0
+because the levers needed (CompactString keys in `Mapping`,
+bump-arena event lifetimes, eliminating the `Value` AST on the
+typed path) require SemVer-breaking refactors out of v0.0.x scope.
+
+`cargo xtask pgo-build` runs the LLVM profile-guided optimisation
+pipeline and adds 5–15% on top of the numbers above; recommended
+for production deployments.
 
 The full breakdown — every workload, every comparison library,
 the SWAR pipeline explanation, parallel multi-doc scaling, and
