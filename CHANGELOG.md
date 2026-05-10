@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+(Nothing yet — `[v0.0.1]` is the cut.)
+
+## [v0.0.1] — 2026-05-10
+
 ### Fixed — `Eq`/`Hash` invariant for `Number` floats (signed zero, NaN)
 
 `PartialEq for Number` deliberately treats `+0.0 == -0.0` (per IEEE

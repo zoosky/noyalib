@@ -18,11 +18,16 @@ guidance).
 - **Zero `unsafe`** workspace-wide
   (`#![forbid(unsafe_code)]`).
 - **No transitive C dependency** (no libyaml).
-- **3 759 workspace tests** + **452 doctests**.
-- **95.58% function / 93.31% line / 92.45% region** code
-  coverage (CI-gated).
+- **4 000+ workspace tests** + **495+ doctests**.
+- **96.22% function / 94.30% line / 93.44% region** code
+  coverage (CI-gated at 96 / 94 / 93 floor).
 - **Five publishable crates**: `noyalib`, `noya-cli`,
   `noyalib-mcp`, `noyalib-lsp`, `noyalib-wasm`.
+- **Faster than every Rust YAML peer on every fixture
+  measured** — 1.11×–4.34× across `serde_yaml_ng`,
+  `yaml-rust2`, `serde_yml`, `yaml-spanned`, `serde-saphyr`.
+- **Supply chain**: 270 fully audited / 0 partially audited /
+  4 exempted (bench-only competitor crates) per `cargo vet`.
 
 ## What ships
 
