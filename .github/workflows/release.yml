@@ -48,12 +48,27 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          # Workspace root Cargo.toml has no top-level version field;
+          # the per-crate versions live under crates/*/Cargo.toml.
+          # Read the canonical version from `noyalib` (every other
+          # publishable crate is kept in lockstep via release-prep
+          # `cargo workspaces version` runs).
+          CARGO_VERSION=$(grep '^version' crates/noyalib/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            echo "::error::Tag version ($TAG_VERSION) does not match crates/noyalib/Cargo.toml version ($CARGO_VERSION)"
             exit 1
           fi
-          echo "Version verified: $TAG_VERSION"
+          # Cross-check that every publishable satellite is on the
+          # same version (catches a partial workspaces-bump that
+          # forgot to update one crate).
+          for crate in noya-cli noyalib-mcp noyalib-lsp noyalib-wasm; do
+            v=$(grep '^version' "crates/$crate/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            if [ "$v" != "$CARGO_VERSION" ]; then
+              echo "::error::crates/$crate/Cargo.toml version ($v) is out of sync with crates/noyalib ($CARGO_VERSION)"
+              exit 1
+            fi
+          done
+          echo "Version verified across noyalib + 4 satellites: $TAG_VERSION"
 
   # ── Build checksums & SBOM ──────────────────────────────────────────
   artifacts:
