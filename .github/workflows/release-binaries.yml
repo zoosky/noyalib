@@ -162,8 +162,14 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # ── Compile ───────────────────────────────────────────────
+      # `shell: bash` is required so the bash-style `\` line
+      # continuation works on Windows runners too (the default
+      # PowerShell parses `\` + newline as "missing expression
+      # after unary operator '--'"). Git Bash ships on every
+      # GitHub-hosted Windows runner.
       - name: Build (cargo)
         if: ${{ !matrix.cross }}
+        shell: bash
         run: |
           cargo build --release --locked --target ${{ matrix.target }} \
               --manifest-path crates/noya-cli/Cargo.toml \
@@ -171,22 +177,33 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
+        shell: bash
         run: |
           cross build --release --locked --target ${{ matrix.target }} \
               --manifest-path crates/noya-cli/Cargo.toml \
               --bin noyafmt --bin noyavalidate
 
       # ── Debug-symbol split (Linux gnu only) ────────────────────
+      - name: Install llvm-tools (for llvm-objcopy)
+        if: matrix.deb && !matrix.cross
+        run: rustup component add llvm-tools-preview
+
       - name: Strip + extract debug symbols
         if: matrix.deb && !matrix.cross
         shell: bash
         run: |
           set -euo pipefail
+          # `llvm-tools-preview` ships `llvm-objcopy` under the
+          # rustup toolchain dir, not on PATH. Resolve it via
+          # `rustc --print sysroot`.
+          SYSROOT=$(rustc --print sysroot)
+          HOST_TUPLE=$(rustc --print host-tuple)
+          OBJCOPY="$SYSROOT/lib/rustlib/$HOST_TUPLE/bin/llvm-objcopy"
           for bin in noyafmt noyavalidate; do
             BIN="target/${{ matrix.target }}/release/${bin}"
-            llvm-objcopy --only-keep-debug "${BIN}" "${BIN}.debug"
-            llvm-objcopy --strip-debug --strip-unneeded "${BIN}"
-            llvm-objcopy --add-gnu-debuglink="${BIN}.debug" "${BIN}"
+            "$OBJCOPY" --only-keep-debug "${BIN}" "${BIN}.debug"
+            "$OBJCOPY" --strip-debug --strip-unneeded "${BIN}"
+            "$OBJCOPY" --add-gnu-debuglink="${BIN}.debug" "${BIN}"
             file "${BIN}"
           done
 
@@ -445,6 +462,7 @@ jobs:
         env:
           RUSTFLAGS: '--remap-path-prefix=$HOME=~ --remap-path-prefix=${{ github.workspace }}=/build'
           NOYA_GEN_ASSETS: '1'
+        shell: bash
         run: |
           cargo build --release --locked --target ${{ env.TARGET }} \
               --manifest-path crates/noya-cli/Cargo.toml \
