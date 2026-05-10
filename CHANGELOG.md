@@ -7,7 +7,126 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet — `[v0.0.1]` is the cut.)
+(Nothing yet — `[v0.0.2]` is the cut.)
+
+## [v0.0.2] — 2026-05-10
+
+### Added — `${KEY}` / `${KEY:-default}` substitution during parse (issue #11)
+
+`ParserConfig::properties(map)` plus `strict_properties(bool)`
+toggle. Each YAML scalar is walked after parse and any
+`${name}` placeholder is substituted from the supplied
+`Arc<HashMap<String,String>>`. Supports `${KEY:-default}`
+inline fallbacks, `$$` → `$` and `${{` → `${` escapes, and
+`}}` → `}`. Strict mode (default for `ParserConfig::strict()`)
+errors on unknown keys; lossy mode (default) substitutes the
+empty string. Syntax errors in the placeholder (invalid
+character, unterminated, malformed `:-default` separator) always
+abort regardless of mode. Streaming fast-path is automatically
+disabled when properties are active so the post-parse walk runs
+uniformly across every typed target.
+
+### Added — `ariadne` adapter for `Error` (issue #23)
+
+New `ariadne` Cargo feature exposing
+`noyalib::ariadne_adapter::error_to_ariadne_report(err, filename, source)`
+that converts a `noyalib::Error` into an `ariadne::Report` with
+the offending byte range labelled. Pairs with the existing
+`miette::Diagnostic` impl on `Error` for users who prefer
+ariadne's rendering. Multibyte-safe: `Location::index()` is
+clamped to the source bounds before being expanded to a labelled
+range.
+
+### Added — garde / validator → miette bridge with `Spanned<T>` (issue #32)
+
+`noyalib::validated_miette` exposes
+`garde_errors_to_miette(spanned, errors, source, name)` and
+`validator_errors_to_miette(...)` that walk a validation error
+tree (compact `path: message; …` summary) and emit a single
+`miette::Report` whose source label points at the
+`Spanned<T>`'s byte range. Behind the `miette` Cargo feature
+plus either `garde` or `validator` (or both). Hand-rolled
+`Display` + `Error` + `miette::Diagnostic` impls keep
+`thiserror` out of the dep closure (matches the policy in
+`error.rs`).
+
+### Added — `from_str_borrowing` + `TransformReason` (issue #8)
+
+New public entry points `from_str_borrowing` and
+`from_str_borrowing_with_config` for `T: Deserialize<'a>` targets
+that borrow from the input slice (`&'a str`, `Cow<'a, str>`,
+structs containing those). The streaming deserialiser now routes
+plain-scalar string events through `visit_borrowed_str` whenever
+the parser produced a `Cow::Borrowed` event, unlocking truly
+zero-copy `&'de str` deserialisation. Quoted scalars without
+escapes also borrow; scalars that required decoding (escapes,
+multi-line folding, alias replay, tag resolution) fall back to
+owned buffers.
+
+Adjacent parser hardening: the plain-scalar slow path now emits
+`Cow::Borrowed(input_slice)` whenever the scalar is a single
+contiguous run of input bytes (no folded line breaks), matching
+the slow-path's owned-buffer result byte-for-byte. This means the
+common `key: value\n` shape now borrows zero-copy on the streaming
+path, not just terminal scalars at end-of-input.
+
+`TransformReason` enum (`noyalib::borrowed::TransformReason`)
+catalogues the five reasons a scalar can fail to borrow:
+`EscapeSequence`, `LineFold`, `TagResolution`, `QuotedScalar`,
+`AliasExpansion`. `Display` and `as_str` provide stable messages
+suitable for inclusion in higher-level error reports. The enum is
+`#[non_exhaustive]` so adding finer-grained variants in the future
+is non-breaking.
+
+### Added — `read` / `read_with_config` lazy multi-document reader (issue #7)
+
+`noyalib::read<R: Read, T: DeserializeOwned>(reader)` returns a
+`DocumentReadIterator<T>` that yields one `Result<T>` per YAML
+document. Per-document deserialisation errors surface as `Err`
+items so callers can recover and continue across document
+boundaries; YAML *syntax* errors return synchronously from
+`read` / `read_with_config` before iteration starts. The
+implementation drains the reader into a `String` first
+(`O(input_len)` peak memory); a future v0.0.3+ pass will tighten
+this to `O(1-document)` once the parser learns to accept
+incremental byte chunks.
+
+### Confirmed shipped in v0.0.1 (closes issues #9, #27, #28, #30)
+
+- **#9 — Event-based streaming deserialisation.**
+  `StreamingDeserializer` is the fast path inside `from_str` /
+  `from_str_with_config`; falls back to the AST loader only when
+  the caller's config disables streaming-eligible features.
+  Measured **30% faster** than the AST path (14.0 vs 19.4 µs;
+  see [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md#architecture-validation)).
+- **#27 — Path query API.** `Value::query` /
+  `BorrowedValue::query` ship dot notation, array indexing,
+  wildcards (`*`), and recursive descent (`..`). Filter
+  expressions (`[?field==value]`) remain optional and tracked
+  separately.
+- **#28 — Zero-copy `Value<'a>` AST.** Implemented via the
+  parallel `BorrowedValue<'a>` type with `Cow<'a, str>` keys and
+  values, shipped in v0.0.1 to avoid a breaking change to
+  `Value`. Measured **18% faster** than the owned `Value` path.
+- **#30 — Shared-memory DAGs via Rc/Arc anchor registry.**
+  `AnchorRegistry<T>` (`Rc`) and `ArcAnchorRegistry<T>` (`Arc`)
+  expose `register` / `resolve` returning shared pointers to the
+  same heap allocation (verified by `Rc::ptr_eq` / `Arc::ptr_eq`
+  in the type's doctests). Cyclic graphs use
+  `RcRecursive`/`ArcRecursive` with their `Weak` partners.
+
+### Changed — relax `indexmap` upper bound
+
+Bumped `indexmap` requirement from `>=2, <2.11` to `>=2, <3`. The
+old cap was defensive (we hadn't tested against 2.11+ at release
+time), not load-bearing — noyalib only uses `IndexMap`,
+`map::Iter`, `map::Entry`, and other stable public surface that
+hasn't changed across the 2.x line. indexmap 2.10 and 2.11 share
+MSRV 1.63, well below noyalib's own 1.75 floor.
+
+The motivating downstream is `html-generator`, which pulls
+`toml = "1.1"` (which depends on `indexmap ^2.11.4`); the previous
+`<2.11` cap made the two co-resolution paths incompatible.
 
 ## [v0.0.1] — 2026-05-10
 
