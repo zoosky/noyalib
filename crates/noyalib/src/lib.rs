@@ -486,9 +486,13 @@ mod value;
 pub mod with;
 
 pub use anchors::{
-    AnchorRegistry, ArcAnchor, ArcAnchorRegistry, ArcRecursion, ArcRecursive, ArcWeakAnchor,
-    RcAnchor, RcRecursion, RcRecursive, RcWeakAnchor,
+    AnchorRegistry, ArcAnchor, ArcAnchorRegistry, ArcWeakAnchor, RcAnchor, RcWeakAnchor,
 };
+// Recursive anchor wrappers depend on `Rc<RefCell<…>>` /
+// `Arc<Mutex<…>>` which require `std` (RefCell+Mutex live under
+// `core::cell` / `std::sync` — the latter only available with std).
+#[cfg(feature = "std")]
+pub use anchors::{ArcRecursion, ArcRecursive, RcRecursion, RcRecursive};
 pub use comments::{load_comments, Comment, CommentKind};
 pub use de::RequireIndent;
 #[cfg(feature = "std")]

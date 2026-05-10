@@ -26,6 +26,11 @@ pub(crate) fn scanner_span_default() -> scanner::Span {
 }
 
 use crate::error::Result;
+// `prelude::*` brings `Vec` into scope on no_std builds; on std it
+// duplicates the std prelude. The `#[allow]` suppresses the
+// unused-import warning that fires only under std + the strict
+// `-D unused` workspace lint.
+#[allow(unused_imports)]
 use crate::prelude::*;
 #[cfg(feature = "std")]
 use crate::span_context::SpanTree;
@@ -55,4 +60,15 @@ pub(crate) fn parse_one(input: &str, config: &ParseConfig) -> Result<(Value, Spa
 /// because `SpanTree` requires `std`-only types.
 pub(crate) fn parse_one_value(input: &str, config: &ParseConfig) -> Result<Value> {
     loader::load_one_no_spans(input, config)
+}
+
+/// Parse all YAML documents into `Value`s without building `SpanTree`s.
+///
+/// Used by `document::load_all_*` on the no_std target where
+/// `SpanTree` is unavailable. The std target uses the
+/// span-aware sibling `parse(...)` and discards span data on
+/// the `Value`-target fast path via `load_one_no_spans` instead.
+#[cfg(not(feature = "std"))]
+pub(crate) fn parse_all_values(input: &str, config: &ParseConfig) -> Result<Vec<Value>> {
+    loader::load_all_no_spans(input, config)
 }
