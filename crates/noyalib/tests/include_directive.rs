@@ -253,6 +253,65 @@ mod safe_file {
         assert_eq!(split_fragment(""), ("", None));
         assert_eq!(split_fragment("#anchor"), ("", Some("anchor")));
     }
+
+    #[test]
+    fn resolver_with_nonexistent_root_errors() {
+        let dir = temp_dir("nonexistent");
+        let _ = std::fs::remove_dir_all(&dir);
+        let resolver = SafeFileResolver::new(&dir).into_resolver();
+        let cfg = ParserConfig::new().include_resolver(resolver);
+        let res: Result<Value> = from_str_with_config("x: !include a.yaml\n", &cfg);
+        assert!(res.is_err(), "non-existent root must error");
+        let msg = res.unwrap_err().to_string();
+        assert!(
+            msg.contains("canonicalise"),
+            "expected canonicalisation error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn reject_symlink_with_missing_file() {
+        let dir = temp_dir("rej-missing");
+        let resolver = SafeFileResolver::new(&dir)
+            .symlink_policy(SymlinkPolicy::Reject)
+            .into_resolver();
+        let cfg = ParserConfig::new().include_resolver(resolver);
+        let res: Result<Value> = from_str_with_config("x: !include nope.yaml\n", &cfg);
+        assert!(res.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolver_reads_utf8_content() {
+        let dir = temp_dir("utf8");
+        std::fs::write(dir.join("multi.yaml"), "msg: 日本語の値\n").unwrap();
+        let cfg = ParserConfig::new().include_resolver(SafeFileResolver::new(&dir).into_resolver());
+        let v: Value = from_str_with_config("inc: !include multi.yaml\n", &cfg).unwrap();
+        assert_eq!(v["inc"]["msg"].as_str(), Some("日本語の値"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escaping_sandbox_is_rejected() {
+        // Symlink pointing outside the sandbox should be caught
+        // by the post-canonicalisation root-prefix check (under
+        // the default FollowWithinRoot policy).
+        let dir = temp_dir("escape");
+        // Stage an outside file.
+        let outside = std::env::temp_dir().join("noyalib-include-escape-outside.yaml");
+        std::fs::write(&outside, "secret: outside\n").unwrap();
+        // Symlink from inside dir → outside file.
+        std::os::unix::fs::symlink(&outside, dir.join("link.yaml")).unwrap();
+        let resolver = SafeFileResolver::new(&dir).into_resolver();
+        let cfg = ParserConfig::new().include_resolver(resolver);
+        let res: Result<Value> = from_str_with_config("x: !include link.yaml\n", &cfg);
+        assert!(res.is_err(), "symlink target outside root must be rejected");
+        let msg = res.unwrap_err().to_string();
+        assert!(msg.contains("escapes"), "{msg}");
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]

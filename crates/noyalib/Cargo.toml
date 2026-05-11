@@ -273,6 +273,14 @@ name = "include_directive"
 path = "examples/include_directive.rs"
 required-features = ["include_fs"]
 
+[[example]]
+name = "config_macros"
+path = "examples/config_macros.rs"
+
+[[example]]
+name = "i18n_formatters"
+path = "examples/i18n_formatters.rs"
+
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 indexmap = { version = ">=2, <3", features = ["serde"] }

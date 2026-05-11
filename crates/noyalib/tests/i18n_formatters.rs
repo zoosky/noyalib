@@ -102,6 +102,71 @@ fn message_formatter_works_through_dyn_dispatch() {
 }
 
 #[test]
+fn user_formatter_for_parse_no_location() {
+    let err = Error::Parse("synthetic parse failure".into());
+    let msg = UserFormatter.format(&err);
+    assert_eq!(msg, "The configuration file has a syntax error.");
+}
+
+#[test]
+fn user_formatter_for_deserialize() {
+    let err = Error::Deserialize("synthetic deser failure".into());
+    let msg = UserFormatter.format(&err);
+    assert!(msg.contains("does not match"), "{msg}");
+}
+
+#[test]
+fn user_formatter_for_deserialize_with_location() {
+    use noyalib::Location;
+    let err = Error::DeserializeWithLocation {
+        message: "synthetic".into(),
+        location: Location::new(3, 5, 12),
+    };
+    let msg = UserFormatter.format(&err);
+    assert!(msg.contains("line 3"), "{msg}");
+    assert!(msg.contains("does not match"), "{msg}");
+}
+
+#[test]
+fn user_formatter_for_io_error() {
+    let err = Error::Io(std::io::Error::other("synthetic io"));
+    let msg = UserFormatter.format(&err);
+    assert!(msg.contains("Could not read"), "{msg}");
+}
+
+#[test]
+fn user_formatter_for_budget_breach() {
+    use noyalib::BudgetBreach;
+    let err = Error::Budget(BudgetBreach::MaxNodes {
+        limit: 100,
+        observed: 101,
+    });
+    let msg = UserFormatter.format(&err);
+    assert!(msg.contains("large") || msg.contains("nested"), "{msg}");
+}
+
+#[test]
+fn user_formatter_catchall_for_unhandled_variants() {
+    // Custom is the catch-all path in UserFormatter — not one of
+    // the enumerated user-facing categories.
+    let err = Error::Custom("synthetic".into());
+    let msg = UserFormatter.format(&err);
+    assert_eq!(msg, "The configuration file is invalid.");
+}
+
+#[test]
+fn user_formatter_for_unknown_anchor_at() {
+    use noyalib::Location;
+    let err = Error::UnknownAnchorAt {
+        name: "anc".into(),
+        location: Location::new(2, 3, 5),
+        suggestion: None,
+    };
+    let msg = UserFormatter.format(&err);
+    assert!(msg.contains("does not exist"), "{msg}");
+}
+
+#[test]
 fn custom_formatter_implementation() {
     struct UpperFormatter;
     impl MessageFormatter for UpperFormatter {

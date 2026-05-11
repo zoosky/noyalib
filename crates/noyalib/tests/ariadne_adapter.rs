@@ -48,9 +48,6 @@ fn typed_target_error_renders() {
         .write(("config.yaml", Source::from(source)), &mut out)
         .unwrap();
     let s = String::from_utf8_lossy(&out);
-    // The deserialization error has no location (the typed-target
-    // path only carries one for parse-time errors), so the report
-    // is header-only — but the message must still render.
     assert!(
         s.contains("port") || s.contains("Error") || s.contains("error"),
         "{s}"
@@ -59,7 +56,6 @@ fn typed_target_error_renders() {
 
 #[test]
 fn report_without_location_still_renders() {
-    // Construct a custom error with no location attached.
     use noyalib::Error;
     let err = Error::Custom("synthetic".into());
     let report = error_to_ariadne_report(&err, "input.yaml", "source: value\n");
@@ -74,9 +70,7 @@ fn report_without_location_still_renders() {
 #[test]
 fn label_clamps_when_index_past_source_end() {
     use noyalib::Error;
-    // Custom error has no location, so this tests the fallback path.
     let err = Error::Custom("late".into());
-    // Even an empty source must not panic.
     let report = error_to_ariadne_report(&err, "input.yaml", "");
     let mut out = Vec::new();
     report
@@ -90,4 +84,40 @@ fn multibyte_unicode_at_label_does_not_panic() {
     let source = "name: 日本語\nbroken: [unclosed\n";
     let bytes = render(source);
     assert!(!bytes.is_empty());
+}
+
+#[test]
+fn label_span_normal_path_with_mid_source_location() {
+    // Force a parse error whose location lands mid-source so the
+    // normal `label_span` path (start < source.len(), char extract,
+    // char-width range) fires.
+    let source = "key: value\nnext: bad: scalar\nthird: value\n";
+    let err = from_str::<Value>(source).unwrap_err();
+    if let Some(loc) = err.location() {
+        assert!(
+            loc.index() < source.len(),
+            "expected mid-source location, got {}",
+            loc.index()
+        );
+    }
+    let report = error_to_ariadne_report(&err, "config.yaml", source);
+    let mut out = Vec::new();
+    report
+        .write(("config.yaml", Source::from(source)), &mut out)
+        .unwrap();
+    let rendered = String::from_utf8_lossy(&out);
+    assert!(rendered.contains("config.yaml"), "{rendered}");
+}
+
+#[test]
+fn label_span_handles_utf8_boundary() {
+    // Multi-byte UTF-8 at the label position must not panic.
+    let source = "name: 日本語の設定\nbad: [unclosed\n";
+    let err = from_str::<Value>(source).unwrap_err();
+    let report = error_to_ariadne_report(&err, "input.yaml", source);
+    let mut out = Vec::new();
+    report
+        .write(("input.yaml", Source::from(source)), &mut out)
+        .unwrap();
+    assert!(!out.is_empty());
 }
