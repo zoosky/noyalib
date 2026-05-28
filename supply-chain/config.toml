@@ -34,6 +34,16 @@ version = "0.5.1"
 criteria = "safe-to-deploy"
 suggest = false
 
+[[exemptions.bytes]]
+version = "1.11.1"
+criteria = "safe-to-deploy"
+suggest = false
+
+[[exemptions.futures-sink]]
+version = "0.3.32"
+criteria = "safe-to-deploy"
+suggest = false
+
 [[exemptions.granit-parser]]
 version = "0.0.2"
 criteria = "safe-to-deploy"
@@ -60,3 +70,23 @@ suggest = false
 [[exemptions.serde-saphyr]]
 version = "0.0.26"
 criteria = "safe-to-deploy"
+
+[[exemptions.sval]]
+version = "2.20.0"
+criteria = "safe-to-deploy"
+suggest = false
+
+[[exemptions.tokio]]
+version = "1.52.3"
+criteria = "safe-to-deploy"
+suggest = false
+
+[[exemptions.tokio-macros]]
+version = "2.7.0"
+criteria = "safe-to-deploy"
+suggest = false
+
+[[exemptions.tokio-util]]
+version = "0.7.18"
+criteria = "safe-to-deploy"
+suggest = false

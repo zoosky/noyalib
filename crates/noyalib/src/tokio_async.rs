@@ -81,19 +81,13 @@ where
 ///
 /// Returns the underlying [`Error`] from either the I/O drain or
 /// the parse step.
-pub async fn from_async_reader_with_config<R, T>(
-    reader: &mut R,
-    config: &ParserConfig,
-) -> Result<T>
+pub async fn from_async_reader_with_config<R, T>(reader: &mut R, config: &ParserConfig) -> Result<T>
 where
     R: AsyncRead + Unpin,
     T: DeserializeOwned + 'static,
 {
     let mut buf = Vec::new();
-    let _ = reader
-        .read_to_end(&mut buf)
-        .await
-        .map_err(Error::from)?;
+    let _ = reader.read_to_end(&mut buf).await.map_err(Error::from)?;
     from_slice_with_config(&buf, config)
 }
 
@@ -114,10 +108,7 @@ where
     T: DeserializeOwned + 'static,
 {
     let mut buf = Vec::new();
-    let _ = reader
-        .read_to_end(&mut buf)
-        .await
-        .map_err(Error::from)?;
+    let _ = reader.read_to_end(&mut buf).await.map_err(Error::from)?;
     let text = core::str::from_utf8(&buf).map_err(|e| Error::custom(e.to_string()))?;
     crate::document::load_all_as::<T>(text)
 }

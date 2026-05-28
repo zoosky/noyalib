@@ -475,26 +475,15 @@ pub mod interner;
 #[cfg(feature = "parallel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
+mod parser;
+mod path;
+/// Pluggable parser policies for "Safe YAML" enforcement.
+pub mod policy;
 /// Error-recovering parser for LSP / IDE partial parsing. Gated
 /// by the `recovery` feature.
 #[cfg(feature = "recovery")]
 #[cfg_attr(docsrs, doc(cfg(feature = "recovery")))]
 pub mod recovery;
-/// `sval` zero-allocation streaming serialization adapter.
-/// Gated by the `sval` feature.
-#[cfg(feature = "sval")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sval")))]
-pub mod sval_adapter;
-/// Native async YAML parsing for tokio runtimes —
-/// `from_async_reader` plus a `tokio_util::codec::Decoder`.
-/// Gated by the `tokio` feature.
-#[cfg(feature = "tokio")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
-pub mod tokio_async;
-mod parser;
-mod path;
-/// Pluggable parser policies for "Safe YAML" enforcement.
-pub mod policy;
 /// Robotics and scientific numeric types (requires `robotics` feature).
 #[cfg(feature = "robotics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "robotics")))]
@@ -514,6 +503,17 @@ mod schema_codegen;
 #[cfg_attr(docsrs, doc(cfg(feature = "validate-schema")))]
 mod schema_validate;
 mod ser;
+/// `sval` zero-allocation streaming serialization adapter.
+/// Gated by the `sval` feature.
+#[cfg(feature = "sval")]
+#[cfg_attr(docsrs, doc(cfg(feature = "sval")))]
+pub mod sval_adapter;
+/// Native async YAML parsing for tokio runtimes —
+/// `from_async_reader` plus a `tokio_util::codec::Decoder`.
+/// Gated by the `tokio` feature.
+#[cfg(feature = "tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
+pub mod tokio_async;
 
 /// SIMD-friendly multi-byte search primitives.
 ///

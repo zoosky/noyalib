@@ -312,8 +312,7 @@ mod tests {
         // is strict about duplicate keys; the workspace default
         // (DuplicateKeyPolicy::Last) silently accepts them.
         let cfg = LenientConfig {
-            base_config: ParserConfig::default()
-                .duplicate_key_policy(DuplicateKeyPolicy::Error),
+            base_config: ParserConfig::default().duplicate_key_policy(DuplicateKeyPolicy::Error),
             ..LenientConfig::default()
         };
         let r = parse_lenient_with("a: 1\na: 2\n", &cfg);
