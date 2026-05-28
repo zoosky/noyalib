@@ -5,9 +5,68 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — v0.0.6 work-in-progress
 
-(Nothing yet — `[v0.0.5]` is the cut.)
+The **Ecosystem Integration** cut. Lands the four remaining
+open issues from the v0.0.6 milestone (#22, #24, #25, #33) and
+closes out the leftover stabilisation checklist (#19).
+
+### Added — Error-recovering parser (`recovery` feature, issue #22)
+
+`noyalib::recovery::parse_lenient` returns a `ParseResult`
+carrying the best-effort tree plus the list of every error
+encountered, so LSP / IDE consumers can keep showing
+autocomplete and diagnostics on half-typed documents.
+
+```rust
+let r = noyalib::recovery::parse_lenient("a: 1\nb: [unclosed\n");
+assert!(!r.is_complete);
+assert!(!r.errors.is_empty());
+```
+
+Recovery strategies — strict pass first, then
+`DuplicateKeyPolicy::Last` retry, then line-truncation retry
+that drops trailing lines until something parses.
+Multi-document input is split on `---` and each document is
+recovered independently. Error collection is capped via
+`LenientConfig::max_errors`.
+
+Gated behind the new `recovery` Cargo feature; zero extra deps.
+
+### Added — `sval` streaming adapter (`sval` feature, issue #25)
+
+Alternative to the default serde route for callers wanting to
+skip `serde_derive`'s compile-time overhead or the binary-size
+cost of serde monomorphisation. Adds `impl sval::Value for
+Value`, `Number`, `Mapping`, `MappingAny`, and `TaggedValue`,
+plus a `noyalib::sval_adapter::to_sval_writer` entry point.
+serde remains the default; this is opt-in.
+
+### Added — Native tokio async parsing (`tokio` feature, issue #24)
+
+`noyalib::tokio_async::from_async_reader` /
+`from_async_reader_multi` parse from any
+`tokio::io::AsyncRead` without `spawn_blocking`.
+`YamlDecoder<T>` is a `tokio_util::codec::Decoder` for
+plugging streaming YAML parsing into a
+`tokio_util::codec::Framed` / tower pipeline. Per-document
+emission boundary follows the YAML 1.2.2 §9.1.2 `---` grammar.
+
+### Changed — npm publish moves to Trusted Publishing / OIDC (issue #33)
+
+`.github/workflows/release-binaries.yml` no longer reads
+`NPM_TOKEN`; both `@noyalib/noyalib-wasm` and `noyalib-mcp`
+publish jobs declare `id-token: write` and rely on the OIDC
+handshake against per-package trusted-publisher policies
+configured at `https://www.npmjs.com/package/<name>/access`.
+`pkg/PUBLISH.md` §6 documents the bootstrap + secret-retirement
+flow.
+
+Compromise window collapses from 1 year (granular access
+token) to ~10 minutes (per-run OIDC token). The
+`--provenance` flag stays attached to both publish steps so
+the npm verified-publisher badge keeps linking back to the
+exact GitHub Actions run.
 
 ## [v0.0.5] — 2026-05-11
 

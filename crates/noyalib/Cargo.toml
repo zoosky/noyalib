@@ -281,6 +281,11 @@ path = "examples/config_macros.rs"
 name = "i18n_formatters"
 path = "examples/i18n_formatters.rs"
 
+[[example]]
+name = "recovery_lenient"
+path = "examples/recovery_lenient.rs"
+required-features = ["recovery"]
+
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 indexmap = { version = ">=2, <3", features = ["serde"] }
@@ -337,6 +342,16 @@ rayon = { version = "1.10", optional = true }
 # profile (and FIPS / embedded users with strict dep policies) can
 # turn it off.
 serde_ignored = { version = "0.1", optional = true }
+# Zero-allocation streaming serialization framework — alternative
+# to serde for the `sval` feature. Pulled in only when the
+# `sval` feature is enabled.
+sval = { version = "2", optional = true, default-features = false }
+# `tokio` async runtime — required by the `tokio` feature for
+# native `AsyncRead` parsing and the `YamlDecoder` codec. Default
+# features off; we only need the I/O bits.
+tokio = { version = "1", optional = true, default-features = false, features = ["io-util"] }
+tokio-util = { version = "0.7", optional = true, default-features = false, features = ["codec"] }
+bytes = { version = "1", optional = true, default-features = false }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -365,6 +380,10 @@ serde_path_to_error = "0.1"
 # `serde_ecosystem` interop test compiling under
 # `--no-default-features` builds.
 serde_ignored = "0.1"
+# Test-only tokio runtime — the `tokio` feature in `[features]`
+# only enables `io-util`; tests need `macros` and the
+# `current-thread` runtime to execute `#[tokio::test]` cases.
+tokio = { version = "1", features = ["macros", "rt", "io-util"] }
 
 [[bench]]
 name = "benchmarks"
@@ -493,6 +512,26 @@ simd = []
 # 2024 edition (Cargo 1.85+). Enabling this feature pulls saphyr in
 # as a dev-dep and gates the comparison bench arms on its presence.
 compare-saphyr = ["dep:serde-saphyr"]
+# Native async stream parsing on top of `tokio::io::AsyncRead`.
+# Adds `noyalib::tokio_async` with `from_async_reader`,
+# `from_async_reader_multi`, and a `YamlDecoder` codec for
+# `tokio_util::codec::Framed` pipelines. Off by default to keep
+# the dep list lean for sync-only callers.
+tokio = ["dep:tokio", "dep:tokio-util", "dep:bytes", "std"]
+# `sval` zero-allocation streaming serialization framework
+# adapter. Adds `impl sval::Value for Value` (and the other
+# in-tree value types) plus a `noyalib::sval_adapter::to_sval_writer`
+# entry point. serde remains the default; this is opt-in for
+# callers that want to skip serde monomorphisation overhead.
+sval = ["dep:sval"]
+# Error-recovering parser for LSP / IDE partial parsing. Adds
+# the `noyalib::recovery` module with `parse_lenient` /
+# `parse_lenient_with` entry points returning a `ParseResult`
+# carrying the best-effort tree plus the collected error list.
+# Pure Rust, no extra deps — turns existing strict-parse retries
+# into a recovery pipeline. Off by default because the strict
+# path is what most callers want.
+recovery = ["std"]
 # Parallel multi-document deserialisation via Rayon. Adds the
 # `noyalib::parallel` module:
 #   - `parallel::parse<T>(&str) -> Result<Vec<T>>` — typed deserialise.

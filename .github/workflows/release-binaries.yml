@@ -34,8 +34,15 @@
 #   SCOOP_BUCKET_TOKEN   → ScoopInstaller/GithubActions
 #   VSCODE_MARKETPLACE_PAT  → vsce publish
 #   OPEN_VSX_PAT         → ovsx publish
-#   NPM_TOKEN            → npm publish --provenance
 #   GITHUB_TOKEN         → provided automatically (release upload, GHCR push)
+#
+# npm publish uses Trusted Publishing (OIDC) — no long-lived
+# `NPM_TOKEN` is needed. The publish jobs declare `id-token: write`
+# and npm validates the workflow identity against per-package
+# trusted-publisher policies configured at
+# `https://www.npmjs.com/package/<name>/access`. The `npm publish
+# --provenance` flag attaches a verified-publisher badge linking
+# back to the GitHub Actions run that produced the artefact.
 
 name: Release binaries
 
@@ -689,6 +696,9 @@ jobs:
     needs: [create-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -715,9 +725,7 @@ jobs:
               --scope noyalib \
               crates/noyalib-wasm
 
-      - name: Publish (with provenance)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish (Trusted Publishing + provenance)
         run: |
           cd crates/noyalib-wasm/pkg
           npm publish --provenance --access public
@@ -728,6 +736,9 @@ jobs:
     needs: [create-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -743,9 +754,7 @@ jobs:
           cd pkg/npm-mcp-wrapper
           npm version "${{ needs.create-release.outputs.version }}" --no-git-tag-version --allow-same-version
 
-      - name: Publish (with provenance)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish (Trusted Publishing + provenance)
         run: |
           cd pkg/npm-mcp-wrapper
           npm publish --provenance --access public

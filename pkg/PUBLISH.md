@@ -292,7 +292,10 @@ reports.
 
 Both publish with `npm publish --provenance` so each release
 carries an npm-native SLSA attestation linked to the GitHub
-Actions run that produced it.
+Actions run that produced it. Authentication uses npm Trusted
+Publishing (OIDC) — no long-lived `NPM_TOKEN` is required;
+GitHub Actions mints a per-run identity token that npm validates
+against the package's trusted-publisher policy.
 
 **Status: ⏳ Bootstrap pending.**
 
@@ -301,11 +304,32 @@ Actions run that produced it.
 1. Sign in to npm with the maintainer GitHub identity.
 2. Create the org / scope `@noyalib` (free for an open-source
    project).
-3. Generate a granular access token at
+3. **First publish only:** the chicken-and-egg around Trusted
+   Publishing means the package must exist on npm before a
+   trusted publisher can be configured. Generate a *short-lived*
+   granular access token at
    <https://www.npmjs.com/settings/<user>/tokens> with
    `Read and Publish` scope and the package allowlist `@noyalib/*`
-   plus `noyalib-mcp`.
-4. `gh secret set NPM_TOKEN --repo sebastienrousseau/noyalib`
+   plus `noyalib-mcp`. Use it for the very first publish only,
+   then **revoke immediately**.
+4. **After the first publish — configure Trusted Publishing:**
+   - <https://www.npmjs.com/package/@noyalib/noyalib-wasm/access>
+     → *Trusted Publishers → Add*:
+       - Repository: `sebastienrousseau/noyalib`
+       - Workflow filename: `release-binaries.yml`
+       - Environment: *(leave blank)*
+   - Repeat the same for
+     <https://www.npmjs.com/package/noyalib-mcp/access>.
+5. **Retire the bootstrap secret** once Trusted Publishing is
+   wired:
+
+   ```bash
+   gh secret delete NPM_TOKEN --repo sebastienrousseau/noyalib
+   ```
+
+   The `release-binaries.yml` workflow no longer reads
+   `NPM_TOKEN`; both publish jobs declare `id-token: write` and
+   rely on the OIDC handshake exclusively.
 
 ### First publish
 
