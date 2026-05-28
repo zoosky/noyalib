@@ -21,8 +21,8 @@ fn int_tag_resolves_to_integer() {
 
 #[test]
 fn float_tag_resolves_to_float() {
-    let f: f64 = from_str("!!float 3.14").unwrap();
-    assert!((f - 3.14).abs() < 1e-9);
+    let f: f64 = from_str("!!float 2.5").unwrap();
+    assert!((f - 2.5).abs() < 1e-9);
 }
 
 #[test]
