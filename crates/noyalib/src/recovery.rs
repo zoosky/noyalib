@@ -10,7 +10,7 @@
 //! so the editor can show a complete diagnostics list and offer
 //! autocomplete on the recoverable subtrees.
 //!
-//! [`parse_lenient`] is that contract:
+//! `parse_lenient` is that contract:
 //!
 //! * Top-level `---` document boundaries are scanned first; each
 //!   document is parsed independently so one broken document
@@ -27,7 +27,7 @@
 //!   exhausted. The successful prefix becomes the recovered
 //!   value; everything past the truncation point is summarised
 //!   as a synthetic [`Value::Null`].
-//! * A configurable error cap ([`LenientConfig::max_errors`])
+//! * A configurable error cap (`LenientConfig::max_errors`)
 //!   stops further recovery once enough diagnostics have been
 //!   collected — useful when the document is so malformed that
 //!   every line errors.
@@ -36,8 +36,8 @@
 //!
 //! # Output shape
 //!
-//! For multi-document input the result's [`ParseResult::value`]
-//! is a [`Value::Sequence`] of per-document values (recovered or
+//! For multi-document input the result's `ParseResult::value`
+//! is a `Value::Sequence` of per-document values (recovered or
 //! `Null`) — this matches what an LSP would walk to label
 //! per-document diagnostics. For single-document input the
 //! result's `value` is the recovered document directly (not

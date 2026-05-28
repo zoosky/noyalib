@@ -6,30 +6,30 @@
 //!
 //! Bridges noyalib's strict-parser entry points
 //! ([`crate::from_str`], [`crate::from_slice`]) onto
-//! [`tokio::io::AsyncRead`] sources without forcing the caller
-//! through [`tokio::task::spawn_blocking`]. Two surface shapes
+//! `tokio::io::AsyncRead` sources without forcing the caller
+//! through `tokio::task::spawn_blocking`. Two surface shapes
 //! are provided so callers can pick the right ergonomics for
 //! their workload:
 //!
-//! * [`from_async_reader`] — drain a single document out of any
-//!   [`tokio::io::AsyncRead`] into the caller's `T`.
-//! * [`from_async_reader_multi`] — drain every `---`-separated
+//! * `from_async_reader` — drain a single document out of any
+//!   `tokio::io::AsyncRead` into the caller's `T`.
+//! * `from_async_reader_multi` — drain every `---`-separated
 //!   document and return `Vec<T>`.
-//! * [`YamlDecoder<T>`] — [`tokio_util::codec::Decoder`]
+//! * `YamlDecoder<T>` — `tokio_util::codec::Decoder`
 //!   implementation for plugging YAML parsing into a
-//!   [`tokio_util::codec::Framed`] pipeline (web-services /
+//!   `tokio_util::codec::Framed` pipeline (web-services /
 //!   tower-middleware integration).
 //!
 //! # Backpressure
 //!
-//! The [`from_async_reader`] entry points buffer the full payload
+//! The `from_async_reader` entry points buffer the full payload
 //! into a `Vec<u8>` before parsing because the underlying parser
 //! is synchronous. The codec surface is the streaming choice:
 //! it emits one document per `decode` call as soon as a complete
 //! `---` boundary is in the buffer.
 //!
 //! Gated behind the `tokio` Cargo feature (which transitively
-//! enables [`tokio-util`] and [`bytes`] for the codec API).
+//! enables `tokio-util` and `bytes` for the codec API).
 //!
 //! # Example
 //!

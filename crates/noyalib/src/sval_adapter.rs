@@ -20,7 +20,7 @@
 //!   value graph to any [`sval::Stream`].
 //! * `impl sval::Value for [crate::Number]` — stream a single
 //!   number.
-//! * [`to_sval_writer`] — high-level helper that streams a
+//! * `to_sval_writer` — high-level helper that streams a
 //!   noyalib [`crate::Value`] to a writer that implements
 //!   [`sval::Stream`].
 //!
