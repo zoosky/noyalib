@@ -383,4 +383,61 @@ mod tests {
         assert!(split_documents("").is_empty());
         assert!(split_documents("   \n").is_empty());
     }
+
+    #[test]
+    fn recover_disabled_passes_just_collect_errors() {
+        // With both recovery passes disabled, an invalid input
+        // should still produce Null + the strict error — exercises
+        // the "fall through every pass" branch in recover_one.
+        let cfg = LenientConfig {
+            recover_duplicate_keys: false,
+            line_truncation: false,
+            ..LenientConfig::default()
+        };
+        let r = parse_lenient_with("[unclosed", &cfg);
+        assert!(!r.is_complete);
+        assert_eq!(r.errors.len(), 1);
+        assert!(matches!(r.value, Value::Null));
+    }
+
+    #[test]
+    fn line_truncation_disabled_skips_third_pass() {
+        let cfg = LenientConfig {
+            line_truncation: false,
+            ..LenientConfig::default()
+        };
+        let r = parse_lenient_with("a: 1\nb: [bad\n", &cfg);
+        assert!(!r.is_complete);
+        // With truncation off, no salvage attempt — value stays Null.
+        assert!(matches!(r.value, Value::Null));
+    }
+
+    #[test]
+    fn config_is_debug_and_clone() {
+        // Cheap reflection — keeps Debug + Clone derives covered.
+        let cfg = LenientConfig::default();
+        let _printed = format!("{cfg:?}");
+        let cloned = cfg.clone();
+        assert_eq!(cloned.max_errors, cfg.max_errors);
+    }
+
+    #[test]
+    fn parse_result_is_debug() {
+        let r = parse_lenient("a: 1\n");
+        let _printed = format!("{r:?}");
+    }
+
+    #[test]
+    fn split_documents_handles_implicit_first_doc() {
+        // Content before the first `---` is an implicit doc.
+        let d = split_documents("name: pre\n---\nname: post\n");
+        assert_eq!(d.len(), 2);
+    }
+
+    #[test]
+    fn split_documents_ignores_mid_line_dashes() {
+        // `---` mid-line is not a document marker.
+        let d = split_documents("a: ---\nb: 2\n");
+        assert_eq!(d.len(), 1);
+    }
 }

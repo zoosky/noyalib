@@ -206,6 +206,9 @@ the application needs.
 | `validator` | `validator` 0.19 | `ValidatedValidator<T>` wrapper |
 | `robotics` | — | `Degrees` / `Radians` / `StrictFloat` newtypes |
 | `parallel` | `rayon` 1.10 | `noyalib::parallel::parse<T>` |
+| `recovery` | — | `noyalib::recovery::parse_lenient` — best-effort parsing for LSP / IDE half-typed documents |
+| `sval` | `sval` 2 | `impl sval::Value` for `Value` / `Number` / `Mapping` / `MappingAny` / `TaggedValue`, `noyalib::sval_adapter::to_sval_writer` |
+| `tokio` | `tokio`, `tokio-util`, `bytes` | `noyalib::tokio_async::from_async_reader` / `from_async_reader_multi` and `YamlDecoder` codec for `tokio_util::codec::Framed` |
 | `simd` | — | `noyalib::simd::*` primitives + parser hot path |
 | `nightly-simd` | `simd` (nightly) | `core::simd`-backed 32-byte structural-bitmask scanner |
 | `compat-serde-yaml` | — | `noyalib::compat::serde_yaml` shim for migration |
@@ -292,6 +295,9 @@ cargo run --example schema_validation --features validate-schema
 cargo run --example figment      --features figment
 cargo run --example validation_garde --features garde
 cargo run --example robotics_polymorphism --features robotics
+cargo run --example recovery_lenient --features recovery
+cargo run --example sval_streaming   --features sval
+cargo run --example tokio_async_reader --features tokio
 ```
 
 Categories (full list in

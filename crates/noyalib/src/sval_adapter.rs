@@ -264,6 +264,57 @@ mod tests {
     }
 
     #[test]
+    fn tagged_value_wraps_inner() {
+        use crate::value::{Tag, TaggedValue};
+        let mut r = Recorder::default();
+        let tv = TaggedValue::new(Tag::new("!timestamp"), Value::String("2026".into()));
+        sval::Value::stream(&Value::Tagged(Box::new(tv)), &mut r).unwrap();
+        // The tagged_begin/tagged_end events use Label::new_computed
+        // and don't surface through the Recorder's matched callbacks,
+        // but the inner value's text events must still appear.
+        let s = r.0.join(",");
+        assert!(s.contains("text(2026)"));
+    }
+
+    #[test]
+    fn mapping_any_streams_value_keyed_events() {
+        use crate::value::{MappingAny, Number};
+        let mut r = Recorder::default();
+        let mut m = MappingAny::new();
+        let _ = m.insert(Value::Number(Number::Integer(7)), Value::Bool(true));
+        sval::Value::stream(&m, &mut r).unwrap();
+        let s = r.0.join(",");
+        assert!(s.contains("map_begin"));
+        assert!(s.contains("i64(7)"));
+        assert!(s.contains("bool(true)"));
+        assert!(s.contains("map_end"));
+    }
+
+    #[test]
+    fn number_impl_streams_directly() {
+        let mut r = Recorder::default();
+        sval::Value::stream(&Number::Integer(99), &mut r).unwrap();
+        assert_eq!(r.0, vec!["i64(99)".to_string()]);
+    }
+
+    #[test]
+    fn to_sval_writer_helper_streams() {
+        let mut r = Recorder::default();
+        let v = Value::Bool(false);
+        to_sval_writer(&mut r, &v).unwrap();
+        assert_eq!(r.0, vec!["bool(false)".to_string()]);
+    }
+
+    #[test]
+    fn null_string_streams_via_value_route() {
+        // Exercises the Value::String branch of the dispatcher.
+        let mut r = Recorder::default();
+        sval::Value::stream(&Value::String("hello".into()), &mut r).unwrap();
+        let s = r.0.join(",");
+        assert!(s.contains("text(hello)"));
+    }
+
+    #[test]
     fn mapping_streams_map_events() {
         let mut r = Recorder::default();
         let mut m = Mapping::new();

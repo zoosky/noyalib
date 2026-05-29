@@ -473,6 +473,72 @@ let docs: Vec<MyConfig> = noyalib::parallel::parse(stream)?;
 The pre-scan is `O(input_len)`; the per-document work
 parallelises across the Rayon thread pool.
 
+## 10b. Error-recovering parser for LSP / IDE (`recovery` feature)
+
+The default `from_str` family returns `Err` at the first syntax
+violation. LSP / IDE consumers need the opposite contract: keep
+going past errors, build a best-effort partial tree, collect
+every error encountered so the editor can show a complete
+diagnostics list and offer autocomplete on the recoverable
+subtrees.
+
+```rust
+// Cargo.toml: noyalib = { version = "0.0.6", features = ["recovery"] }
+use noyalib::recovery::parse_lenient;
+
+let half_typed = "name: noyalib\nfeatures: [recovery, sval\n# ^ unclosed\n";
+let r = parse_lenient(half_typed);
+assert!(!r.is_complete);
+println!("errors: {}", r.errors.len());
+// r.value is the best-effort recovered tree.
+```
+
+Three-pass recovery: strict pass → `DuplicateKeyPolicy::Last`
+retry → line-truncation retry. Multi-document input split on
+`---`; each document recovered independently. Error collection
+bounded by `LenientConfig::max_errors`.
+
+See [`crates/noyalib/examples/recovery_lenient.rs`](../crates/noyalib/examples/recovery_lenient.rs).
+
+## 10c. Native async parsing on tokio (`tokio` feature)
+
+For high-concurrency services parsing YAML from network sources,
+the `tokio` feature lets you skip `spawn_blocking`:
+
+```rust
+// Cargo.toml: noyalib = { version = "0.0.6", features = ["tokio"] }
+use noyalib::tokio_async::{from_async_reader_multi, YamlDecoder};
+
+// Pattern 1: drain-and-parse
+let docs: Vec<MyDoc> = from_async_reader_multi(&mut reader).await?;
+
+// Pattern 2: streaming codec — for tower middleware pipelines
+let framed = tokio_util::codec::FramedRead::new(reader, YamlDecoder::<MyDoc>::new());
+```
+
+Per-document boundaries follow the YAML 1.2.2 §9.1.2 `---`
+grammar — column-0 marker followed by whitespace or EOL.
+
+See [`crates/noyalib/examples/tokio_async_reader.rs`](../crates/noyalib/examples/tokio_async_reader.rs).
+
+## 10d. `sval` streaming adapter (`sval` feature)
+
+Alternative to the default serde route for callers wanting to
+skip `serde_derive`'s compile-time overhead or the binary-size
+cost of serde monomorphisation. The adapter implements
+`sval::Value` for the noyalib value graph so any
+`sval::Stream` consumer can read it:
+
+```rust
+// Cargo.toml: noyalib = { version = "0.0.6", features = ["sval"] }
+let value: noyalib::Value = noyalib::from_str("name: noyalib")?;
+sval::Value::stream(&value, &mut my_stream)?;
+```
+
+serde remains the default route; sval is opt-in.
+
+See [`crates/noyalib/examples/sval_streaming.rs`](../crates/noyalib/examples/sval_streaming.rs).
+
 ## 11. The CLI tools (`noyafmt`, `noyavalidate`)
 
 Two command-line companions ship under `crates/noya-cli/`:

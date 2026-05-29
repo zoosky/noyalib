@@ -219,6 +219,21 @@ single-threaded.
 Reproduce: `cargo bench --bench comparison` and
 `cargo bench --bench architecture`.
 
+## v0.0.6 feature benchmarks
+
+Three additional bench arms cover the optional surfaces added
+in v0.0.6 (`recovery`, `sval`, `tokio`). Run together with:
+
+```bash
+cargo bench --bench v006_features --features recovery,sval,tokio
+```
+
+| Group | Compares | Interpretation |
+| :--- | :--- | :--- |
+| `recovery_strict_vs_lenient` | `from_str` vs `recovery::parse_lenient` on valid input | The lenient wrapper should not regress strict throughput by more than rounding noise (recovery retries only execute on `Err`). |
+| `sval_vs_serde_value` | `from_str` → `Value` (serde) vs streaming a pre-built `Value` through a no-op `sval::Stream` | Isolates the per-event cost of the sval surface — useful when deciding whether the serde-free route is worth the extra dep. |
+| `tokio_async_drain` | `from_slice` (sync) vs `tokio_async::from_async_reader` against an in-memory `BufReader` | Quantifies the async fixed-overhead cost when I/O latency is zero; real network latency dwarfs this. |
+
 ## Project metrics
 
 | Metric | Value |

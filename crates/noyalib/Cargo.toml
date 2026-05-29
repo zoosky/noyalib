@@ -286,6 +286,16 @@ name = "recovery_lenient"
 path = "examples/recovery_lenient.rs"
 required-features = ["recovery"]
 
+[[example]]
+name = "sval_streaming"
+path = "examples/sval_streaming.rs"
+required-features = ["sval"]
+
+[[example]]
+name = "tokio_async_reader"
+path = "examples/tokio_async_reader.rs"
+required-features = ["tokio"]
+
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 indexmap = { version = ">=2, <3", features = ["serde"] }
@@ -425,6 +435,11 @@ harness = false
 [[bench]]
 name = "numeric_parse"
 harness = false
+
+[[bench]]
+name = "v006_features"
+harness = false
+required-features = ["recovery", "sval", "tokio"]
 
 [features]
 default = ["std", "fast-int", "fast-float", "strict-deserialise"]

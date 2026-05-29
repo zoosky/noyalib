@@ -294,6 +294,25 @@ is the YAML 1.2 schema-resolution table:
 prefix; off by default because the modern `0o` form is
 unambiguous.
 
+## Optional surfaces (v0.0.6)
+
+Three v0.0.6 modules sit alongside the core pipeline; each is
+gated behind its own Cargo feature so the default build pays
+zero compile / binary-size cost for them.
+
+| Module | Feature | Pipeline shape | Source |
+|---|---|---|---|
+| `recovery` | `recovery` | Wraps `from_str_with_config` in a three-pass retry loop (strict → `DuplicateKeyPolicy::Last` → line-truncation). Multi-document input split via the same `---` scanner the `parallel` module uses. Returns `ParseResult { value, errors, is_complete }`. Zero extra deps. | `crates/noyalib/src/recovery.rs` |
+| `sval_adapter` | `sval` | `impl sval::Value for Value` (and `Number` / `Mapping` / `MappingAny` / `TaggedValue`) — streams a noyalib value graph through any `sval::Stream` consumer. Bypasses the serde monomorphisation chain entirely. | `crates/noyalib/src/sval_adapter.rs` |
+| `tokio_async` | `tokio` | `from_async_reader` drains a `tokio::io::AsyncRead` to a `Vec<u8>` then runs the standard sync parser. `YamlDecoder` is a `tokio_util::codec::Decoder` that emits one document per `decode` call as soon as a column-0 `---` boundary lands in the buffer. | `crates/noyalib/src/tokio_async.rs` |
+
+All three are pure-safe Rust (preserving the workspace
+`unsafe_code = "forbid"` invariant) and exercised by unit
+tests inline, integration tests under
+[`crates/noyalib/tests/`](../crates/noyalib/tests/), and bench
+arms in
+[`crates/noyalib/benches/v006_features.rs`](../crates/noyalib/benches/v006_features.rs).
+
 ## Tests
 
 | Suite | Where | What |

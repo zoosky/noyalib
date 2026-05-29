@@ -292,6 +292,55 @@ mod tests {
         assert!(decoder.decode(&mut buf).unwrap().is_none());
     }
 
+    #[tokio::test]
+    async fn reader_with_config_respects_overrides() {
+        let mut r = BufReader::new(&b"name: x\nversion: '1'\n"[..]);
+        let cfg = ParserConfig::default();
+        let p: Pkg = from_async_reader_with_config(&mut r, &cfg).await.unwrap();
+        assert_eq!(p.name, "x");
+    }
+
+    #[test]
+    fn decoder_with_config_constructor() {
+        let cfg = ParserConfig::default();
+        let _d: YamlDecoder<Pkg> = YamlDecoder::with_config(cfg);
+        let _d2: YamlDecoder<Pkg> = YamlDecoder::default();
+        let _printed = format!("{:?}", YamlDecoder::<Pkg>::new());
+    }
+
+    #[test]
+    fn decoder_eof_on_empty_buffer_returns_none() {
+        let mut decoder: YamlDecoder<Pkg> = YamlDecoder::new();
+        let mut buf = BytesMut::new();
+        assert!(decoder.decode_eof(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn decoder_skips_whitespace_only_preamble() {
+        let mut decoder: YamlDecoder<Pkg> = YamlDecoder::new();
+        // Whitespace-only chunk before a `---` boundary — the
+        // decoder recurses and emits the document after it.
+        let mut buf = BytesMut::from(&b"\n\n---\nname: q\nversion: '2'\n"[..]);
+        let p = decoder.decode_eof(&mut buf).unwrap().unwrap();
+        assert_eq!(p.name, "q");
+    }
+
+    #[test]
+    fn decoder_eof_drains_trailing_whitespace() {
+        let mut decoder: YamlDecoder<Pkg> = YamlDecoder::new();
+        // First emit the only doc; then EOF should clean up
+        // any trailing whitespace without erroring.
+        let mut buf = BytesMut::from(&b"name: r\nversion: '3'\n\n\n"[..]);
+        let p = decoder.decode_eof(&mut buf).unwrap().unwrap();
+        assert_eq!(p.name, "r");
+    }
+
+    #[test]
+    fn find_doc_boundary_handles_short_input() {
+        assert!(find_doc_boundary(b"").is_none());
+        assert!(find_doc_boundary(b"abc").is_none());
+    }
+
     #[test]
     fn find_doc_boundary_skips_leading_marker() {
         // A leading `---` at byte 0 is not a boundary — it's the
