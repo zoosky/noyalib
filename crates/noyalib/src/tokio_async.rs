@@ -335,6 +335,15 @@ mod tests {
         assert_eq!(p.name, "r");
     }
 
+    #[tokio::test]
+    async fn reader_multi_handles_invalid_utf8() {
+        // 0xFF is invalid UTF-8 — exercises the from_utf8 branch
+        // in from_async_reader_multi.
+        let mut r = BufReader::new(&[0xFFu8, 0xFE, 0xFD][..]);
+        let res: Result<Vec<Pkg>> = from_async_reader_multi(&mut r).await;
+        assert!(res.is_err());
+    }
+
     #[test]
     fn find_doc_boundary_handles_short_input() {
         assert!(find_doc_boundary(b"").is_none());
