@@ -49,6 +49,25 @@ items:
 // ───────────────────────── recovery ─────────────────────────
 
 #[cfg(feature = "recovery")]
+const INVALID: &str = "\
+name: noyalib
+version: 0.0.6
+features:
+  - recovery
+  - sval
+  - tokio
+nested:
+  a: 1
+  b: 2.5
+  c: true
+  d: null
+items:
+  - one
+  - two
+  - [unclosed-flow
+";
+
+#[cfg(feature = "recovery")]
 fn bench_recovery_strict_vs_lenient(c: &mut Criterion) {
     use noyalib::recovery::parse_lenient;
     use noyalib::{Value, from_str};
@@ -60,9 +79,18 @@ fn bench_recovery_strict_vs_lenient(c: &mut Criterion) {
             black_box(v);
         });
     });
-    g.bench_function("lenient_parse_lenient", |b| {
+    g.bench_function("lenient_parse_lenient_valid", |b| {
         b.iter(|| {
             let r = parse_lenient(black_box(SMALL));
+            black_box(r);
+        });
+    });
+    // The recovery surface's actual value proposition is on
+    // malformed input. This arm benches the 3-pass recovery loop
+    // on a realistic LSP-style half-typed buffer.
+    g.bench_function("lenient_parse_lenient_invalid", |b| {
+        b.iter(|| {
+            let r = parse_lenient(black_box(INVALID));
             black_box(r);
         });
     });

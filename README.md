@@ -130,8 +130,8 @@ downstream users pinned to the core's floor.
 
 | Crate | MSRV | Why |
 |---|---|---|
-| `noyalib` (core lib) | **1.75.0** | The committed floor for `default-features = false` + the standard `std` default. Enforced by the dedicated `msrv-1-75-core` CI job. |
-| `noyalib-mcp` | 1.75.0 | Same floor; small dep tree, no edition-2024 transitives. |
+| `noyalib` (core lib) | **1.85.0** | The committed floor since v0.0.5 (edition 2024). Enforced by the dedicated MSRV CI job. |
+| `noyalib-mcp` | 1.85.0 | Same floor; small dep tree, no transitives requiring a higher edition. |
 | `noya-cli` (binaries) | 1.85.0 | `clap_builder 4.6` (a transitive of `clap = "4.5"`) ships in edition 2024. |
 | `noyalib-lsp` | 1.85.0 | LSP transport-stack transitives (`litemap`, `uuid`) require recent stables. |
 

@@ -159,21 +159,20 @@
 //!
 //! ## MSRV policy
 //!
-//! - **Core library (`noyalib`)** — Rust **1.75.0** stable. CI's
-//!   `msrv-1-75-core` job builds the `default-features = false`
-//!   and the standard `default` set on `rustc 1.75.0` for every
-//!   PR. The MSRV is treated as part of the public contract: a
-//!   bump within `0.0.x` is a breaking change and ships a major
-//!   version.
+//! - **Core library (`noyalib`)** — Rust **1.85.0** stable
+//!   (edition 2024, raised in v0.0.5). CI's MSRV gate builds
+//!   the `default-features = false` and the standard `default`
+//!   set on `rustc 1.85.0` for every PR. The MSRV is treated as
+//!   part of the public contract: a bump within `0.0.x` is a
+//!   breaking change and ships a major version.
 //! - **Optional features** that pull a dep with a higher floor
 //!   (`miette`, `garde`, `validate-schema`, `figment`,
-//!   `parallel`, `validator`) inherit that dep's MSRV — currently
-//!   `1.80`–`1.86` depending on the feature. The CI matrix runs
-//!   each one against the dep's declared `rust-version`.
+//!   `parallel`, `validator`, `tokio`) inherit that dep's MSRV
+//!   — typically `1.85`–`1.86` depending on the feature. The
+//!   CI matrix runs each one against the dep's declared
+//!   `rust-version`.
 //! - **Companion crates** ([`noya-cli`], [`noyalib-lsp`]) carry
-//!   their own higher MSRVs because their dep tree includes
-//!   edition-2024 transitives — `1.85.0` for both at time of
-//!   writing.
+//!   the same `1.85.0` floor.
 //! - **`nightly-simd`** is the only feature that requires nightly
 //!   rustc (`#![feature(portable_simd)]`); a `build.rs` cfg-detect
 //!   probe means stable builds with `--all-features` still
@@ -457,6 +456,11 @@ mod de;
 #[cfg(feature = "miette")]
 #[cfg_attr(docsrs, doc(cfg(feature = "miette")))]
 pub mod diagnostic;
+/// Workspace-private `---` document-boundary scanner shared by
+/// `parallel::split`, `recovery::split_documents`, and
+/// `tokio_async::find_doc_boundary` — one CRLF/BOM-aware scanner,
+/// one DoS cap.
+pub(crate) mod doc_boundary;
 /// Multi-document loading and iteration.
 pub mod document;
 mod error;

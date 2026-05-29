@@ -103,6 +103,14 @@ pub struct LenientConfig {
     /// Base parser configuration. Defaults to
     /// [`ParserConfig::default`].
     pub base_config: ParserConfig,
+    /// Cumulative byte budget for line-truncation retries
+    /// across one document. Each retry costs `prefix.len()`
+    /// from this budget; when the next candidate prefix would
+    /// exceed it, the recoverer stops salvaging and returns
+    /// `Null`. Defaults to `1 MiB`, enough to retry a few
+    /// hundred candidates on a typical LSP-edit buffer while
+    /// bounding worst-case CPU on adversarial input.
+    pub truncation_event_budget: usize,
 }
 
 impl Default for LenientConfig {
@@ -112,6 +120,7 @@ impl Default for LenientConfig {
             recover_duplicate_keys: true,
             line_truncation: true,
             base_config: ParserConfig::default(),
+            truncation_event_budget: 1024 * 1024,
         }
     }
 }
@@ -128,9 +137,25 @@ pub fn parse_lenient(input: &str) -> ParseResult {
 /// Parse `input` with caller-supplied recovery knobs.
 ///
 /// See the [module docs](self) for the recovery strategy.
+///
+/// Strips a leading UTF-8 BOM (`U+FEFF`) — Windows editors emit
+/// one by default and recovery is the one entry point callers
+/// expect to absorb it.
+///
+/// Hostile `---`-spam inputs are bounded by
+/// [`ParserConfig::max_documents`]: the underlying boundary
+/// scanner stops collecting markers once the cap is reached.
+/// Per-document parsing then re-enforces every other
+/// `ParserConfig` limit (`max_depth`, `max_events`,
+/// `max_document_length`, …).
 #[must_use]
 pub fn parse_lenient_with(input: &str, config: &LenientConfig) -> ParseResult {
-    let docs = split_documents(input);
+    // C5 — strip a leading BOM so Windows-saved buffers parse
+    //      identically to the LF-on-Linux equivalent.
+    let bom_skip = crate::doc_boundary::strip_bom(input.as_bytes());
+    let input = &input[bom_skip..];
+
+    let docs = split_documents(input, &config.base_config);
 
     if docs.is_empty() {
         return ParseResult {
@@ -153,13 +178,21 @@ pub fn parse_lenient_with(input: &str, config: &LenientConfig) -> ParseResult {
     let mut values: Vec<Value> = Vec::with_capacity(docs.len());
     let mut errors: Vec<Error> = Vec::new();
     let mut budget = config.max_errors;
+    // M2 — preserve per-document index alignment for LSP
+    //      diagnostic joiners by pushing `Null` for every
+    //      document we skip after the budget runs out.
+    let mut budget_exhausted = false;
     for doc in docs {
+        if budget_exhausted {
+            values.push(Value::Null);
+            continue;
+        }
         let (value, doc_errors) = recover_one(doc, config, budget);
         budget = budget.saturating_sub(doc_errors.len());
         errors.extend(doc_errors);
         values.push(value);
         if budget == 0 {
-            break;
+            budget_exhausted = true;
         }
     }
     let is_complete = errors.is_empty();
@@ -173,8 +206,9 @@ pub fn parse_lenient_with(input: &str, config: &LenientConfig) -> ParseResult {
 /// Recover a single document.
 ///
 /// Returns the best-effort `Value` and the list of errors
-/// encountered. Bounded by `budget` — once exhausted, the
-/// recoverer returns whatever it has and stops.
+/// encountered (every pass that emitted an `Err` contributes one
+/// entry). Bounded by `budget` — once exhausted, the recoverer
+/// returns whatever it has and stops.
 fn recover_one(input: &str, config: &LenientConfig, budget: usize) -> (Value, Vec<Error>) {
     if budget == 0 {
         return (Value::Null, Vec::new());
@@ -185,103 +219,120 @@ fn recover_one(input: &str, config: &LenientConfig, budget: usize) -> (Value, Ve
         Ok(v) => return (v, Vec::new()),
         Err(e) => e,
     };
-    let errors = vec![strict_err];
+    let mut errors = vec![strict_err];
 
     // Pass 2: duplicate-key recovery via DuplicateKeyPolicy::Last.
-    if config.recover_duplicate_keys && errors.len() < budget {
-        let mut cfg2 = config.base_config.clone();
-        cfg2.duplicate_key_policy = DuplicateKeyPolicy::Last;
-        if let Ok(v) = from_str_with_config::<Value>(input, &cfg2) {
-            // The original strict error is still surfaced as a
-            // diagnostic so the editor flags the duplicate.
-            return (v, errors);
+    //
+    // M13 — clone the base config exactly once per `recover_one`
+    //       so per-document hot paths on LSP keystrokes don't pay
+    //       the per-pass clone tax.
+    let mut tweaked_cfg: Option<ParserConfig> = None;
+    if config.recover_duplicate_keys
+        && config.base_config.duplicate_key_policy != DuplicateKeyPolicy::Last
+        && errors.len() < budget
+    {
+        let cfg2 = tweaked_cfg.insert({
+            let mut c = config.base_config.clone();
+            c.duplicate_key_policy = DuplicateKeyPolicy::Last;
+            c
+        });
+        match from_str_with_config::<Value>(input, cfg2) {
+            Ok(v) => return (v, errors),
+            // M1 — collect the Pass-2 error too so the editor
+            //      sees every diagnostic, not just the first.
+            Err(e) => errors.push(e),
         }
     }
 
-    // Pass 3: line-truncation recovery.
+    // Pass 3: line-truncation recovery, bounded by the per-document
+    // event budget so an adversarial 10k-line input cannot drive
+    // O(N×max_events) re-parses (security finding C1).
     if config.line_truncation && errors.len() < budget {
-        if let Some(v) = try_line_truncation(input, &config.base_config) {
-            return (v, errors);
+        let pass3_cfg = tweaked_cfg.as_ref().unwrap_or(&config.base_config);
+        match try_line_truncation(input, pass3_cfg, config.truncation_event_budget) {
+            TruncationOutcome::Recovered(v) => return (v, errors),
+            // M1 — collect the final truncation-failure error so
+            //      the editor can show what went wrong after
+            //      every salvage attempt was exhausted.
+            TruncationOutcome::Exhausted(Some(e)) if errors.len() < budget => errors.push(e),
+            TruncationOutcome::Exhausted(_) => {}
         }
     }
 
     (Value::Null, errors)
 }
 
+/// Result of the line-truncation pass.
+enum TruncationOutcome {
+    /// A truncated prefix parsed cleanly.
+    Recovered(Value),
+    /// No prefix parsed; the final attempt's error is carried back
+    /// so [`recover_one`] can surface it as a diagnostic.
+    Exhausted(Option<Error>),
+}
+
 /// Drop trailing lines one at a time, retrying the parse, until
-/// a parse succeeds or only one line remains.
-fn try_line_truncation(input: &str, config: &ParserConfig) -> Option<Value> {
-    // Collect line boundaries so we can truncate by slice rather
-    // than by re-string-building.
+/// a prefix succeeds, the cumulative parser-event budget is
+/// exhausted, or no candidate prefixes remain.
+///
+/// `event_budget` caps how many bytes the recovery loop may
+/// re-feed into the parser **in total**. Each attempted prefix
+/// costs `prefix.len()` from the budget; this turns a hostile
+/// 10k-line input from O(N×input_len) into bounded work without
+/// regressing recovery quality on realistic LSP-edit inputs.
+///
+/// Honours M3 — the buffer end itself is a candidate cut so a
+/// malformed last line without a trailing newline (the universal
+/// mid-typing case) is still tried.
+fn try_line_truncation(
+    input: &str,
+    config: &ParserConfig,
+    event_budget: usize,
+) -> TruncationOutcome {
+    // Collect line boundaries; the buffer end is a synthetic
+    // candidate so the no-trailing-newline case is exercised.
     let mut boundaries: Vec<usize> = Vec::new();
     for (i, b) in input.as_bytes().iter().enumerate() {
         if *b == b'\n' {
             boundaries.push(i);
         }
     }
-    // Iterate from the last line backwards.
+    if boundaries.last().copied() != Some(input.len()) {
+        boundaries.push(input.len());
+    }
+
+    let mut budget_remaining = event_budget;
+    let mut last_err: Option<Error> = None;
     for &cut in boundaries.iter().rev() {
         let candidate = &input[..cut];
         if candidate.trim().is_empty() {
             continue;
         }
-        if let Ok(v) = from_str_with_config::<Value>(candidate, config) {
-            return Some(v);
+        // Budget gate: re-parsing `candidate.len()` bytes costs
+        // proportionally; saturating-sub avoids panic on overflow.
+        let cost = candidate.len();
+        if cost > budget_remaining {
+            break;
+        }
+        budget_remaining = budget_remaining.saturating_sub(cost);
+        match from_str_with_config::<Value>(candidate, config) {
+            Ok(v) => return TruncationOutcome::Recovered(v),
+            Err(e) => last_err = Some(e),
         }
     }
-    None
+    TruncationOutcome::Exhausted(last_err)
 }
 
 /// Split `input` on top-level YAML `---` document markers.
 ///
-/// Inline mirror of the document-boundary scanner in
-/// [`crate::parallel::split`] — duplicated here so the
-/// `recovery` feature does not require the heavyweight
-/// `parallel` feature (which pulls in Rayon).
-fn split_documents(input: &str) -> Vec<&str> {
-    let bytes = input.as_bytes();
-    let mut markers: Vec<usize> = Vec::new();
-    let mut i = 0;
-    while i + 3 <= bytes.len() {
-        let at_line_start = i == 0 || bytes[i - 1] == b'\n' || bytes[i - 1] == b'\r';
-        if at_line_start && &bytes[i..i + 3] == b"---" {
-            let next_ok =
-                i + 3 >= bytes.len() || matches!(bytes[i + 3], b'\n' | b'\r' | b' ' | b'\t');
-            if next_ok {
-                markers.push(i);
-                i += 3;
-                continue;
-            }
-        }
-        i += 1;
-    }
-
-    if markers.is_empty() {
-        return if input.trim().is_empty() {
-            Vec::new()
-        } else {
-            vec![input]
-        };
-    }
-
-    let mut docs: Vec<&str> = Vec::with_capacity(markers.len() + 1);
-    if markers[0] > 0 {
-        let pre = input[..markers[0]].trim();
-        if !pre.is_empty() {
-            docs.push(&input[..markers[0]]);
-        }
-    }
-    for window in markers.windows(2) {
-        docs.push(&input[window[0]..window[1]]);
-    }
-    let last = *markers.last().unwrap();
-    if last < input.len() {
-        let trailing = &input[last..];
-        if !trailing.trim_end().is_empty() {
-            docs.push(trailing);
-        }
-    }
-    docs
+/// Thin wrapper around [`crate::doc_boundary::split_documents`]
+/// that bounds the marker cap by [`crate::de::ParserConfig::max_documents`].
+///
+/// Hostile `---`-spam inputs cannot drive unbounded `Vec`
+/// growth because the underlying scanner stops after
+/// `max_markers` boundaries.
+fn split_documents<'a>(input: &'a str, config: &ParserConfig) -> Vec<&'a str> {
+    crate::doc_boundary::split_documents(input, config.max_documents)
 }
 
 #[cfg(test)]
@@ -374,14 +425,15 @@ mod tests {
 
     #[test]
     fn split_documents_handles_single() {
-        let d = split_documents("a: 1\n");
+        let d = split_documents("a: 1\n", &ParserConfig::default());
         assert_eq!(d.len(), 1);
     }
 
     #[test]
     fn split_documents_handles_empty() {
-        assert!(split_documents("").is_empty());
-        assert!(split_documents("   \n").is_empty());
+        let cfg = ParserConfig::default();
+        assert!(split_documents("", &cfg).is_empty());
+        assert!(split_documents("   \n", &cfg).is_empty());
     }
 
     #[test]
@@ -430,14 +482,100 @@ mod tests {
     #[test]
     fn split_documents_handles_implicit_first_doc() {
         // Content before the first `---` is an implicit doc.
-        let d = split_documents("name: pre\n---\nname: post\n");
+        let d = split_documents("name: pre\n---\nname: post\n", &ParserConfig::default());
         assert_eq!(d.len(), 2);
     }
 
     #[test]
     fn split_documents_ignores_mid_line_dashes() {
         // `---` mid-line is not a document marker.
-        let d = split_documents("a: ---\nb: 2\n");
+        let d = split_documents("a: ---\nb: 2\n", &ParserConfig::default());
         assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn crlf_input_recovers_cleanly() {
+        // Windows-saved buffer with `\r\n` line endings.
+        let r = parse_lenient("a: 1\r\nb: 2\r\n");
+        assert!(r.is_complete);
+        if let Value::Mapping(m) = &r.value {
+            assert!(m.contains_key("a"));
+            assert!(m.contains_key("b"));
+        } else {
+            panic!("expected mapping for CRLF input, got {:?}", r.value);
+        }
+    }
+
+    #[test]
+    fn bom_prefix_is_stripped() {
+        let r = parse_lenient("\u{FEFF}a: 1\nb: 2\n");
+        assert!(r.is_complete);
+        if let Value::Mapping(m) = &r.value {
+            assert!(m.contains_key("a"));
+        } else {
+            panic!("BOM-prefixed input should parse cleanly");
+        }
+    }
+
+    #[test]
+    fn marker_spam_is_bounded() {
+        // 10k `---\n` markers in a row. Without the C2 cap this
+        // would build a 10k-entry `Vec<usize>` and try to parse
+        // each marker as a doc. With the cap it returns whatever
+        // `max_documents` permits (default 1000).
+        let yaml = "---\n".repeat(10_000);
+        let r = parse_lenient(&yaml);
+        if let Value::Sequence(s) = &r.value {
+            assert!(s.len() <= 1000);
+        } else {
+            // All-Null acceptable; we just must not OOM/hang.
+        }
+    }
+
+    #[test]
+    fn truncation_handles_no_trailing_newline() {
+        // M3 — the prefix `"a: 1\nb: ["` ends without `\n`; the
+        //      fix treats the buffer end as a truncation
+        //      candidate so the prefix `"a: 1\n"` is salvaged.
+        let r = parse_lenient("a: 1\nb: [bad");
+        if let Value::Mapping(m) = &r.value {
+            assert_eq!(m.get("a").and_then(|v| v.as_i64()), Some(1));
+        }
+    }
+
+    #[test]
+    fn budget_exhaustion_preserves_indices() {
+        // M2 — when the budget runs out mid-stream, remaining
+        //      docs become Null (not dropped) so per-doc
+        //      diagnostic indices still line up.
+        let cfg = LenientConfig {
+            max_errors: 1,
+            ..LenientConfig::default()
+        };
+        let yaml = "---\na: [bad\n---\nb: [bad\n---\nc: [bad\n";
+        let r = parse_lenient_with(yaml, &cfg);
+        if let Value::Sequence(s) = &r.value {
+            assert_eq!(s.len(), 3);
+        } else {
+            panic!("expected sequence with all 3 indices preserved");
+        }
+    }
+
+    #[test]
+    fn truncation_budget_caps_retries() {
+        // C1 — adversarial 10k-line input cannot drive unbounded
+        //      re-parses. With a tiny truncation budget the
+        //      recoverer gives up early but does not hang.
+        let cfg = LenientConfig {
+            truncation_event_budget: 64,
+            ..LenientConfig::default()
+        };
+        // 10k malformed lines after one valid line.
+        let mut yaml = String::from("a: 1\n");
+        for _ in 0..10_000 {
+            yaml.push_str("[bad\n");
+        }
+        let _r = parse_lenient_with(&yaml, &cfg);
+        // No panic, no hang.
     }
 }

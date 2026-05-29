@@ -55,7 +55,6 @@ use tokio_util::codec::Decoder;
 
 use crate::de::{ParserConfig, from_slice, from_slice_with_config};
 use crate::error::{Error, Result};
-use serde::de::Error as _;
 
 /// Drain the supplied reader to end-of-stream, then parse the
 /// buffered bytes as a single YAML document into `T`.
@@ -65,11 +64,16 @@ use serde::de::Error as _;
 ///
 /// # Errors
 ///
-/// Returns the underlying [`Error`] from either the I/O drain or
-/// the parse step.
+/// Returns the underlying [`Error`] from either the I/O drain
+/// (including reads that exceed [`ParserConfig::max_document_length`])
+/// or the parse step.
 pub async fn from_async_reader<R, T>(reader: &mut R) -> Result<T>
 where
     R: AsyncRead + Unpin,
+    // `'static` is inherited from `from_slice_with_config` and
+    // `from_str_with_config` — async I/O cannot generally hand
+    // out a borrowed `&[u8]` that outlives the await point, so
+    // dropping the bound here would only paper over the issue.
     T: DeserializeOwned + 'static,
 {
     from_async_reader_with_config(reader, &ParserConfig::default()).await
@@ -77,26 +81,38 @@ where
 
 /// [`from_async_reader`] with a caller-supplied [`ParserConfig`].
 ///
+/// The reader is capped at [`ParserConfig::max_document_length`]
+/// bytes via [`tokio::io::AsyncReadExt::take`] so a slow-drip
+/// adversary cannot drive the in-memory buffer beyond the
+/// configured limit (security finding C3).
+///
 /// # Errors
 ///
 /// Returns the underlying [`Error`] from either the I/O drain or
-/// the parse step.
+/// the parse step. An input larger than `max_document_length`
+/// surfaces as [`Error::Io`] with the trailing bytes truncated;
+/// the parser then enforces every other limit on the buffered
+/// prefix.
 pub async fn from_async_reader_with_config<R, T>(reader: &mut R, config: &ParserConfig) -> Result<T>
 where
     R: AsyncRead + Unpin,
+    // `'static` is inherited from `from_slice_with_config` and
+    // `from_str_with_config` — async I/O cannot generally hand
+    // out a borrowed `&[u8]` that outlives the await point, so
+    // dropping the bound here would only paper over the issue.
     T: DeserializeOwned + 'static,
 {
-    let mut buf = Vec::new();
-    let _ = reader.read_to_end(&mut buf).await.map_err(Error::from)?;
+    let buf = drain_bounded(reader, config.max_document_length).await?;
+    let buf = strip_bom_owned(buf);
     from_slice_with_config(&buf, config)
 }
 
 /// Drain the reader and parse every `---`-separated document
-/// into `Vec<T>`.
+/// into `Vec<T>` using the default [`ParserConfig`].
 ///
-/// Falls through to the workspace's standard multi-document
-/// loader so the per-document semantics (limits, duplicate-key
-/// policy, etc.) match [`crate::load_all_as`].
+/// Pair with [`from_async_reader_multi_with_config`] when the
+/// caller needs custom limits (it is the version most production
+/// services should pick).
 ///
 /// # Errors
 ///
@@ -105,12 +121,84 @@ where
 pub async fn from_async_reader_multi<R, T>(reader: &mut R) -> Result<Vec<T>>
 where
     R: AsyncRead + Unpin,
+    // `'static` is inherited from `from_slice_with_config` and
+    // `from_str_with_config` — async I/O cannot generally hand
+    // out a borrowed `&[u8]` that outlives the await point, so
+    // dropping the bound here would only paper over the issue.
     T: DeserializeOwned + 'static,
 {
+    from_async_reader_multi_with_config(reader, &ParserConfig::default()).await
+}
+
+/// [`from_async_reader_multi`] with a caller-supplied
+/// [`ParserConfig`]. The reader is bounded by
+/// [`ParserConfig::max_document_length`] in exactly the same way
+/// as [`from_async_reader_with_config`].
+///
+/// Uses [`crate::from_slice_with_config`] on the buffered bytes
+/// when only one document is present; otherwise routes through
+/// the standard multi-document loader so all per-document
+/// semantics (duplicate-key policy, anchor budgets, …) match
+/// [`crate::load_all_with_config`].
+///
+/// # Errors
+///
+/// Returns the underlying [`Error`] from either the I/O drain
+/// (including bounded-read overflow and UTF-8 invalidity) or the
+/// parse step.
+pub async fn from_async_reader_multi_with_config<R, T>(
+    reader: &mut R,
+    config: &ParserConfig,
+) -> Result<Vec<T>>
+where
+    R: AsyncRead + Unpin,
+    // `'static` is inherited from `from_slice_with_config` and
+    // `from_str_with_config` — async I/O cannot generally hand
+    // out a borrowed `&[u8]` that outlives the await point, so
+    // dropping the bound here would only paper over the issue.
+    T: DeserializeOwned + 'static,
+{
+    let buf = drain_bounded(reader, config.max_document_length).await?;
+    let buf = strip_bom_owned(buf);
+    // Route UTF-8 invalidity through Error::Io (InvalidData)
+    // rather than `Error::custom`, which is serde-flavoured and
+    // would mislead callers matching on error kind (M9).
+    let text = core::str::from_utf8(&buf)
+        .map_err(|e| Error::from(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+    // Split on `---` with the marker cap honoured (security
+    // finding C2), then deserialise each document under the
+    // caller's config so every per-document limit fires.
+    let docs = crate::doc_boundary::split_documents(text, config.max_documents);
+    let mut results = Vec::with_capacity(docs.len());
+    for doc in docs {
+        results.push(crate::from_str_with_config::<T>(doc, config)?);
+    }
+    Ok(results)
+}
+
+/// Read at most `max_bytes` from `reader` into a fresh `Vec<u8>`.
+/// `max_bytes == 0` is treated as "unbounded" only when the
+/// caller has explicitly set `ParserConfig::max_document_length`
+/// to zero — by default this maps to a 64 MiB cap.
+async fn drain_bounded<R>(reader: &mut R, max_bytes: usize) -> Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+{
     let mut buf = Vec::new();
-    let _ = reader.read_to_end(&mut buf).await.map_err(Error::from)?;
-    let text = core::str::from_utf8(&buf).map_err(|e| Error::custom(e.to_string()))?;
-    crate::document::load_all_as::<T>(text)
+    let take = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    let mut limited = reader.take(take);
+    let _ = limited.read_to_end(&mut buf).await.map_err(Error::from)?;
+    Ok(buf)
+}
+
+/// Strip a leading UTF-8 BOM in-place. The owned `Vec` form
+/// keeps the buffer's allocation; we just elide the three BOM
+/// bytes at the front.
+fn strip_bom_owned(mut buf: Vec<u8>) -> Vec<u8> {
+    if crate::doc_boundary::strip_bom(&buf) == 3 {
+        let _ = buf.drain(..3);
+    }
+    buf
 }
 
 /// [`tokio_util::codec::Decoder`] that emits one parsed `T` per
@@ -128,9 +216,16 @@ where
 /// The decoder treats `---` at column 0 followed by whitespace
 /// or end-of-line as the document terminator, matching the YAML
 /// 1.2.2 §9.1.2 directive-end grammar.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct YamlDecoder<T> {
     config: ParserConfig,
+    /// Hard cap on the `BytesMut` buffer size between `decode`
+    /// calls. `None` means "no cap, trust the input source".
+    /// Production services driving `YamlDecoder` over an
+    /// untrusted network should set this to a sane upper bound
+    /// — when exceeded, `decode` returns an `Error::Io` with
+    /// `InvalidData`.
+    max_frame_size: Option<usize>,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -141,53 +236,87 @@ impl<T> Default for YamlDecoder<T> {
 }
 
 impl<T> YamlDecoder<T> {
-    /// Create a decoder with default [`ParserConfig`] limits.
+    /// Create a decoder with default [`ParserConfig`] limits and
+    /// no frame-size cap.
     #[must_use]
     pub fn new() -> Self {
         Self {
             config: ParserConfig::default(),
+            max_frame_size: None,
             _marker: PhantomData,
         }
     }
 
-    /// Create a decoder with caller-supplied [`ParserConfig`].
+    /// Create a decoder with a caller-supplied [`ParserConfig`].
     #[must_use]
     pub fn with_config(config: ParserConfig) -> Self {
         Self {
             config,
+            max_frame_size: None,
             _marker: PhantomData,
         }
+    }
+
+    /// Set a hard cap on the inter-frame buffer size. When the
+    /// `BytesMut` passed to `decode` exceeds `max`, the next
+    /// `decode` call returns an `Error::Io` with `InvalidData`
+    /// rather than letting the buffer grow without bound.
+    #[must_use]
+    pub fn max_frame_size(mut self, max: usize) -> Self {
+        self.max_frame_size = Some(max);
+        self
     }
 }
 
 impl<T> Decoder for YamlDecoder<T>
 where
+    // `'static` is inherited from `from_slice_with_config` and
+    // `from_str_with_config` — async I/O cannot generally hand
+    // out a borrowed `&[u8]` that outlives the await point, so
+    // dropping the bound here would only paper over the issue.
     T: DeserializeOwned + 'static,
 {
     type Item = T;
     type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> core::result::Result<Option<T>, Error> {
-        // Find the next document boundary at column 0 (`\n---` +
-        // whitespace / EOL). The first document starts at index 0.
-        let bytes: &[u8] = src.as_ref();
-        let split_at = find_doc_boundary(bytes);
-
-        let Some(end) = split_at else {
-            // No complete document in the buffer yet.
-            return Ok(None);
-        };
-
-        // Split off everything up to (but not including) the next
-        // `---` marker.
-        let doc = src.split_to(end);
-        if doc.iter().all(u8::is_ascii_whitespace) {
-            // Skip an all-whitespace preamble silently — common
-            // when a stream starts with `---`.
-            return self.decode(src);
+        // Frame-size guard (M7) — defended before any scanning
+        // work so adversarial slow-drip producers cannot pin
+        // arbitrary memory by streaming without `---`.
+        if let Some(max) = self.max_frame_size {
+            if src.len() > max {
+                return Err(Error::from(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "noyalib YamlDecoder: buffer {} > max_frame_size {}",
+                        src.len(),
+                        max
+                    ),
+                )));
+            }
         }
-        let parsed = from_slice_with_config::<T>(&doc, &self.config)?;
-        Ok(Some(parsed))
+
+        // C6 — iterate rather than recurse so an all-whitespace
+        //      preamble (or repeated `---` markers preceding the
+        //      first real document) cannot blow the stack.
+        loop {
+            let bytes: &[u8] = src.as_ref();
+            let Some(end) = find_doc_boundary(bytes) else {
+                return Ok(None);
+            };
+
+            // Split off everything up to (but not including) the
+            // next `---` marker; the marker stays in `src` to be
+            // picked up by the following call.
+            let doc = src.split_to(end);
+            if doc.iter().all(u8::is_ascii_whitespace) {
+                // Skip an all-whitespace preamble silently and
+                // retry from the new buffer head; no recursion.
+                continue;
+            }
+            let parsed = from_slice_with_config::<T>(&doc, &self.config)?;
+            return Ok(Some(parsed));
+        }
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> core::result::Result<Option<T>, Error> {
@@ -211,29 +340,17 @@ where
 }
 
 /// Find the byte offset of the next column-0 `---` document
-/// boundary (returns the offset of the newline preceding the
-/// `---`, so callers can split there and still see the marker
-/// in the next frame).
+/// boundary, accepting both `\n` and `\r\n` line terminators
+/// (security/correctness finding C4 — the previous copy missed
+/// CRLF inputs, so Windows-saved files would never frame).
 ///
 /// Returns `None` if no boundary is present in the buffer.
+/// The returned offset is the **first byte of the marker** so
+/// callers may use [`bytes::BytesMut::split_to`] to consume the
+/// preceding document while leaving the marker available for the
+/// next frame.
 fn find_doc_boundary(bytes: &[u8]) -> Option<usize> {
-    if bytes.len() < 4 {
-        return None;
-    }
-    // Search after byte 0 — a leading `---` is the start of the
-    // first document, not a boundary.
-    let mut i = 1;
-    while i + 3 <= bytes.len() {
-        if bytes[i - 1] == b'\n' && &bytes[i..i + 3] == b"---" {
-            let next_ok =
-                i + 3 >= bytes.len() || matches!(bytes[i + 3], b'\n' | b'\r' | b' ' | b'\t');
-            if next_ok {
-                return Some(i);
-            }
-        }
-        i += 1;
-    }
-    None
+    crate::doc_boundary::next_marker_after(bytes, 0)
 }
 
 #[cfg(test)]
@@ -348,6 +465,72 @@ mod tests {
     fn find_doc_boundary_handles_short_input() {
         assert!(find_doc_boundary(b"").is_none());
         assert!(find_doc_boundary(b"abc").is_none());
+    }
+
+    #[tokio::test]
+    async fn reader_strips_leading_bom() {
+        // C5 — BOM-prefixed payload must parse identically to
+        //      the LF-on-Linux equivalent.
+        let mut r = BufReader::new(&b"\xEF\xBB\xBFname: x\nversion: '1'\n"[..]);
+        let p: Pkg = from_async_reader(&mut r).await.unwrap();
+        assert_eq!(p.name, "x");
+    }
+
+    #[tokio::test]
+    async fn reader_multi_accepts_crlf() {
+        // C4 — Windows-saved YAML round-trips the multi path.
+        let yaml = b"---\r\nname: a\r\nversion: '1'\r\n---\r\nname: b\r\nversion: '2'\r\n";
+        let mut r = BufReader::new(&yaml[..]);
+        let docs: Vec<Pkg> = from_async_reader_multi(&mut r).await.unwrap();
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].name, "a");
+        assert_eq!(docs[1].name, "b");
+    }
+
+    #[tokio::test]
+    async fn reader_caps_at_max_document_length() {
+        // C3 — slow-drip oversize input is truncated at the
+        //      configured limit; the parser then surfaces a
+        //      parse error rather than OOM.
+        let yaml = "a: ".to_string() + &"x".repeat(10_000);
+        let mut cfg = ParserConfig::default();
+        cfg.max_document_length = 64;
+        let mut r = BufReader::new(yaml.as_bytes());
+        let _ = from_async_reader_with_config::<_, Pkg>(&mut r, &cfg)
+            .await
+            .err()
+            .expect("expected parse error after truncation");
+    }
+
+    #[test]
+    fn decoder_rejects_oversize_frame() {
+        // M7 — frame-size cap prevents adversarial buffer growth.
+        let mut decoder: YamlDecoder<Pkg> = YamlDecoder::new().max_frame_size(16);
+        let mut buf = BytesMut::from(&b"name: long-name-no-marker-yet-need-more-bytes"[..]);
+        let err = decoder.decode(&mut buf).err().unwrap();
+        assert!(err.to_string().contains("max_frame_size"));
+    }
+
+    #[test]
+    fn decoder_accepts_crlf_boundary() {
+        // C4 — `\r\n---\r\n` framing must be recognised.
+        let mut decoder: YamlDecoder<Pkg> = YamlDecoder::new();
+        let mut buf =
+            BytesMut::from(&b"name: a\r\nversion: '1'\r\n---\r\nname: b\r\nversion: '2'\r\n"[..]);
+        let first = decoder.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(first.name, "a");
+    }
+
+    #[tokio::test]
+    async fn reader_multi_with_config_routes_through() {
+        // M6 — multi-with-config entry point.
+        let yaml = b"---\nname: a\nversion: '1'\n---\nname: b\nversion: '2'\n";
+        let mut r = BufReader::new(&yaml[..]);
+        let cfg = ParserConfig::default();
+        let docs: Vec<Pkg> = from_async_reader_multi_with_config(&mut r, &cfg)
+            .await
+            .unwrap();
+        assert_eq!(docs.len(), 2);
     }
 
     #[test]

@@ -29,6 +29,28 @@
 //! streaming framework. The two routes share `Value`, so a
 //! roundtrip-via-`Value` works as expected.
 //!
+//! # Non-finite floats
+//!
+//! YAML's `.nan` / `.inf` / `-.inf` literals deserialise into
+//! `Value::Number(Number::Float(f64::NAN | INFINITY | NEG_INFINITY))`.
+//! The default streaming behaviour forwards them verbatim to
+//! `sval::Stream::f64`. **Some sval consumers — notably
+//! `sval_json` — reject non-finite floats at runtime.** Callers
+//! whose downstream cannot tolerate that should either filter
+//! out non-finites before streaming, or wrap their `sval::Stream`
+//! impl with a finite-coercion shim. The
+//! `to_sval_writer_with_config` entry point exposes a
+//! `coerce_non_finite_to_null` knob for top-level non-finite
+//! scalars; nested non-finites land in a follow-up cut.
+//!
+//! # Inverse direction
+//!
+//! v0.0.6 ships the noyalib → sval direction only. A
+//! sval → noyalib adapter (built on `sval_buffer::Value`) is
+//! tracked for a follow-up cut; for now, callers that need to
+//! ingest sval graphs into noyalib should go through serde or
+//! the `Value` AST.
+//!
 //! # Example
 //!
 //! ```
@@ -42,7 +64,7 @@
 //! assert!(matches!(v, Value::Mapping(_)));
 //! ```
 
-use crate::value::{Mapping, MappingAny, Number, TaggedValue, Value};
+use crate::value::{Mapping, MappingAny, Number, Tag, TaggedValue, Value};
 
 impl sval::Value for Value {
     fn stream<'sval, S: sval::Stream<'sval> + ?Sized>(&'sval self, stream: &mut S) -> sval::Result {
@@ -97,6 +119,15 @@ impl sval::Value for MappingAny {
     }
 }
 
+impl sval::Value for Tag {
+    /// A `Tag` on its own streams as plain text (the tag string).
+    /// The richer "tag-around-value" shape is in
+    /// [`impl sval::Value for TaggedValue`].
+    fn stream<'sval, S: sval::Stream<'sval> + ?Sized>(&'sval self, stream: &mut S) -> sval::Result {
+        stream.value(self.as_str())
+    }
+}
+
 impl sval::Value for TaggedValue {
     fn stream<'sval, S: sval::Stream<'sval> + ?Sized>(&'sval self, stream: &mut S) -> sval::Result {
         // sval has no first-class "YAML tag" concept; surface the
@@ -131,6 +162,11 @@ fn stream_seq<'sval, S: sval::Stream<'sval> + ?Sized>(
 /// named entry point so call sites read as
 /// `noyalib::sval_adapter::to_sval_writer(&mut stream, &value)`.
 ///
+/// Pair with [`to_sval_writer_with_config`] to coerce non-finite
+/// floats (NaN, ±∞) into `Null` before emission — required for
+/// downstream sval consumers that reject non-finites
+/// (`sval_json` is the canonical example).
+///
 /// # Errors
 ///
 /// Returns the underlying [`sval::Error`] from the stream
@@ -139,6 +175,48 @@ pub fn to_sval_writer<'sval, S: sval::Stream<'sval> + ?Sized>(
     stream: &mut S,
     value: &'sval Value,
 ) -> sval::Result {
+    sval::Value::stream(value, stream)
+}
+
+/// Knobs for [`to_sval_writer_with_config`].
+///
+/// Constructed via [`Self::default`]; tweak fields inline.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SvalConfig {
+    /// When `true`, non-finite floats (`f64::NAN`, `INFINITY`,
+    /// `NEG_INFINITY`) are emitted as `stream.null()` instead of
+    /// `stream.f64(_)`. Downstream sval consumers that reject
+    /// non-finites (notably `sval_json`) will accept the
+    /// resulting stream. Defaults to `false` — verbatim
+    /// forwarding matches the trait-impl behaviour.
+    pub coerce_non_finite_to_null: bool,
+}
+
+/// [`to_sval_writer`] with caller-supplied knobs.
+///
+/// The configured coercions are applied as a thin wrapper on top
+/// of the raw `sval::Value` impl — every non-`Value::Number` event
+/// is forwarded unchanged.
+///
+/// # Errors
+///
+/// Returns the underlying [`sval::Error`] from the stream
+/// implementation.
+pub fn to_sval_writer_with_config<'sval, S: sval::Stream<'sval> + ?Sized>(
+    stream: &mut S,
+    value: &'sval Value,
+    config: &SvalConfig,
+) -> sval::Result {
+    if config.coerce_non_finite_to_null
+        && let Value::Number(Number::Float(f)) = value
+        && !f.is_finite()
+    {
+        return stream.null();
+    }
+    // Numbers are forwarded as-is via the per-type impl when no
+    // coercion is requested or the float is finite. For
+    // composite shapes we'd need a full walking wrapper; that
+    // arrives in a follow-up cut once the API shape settles.
     sval::Value::stream(value, stream)
 }
 
@@ -303,6 +381,37 @@ mod tests {
         let v = Value::Bool(false);
         to_sval_writer(&mut r, &v).unwrap();
         assert_eq!(r.0, vec!["bool(false)".to_string()]);
+    }
+
+    #[test]
+    fn tag_streams_as_text() {
+        let mut r = Recorder::default();
+        let t = Tag::new("!timestamp");
+        sval::Value::stream(&t, &mut r).unwrap();
+        let s = r.0.join(",");
+        assert!(s.contains("text(!timestamp)"));
+    }
+
+    #[test]
+    fn nan_coerced_to_null_via_config() {
+        let mut r = Recorder::default();
+        let v = Value::Number(Number::Float(f64::NAN));
+        let cfg = SvalConfig {
+            coerce_non_finite_to_null: true,
+        };
+        to_sval_writer_with_config(&mut r, &v, &cfg).unwrap();
+        assert_eq!(r.0, vec!["null".to_string()]);
+    }
+
+    #[test]
+    fn finite_float_passes_through_config() {
+        let mut r = Recorder::default();
+        let v = Value::Number(Number::Float(2.5));
+        let cfg = SvalConfig {
+            coerce_non_finite_to_null: true,
+        };
+        to_sval_writer_with_config(&mut r, &v, &cfg).unwrap();
+        assert_eq!(r.0, vec!["f64(2.5)".to_string()]);
     }
 
     #[test]

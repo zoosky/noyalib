@@ -150,6 +150,35 @@ override via `ParserConfig`.
 The corresponding regression tests live in
 [`tests/stress_load.rs`](../crates/noyalib/tests/stress_load.rs).
 
+#### v0.0.6 opt-in surface limits
+
+The `recovery`, `tokio`, and `sval` modules (each behind its own
+Cargo feature) add their own DoS-resistance posture on top of
+the shared parser limits:
+
+- **`recovery::parse_lenient`** caps the `---`-marker scan at
+  `ParserConfig::max_documents` to defeat marker-spam inputs,
+  and caps the cumulative line-truncation-retry cost at
+  `LenientConfig::truncation_event_budget` (default 1 MiB) to
+  defeat O(n²) re-parse on 10k-line adversarial documents.
+- **`tokio_async::from_async_reader{,_multi}{,_with_config}`**
+  drain the reader through `AsyncReadExt::take(max_document_length)`
+  so a slow-drip producer cannot grow the in-memory buffer
+  beyond the configured limit before the parser fires its own
+  size check. A leading UTF-8 BOM is stripped so Windows-saved
+  buffers round-trip identically to LF-on-Linux equivalents.
+- **`tokio_async::YamlDecoder`** exposes
+  `max_frame_size(usize)`: when the inter-frame `BytesMut`
+  buffer exceeds the cap, the next `decode` call returns
+  `Error::Io(InvalidData)` rather than letting an adversarial
+  producer pin memory by streaming without `---`. The cap is
+  off by default — set it on untrusted-network inputs.
+- **`sval_adapter`** forwards non-finite floats verbatim by
+  default; use `to_sval_writer_with_config` with
+  `SvalConfig::coerce_non_finite_to_null` to emit `Null`
+  instead, required for downstreams like `sval_json` that
+  reject NaN / ±∞.
+
 ### Audit pipeline
 
 Each PR runs:

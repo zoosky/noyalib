@@ -245,4 +245,4 @@ cargo bench --bench v006_features --features recovery,sval,tokio
 | **Coverage** | 95%+ function coverage / 92%+ region coverage / 93%+ line coverage (CI-gated) |
 | **Dependencies** | 5 unconditional + 3 default-on optional (`itoa`, `ryu`, `serde_ignored`) + 12 opt-in optional (`miette`, `garde`, `validator`, `schemars`, `serde_json`, `jsonschema`, `figment`, `rayon`, `serde-saphyr`, plus the three default-on opt-outs) |
 | **WASM binary** | 338 KB (release, LTO) |
-| **MSRV** | Rust 1.75.0 (core); newer for optional features (see [POLICIES.md](POLICIES.md#1-msrv-minimum-supported-rust-version)) |
+| **MSRV** | Rust 1.85.0 (core, since v0.0.5 — edition 2024); newer for optional features (see [POLICIES.md](POLICIES.md#1-msrv-minimum-supported-rust-version)) |

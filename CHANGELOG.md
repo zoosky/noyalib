@@ -11,6 +11,90 @@ The **Ecosystem Integration** cut. Lands the four remaining
 open issues from the v0.0.6 milestone (#22, #24, #25, #33) and
 closes out the leftover stabilisation checklist (#19).
 
+### Security & hardening pass on the v0.0.6 surface
+
+Post-merge deep-dive audit surfaced six DoS / correctness
+findings in the new modules; this section documents the fixes.
+
+* **Recovery `---`-spam OOM (C2).** `parse_lenient` now bounds
+  the document-marker scan by `ParserConfig::max_documents`. A
+  hostile `---\n`-only-spam input cannot drive unbounded
+  `Vec<usize>` allocation.
+* **Recovery O(n²) line-truncation (C1).** The truncation loop
+  is bounded by a new `LenientConfig::truncation_event_budget`
+  (default 1 MiB cumulative bytes across retries). Adversarial
+  10k-line malformed input no longer triggers ~10k full
+  re-parses.
+* **Async unbounded `read_to_end` (C3).** Both
+  `from_async_reader{,_with_config}` and the new
+  `from_async_reader_multi_with_config` drain through
+  `AsyncReadExt::take(max_document_length)`. Slow-drip
+  adversaries cannot grow the buffer beyond the configured
+  limit before the parser fires its own check.
+* **CRLF support (C4).** `recovery::split_documents`,
+  `tokio_async::find_doc_boundary`, and the existing
+  `parallel::split` now share **one** workspace-private scanner
+  in `crate::doc_boundary` that accepts both `\n` and `\r\n`
+  line terminators. The three previous copies disagreed on
+  CRLF — Windows-edited buffers round-trip through every entry
+  point now.
+* **BOM support (C5).** `parse_lenient` and both async readers
+  strip a leading UTF-8 BOM (`U+FEFF`) so Windows-saved buffers
+  parse identically to LF-on-Linux equivalents.
+* **Decoder recursion → loop (C6).** `YamlDecoder::decode` no
+  longer recurses on whitespace-only frames; the all-whitespace
+  preamble is consumed in a bounded `loop` instead, eliminating
+  the adversarial stack-overflow vector.
+
+Correctness fixes that landed alongside the hardening:
+
+* `parse_lenient` now collects Pass-2 / Pass-3 errors instead
+  of silently dropping them (M1).
+* Multi-document budget exhaustion no longer truncates the
+  output `Sequence` — skipped documents are emitted as
+  `Value::Null` so per-document diagnostic indices stay
+  aligned for LSP joiners (M2).
+* Line-truncation now treats the buffer end as a candidate
+  cut, so a malformed last line **without** a trailing newline
+  (the universal mid-typing case) is still recoverable (M3).
+* Pass-2 `ParserConfig` clone hoisted out of the hot path —
+  one clone per document, not one per pass (M13).
+
+Surface additions on the tokio module:
+
+* `from_async_reader_multi_with_config` — config-aware variant
+  was missing.
+* `YamlDecoder::max_frame_size(usize)` — optional inter-frame
+  buffer cap for codec users driving untrusted-network input
+  (M7). `Decoder::decode` returns
+  `Error::Io(InvalidData)` when the buffer exceeds the cap.
+* `YamlDecoder` is now `Clone`.
+
+Surface additions on the sval adapter:
+
+* `to_sval_writer_with_config` + `SvalConfig` —
+  `coerce_non_finite_to_null` toggles NaN / ±∞ → `Null` so
+  downstream consumers (e.g. `sval_json`) that reject
+  non-finites accept the stream (M10).
+* `impl sval::Value for Tag` — the public `Tag` type now has a
+  direct sval impl (M12).
+
+Documentation:
+
+* `SECURITY.md` and `doc/POLICIES.md` document the new
+  resource-limit knobs and their threat model.
+* CHANGELOG, READMEs, and `RELEASE-NOTES-v0.0.6.md` cross-reference
+  the new safe-by-default contracts.
+* MSRV inconsistency (workspace claimed 1.75 in some places,
+  Cargo.toml says 1.85 since v0.0.5) resolved on both axes.
+
+Tests: +24 unit tests across the three modules (61 total),
+covering CRLF, BOM, `---`-spam, no-trailing-newline truncation,
+budget-exhaustion index preservation, oversize-reader truncation,
+frame-size cap, NaN coercion. Plus a new
+`bench_recovery_lenient_on_invalid_input` arm exercising the
+3-pass recovery loop on realistic LSP-style half-typed input.
+
 ### Added — Error-recovering parser (`recovery` feature, issue #22)
 
 `noyalib::recovery::parse_lenient` returns a `ParseResult`

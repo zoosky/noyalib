@@ -43,6 +43,24 @@ Configurable limits protect against denial-of-service attacks:
 
 Use `ParserConfig::strict()` for a hardened preset suitable for untrusted input.
 
+#### v0.0.6 optional surfaces
+
+The three opt-in modules added in v0.0.6 (`recovery`, `sval`,
+`tokio`) inherit every limit above and add their own DoS
+mitigations:
+
+| Surface | Guard | Knob |
+|:--------|:------|:-----|
+| `noyalib::recovery::parse_lenient` | `---`-marker count cap (defeats marker-spam OOM) | `ParserConfig::max_documents` |
+| `noyalib::recovery::parse_lenient` | Cumulative byte budget across line-truncation retries (defeats O(n²) re-parse on 10k-line malformed input) | `LenientConfig::truncation_event_budget` (default 1 MiB) |
+| `noyalib::tokio_async::from_async_reader` | Bounded `AsyncReadExt::take(max_document_length)` drain (defeats slow-drip OOM) | `ParserConfig::max_document_length` |
+| `noyalib::tokio_async::YamlDecoder` | Optional inter-frame buffer cap (defeats codec buffer pinning by adversarial producer) | `YamlDecoder::max_frame_size(usize)` |
+
+Untrusted-input deployments driving `YamlDecoder` over a network
+stream **should** call `max_frame_size(_)` to a sane upper bound;
+the default `None` matches the trust contract of a process-local
+in-memory consumer.
+
 ### Supply Chain
 
 - Runtime deps audited (`cargo-deny` in CI): license validation, advisory checks, source verification.
