@@ -109,6 +109,29 @@ fn pnpm_lockfile_with_empty_flow_mappings_parses() {
     }
 }
 
+/// Companion finding to issue #46: the no-span loader path
+/// (used by `from_str::<Value>`'s value-target fast path)
+/// was missing the depth-limit check that the span-tracked
+/// loader has. Adversarial deeply-nested input would consume
+/// stack without ever firing `RecursionLimitExceeded`.
+#[test]
+fn no_span_loader_honours_max_depth() {
+    // 200 levels of nesting — should fire RecursionLimitExceeded
+    // under the default `max_depth = 128`.
+    let mut yaml = String::new();
+    for i in 0..200 {
+        let _ = writeln!(yaml, "{:indent$}- ", "", indent = i * 2);
+    }
+    let r: Result<noyalib::Value, _> = noyalib::from_str(&yaml);
+    match r {
+        Err(noyalib::Error::RecursionLimitExceeded { depth }) => {
+            assert!(depth > 128, "depth = {depth}");
+        }
+        Err(e) => panic!("expected RecursionLimitExceeded, got: {e}"),
+        Ok(_) => panic!("expected RecursionLimitExceeded, got Ok"),
+    }
+}
+
 /// Pathological key suffixes — pnpm v9 packages with many
 /// peer-dependency parens in the key.
 #[test]

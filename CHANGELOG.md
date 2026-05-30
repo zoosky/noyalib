@@ -51,6 +51,29 @@ struct fields of optional shape). Default `from_str` users
 upgrading to this release should see only the previously-broken
 parses now succeed; no behavioural change on valid documents.
 
+### Fixed — no-span loader missing depth-limit check
+
+Companion audit finding to issue #46: the no-span loader path
+(`crates/noyalib/src/parser/loader.rs`) — used by
+`from_str::<Value>`'s value-target fast path and by `no_std`
+multi-document loading — incremented `self.depth` on
+`SequenceStart` / `MappingStart` events at lines 814 / 833 but
+did **not** check against `ParserConfig::max_depth` the way
+the span-tracked loader does at lines 399-401 / 443-445.
+Adversarial deeply-nested input could consume stack without
+ever firing `RecursionLimitExceeded`. Now mirrored from the
+span loader. Regression test:
+`no_span_loader_honours_max_depth` in
+`crates/noyalib/tests/issue_46.rs`.
+
+Both findings were surfaced by the same code-pattern audit
+that confirmed every `MapAccess` / `SeqAccess` /
+`EnumAccess` / `VariantAccess` impl across `streaming.rs`,
+`de.rs`, and `value.rs` either has a `finished`-style guard
+or uses an iterator that naturally returns `None` on
+exhaustion. No further iterator-state-leak bugs in the same
+family remain.
+
 
 ### Security & hardening pass on the v0.0.6 surface
 

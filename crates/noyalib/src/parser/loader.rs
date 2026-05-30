@@ -812,6 +812,9 @@ impl<'a> NoSpanLoader<'a> {
             }
             Event::SequenceStart { anchor, tag, .. } => {
                 self.depth += 1;
+                if self.depth > self.config.max_depth {
+                    return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
                 self.stack.push(NoSpanFrame::Sequence {
                     items: Vec::new(),
                     anchor,
@@ -831,6 +834,9 @@ impl<'a> NoSpanLoader<'a> {
             }
             Event::MappingStart { anchor, tag, .. } => {
                 self.depth += 1;
+                if self.depth > self.config.max_depth {
+                    return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
                 self.stack.push(NoSpanFrame::MappingKey {
                     map: Mapping::new(),
                     anchor,
