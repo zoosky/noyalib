@@ -651,9 +651,11 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                     de: self,
                     finished: false,
                     count: 0,
-                })?;
+                });
+                // Decrement on both Ok and Err so a failed inner
+                // visit_seq doesn't leak depth (issue #46).
                 self.depth = self.depth.saturating_sub(1);
-                Ok(res)
+                res
             }
             Event::MappingStart { .. } => {
                 self.depth += 1;
@@ -666,9 +668,12 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                     has_emitted_key: false,
                     key_count: 0,
                     seen_keys: FxHashSet::default(),
-                })?;
+                });
+                // Decrement on both Ok and Err so a failed inner
+                // visit_map doesn't leak a depth count into the
+                // outer scope (issue #46).
                 self.depth = self.depth.saturating_sub(1);
-                Ok(res)
+                res
             }
             _ => Err(self.fallback()),
         }
@@ -922,9 +927,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                 de: self,
                 finished: false,
                 count: 0,
-            })?;
+            });
+            // Decrement on Ok and Err (issue #46).
             self.depth = self.depth.saturating_sub(1);
-            Ok(res)
+            res
         } else {
             Err(Error::TypeMismatch {
                 expected: "sequence",
@@ -958,9 +964,10 @@ impl<'de> de::Deserializer<'de> for &mut StreamingDeserializer<'de> {
                 has_emitted_key: false,
                 key_count: 0,
                 seen_keys: FxHashSet::default(),
-            })?;
+            });
+            // Decrement on Ok and Err (issue #46).
             self.depth = self.depth.saturating_sub(1);
-            Ok(res)
+            res
         } else {
             Err(Error::TypeMismatch {
                 expected: "mapping",
@@ -1154,6 +1161,14 @@ impl<'de> SeqAccess<'de> for StreamingSeqAccess<'_, 'de> {
     where
         T: DeserializeSeed<'de>,
     {
+        // Symmetric guard with `StreamingMapAccess::next_key_seed`
+        // — callers that re-invoke `next_element` after the
+        // sequence is exhausted must not consume events from the
+        // parent context. See issue #46 for the matching map-side
+        // failure mode.
+        if self.finished {
+            return Ok(None);
+        }
         if matches!(self.de.peek_event()?, Event::SequenceEnd { .. }) {
             self.de.skip_event()?;
             self.finished = true;
@@ -1208,6 +1223,18 @@ impl<'de> MapAccess<'de> for StreamingMapAccess<'_, 'de> {
     where
         K: DeserializeSeed<'de>,
     {
+        // Guard against serde visitors (e.g. `noyalib::Value`'s
+        // `ValueVisitor::visit_map`) that call `next_key` again
+        // after the previous call returned `Ok(None)`. Without
+        // this guard the loop reads events from the *parent*
+        // mapping and treats them as belonging to the now-empty
+        // child — the recursive `deserialize_any` on each spilled
+        // value inflates `self.depth` by one per entry and
+        // triggers `RecursionLimitExceeded` on otherwise-shallow
+        // documents (issue #46).
+        if self.finished {
+            return Ok(None);
+        }
         loop {
             // Use `peek_event` so we see events queued on the replay stack
             // by a prior merge expansion — `peek_parser_event` bypasses it
@@ -1313,6 +1340,16 @@ impl<'de> MapAccess<'de> for StreamingMapAccess<'_, 'de> {
     where
         V: DeserializeSeed<'de>,
     {
+        // Symmetric guard with `next_key_seed`. Callers that
+        // misuse the MapAccess contract (e.g. invoking
+        // `next_value` after the keys are exhausted) would
+        // otherwise read into the parent mapping's value events
+        // — the same `depth` leak documented in issue #46.
+        if self.finished {
+            return Err(Error::Custom(
+                "next_value_seed called after MapAccess exhausted".into(),
+            ));
+        }
         seed.deserialize(&mut *self.de)
     }
 }

@@ -11,6 +11,47 @@ The **Ecosystem Integration** cut. Lands the four remaining
 open issues from the v0.0.6 milestone (#22, #24, #25, #33) and
 closes out the leftover stabilisation checklist (#19).
 
+### Fixed — streaming deserializer depth leak on empty flow mappings (issue #46)
+
+`StreamingMapAccess::next_key_seed` (and the symmetric
+`next_value_seed` / `StreamingSeqAccess::next_element_seed`)
+did not consult the access object's `finished` flag. Serde
+visitors that call `next_entry` after the previous call
+returned `Ok(None)` — `noyalib::Value`'s `ValueVisitor::visit_map`
+is the canonical one — read the **next event from the parent
+mapping** and treated it as belonging to the now-exhausted
+child. The recursive `deserialize_any` on each spilled value
+inflated `self.depth` by one per entry; on a `pnpm-lock.yaml`
+shaped input with N consecutive empty flow mappings `{}`,
+depth hit `max_depth + 1` after exactly 128 entries and
+`from_str::<Value>` failed with
+`Error::RecursionLimitExceeded { depth: 129 }` even though the
+real nesting depth was 2.
+
+Fix in `crates/noyalib/src/streaming.rs`:
+
+* Both `MapAccess::next_key_seed` and
+  `MapAccess::next_value_seed` return `Ok(None)` / a clear
+  contract-error early when `finished` is set.
+* `SeqAccess::next_element_seed` mirrors the guard.
+* `deserialize_any` / `deserialize_seq` / `deserialize_map`
+  now decrement `self.depth` on both `Ok` and `Err` so a
+  failed inner visit cannot leak depth into the outer scope
+  (the same leak path under a different trigger).
+
+Regression test: `crates/noyalib/tests/issue_46.rs` —
+50 000-package `pnpm-lock.yaml`-shaped fixture, 3 000 empty
+flow mappings at one level, complex peer-dependency keys, and
+the deterministic depth-cliff probe at every `n` in
+`[100, 128, 129, 130, 200, 500, 1000]`.
+
+Affects every typed deserialize target whose visitor calls
+`next_entry` past the end (including `BTreeMap<K, V>` and
+struct fields of optional shape). Default `from_str` users
+upgrading to this release should see only the previously-broken
+parses now succeed; no behavioural change on valid documents.
+
+
 ### Security & hardening pass on the v0.0.6 surface
 
 Post-merge deep-dive audit surfaced six DoS / correctness
