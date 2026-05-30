@@ -134,7 +134,7 @@ jobs:
       # Anyone can later verify the artefact came from this exact CI
       # workflow on this repo via `gh attestation verify`.
       - name: Attest build provenance (SLSA L3)
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             target/package/*.crate
@@ -148,7 +148,7 @@ jobs:
       # Verifiers run `cosign verify-blob` with the issuer / identity
       # constraints documented in SECURITY.md.
       - name: Install cosign
-        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3
       - name: Sign release artefacts (keyless)
         env:
           COSIGN_YES: "true"

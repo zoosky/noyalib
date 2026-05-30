@@ -18,7 +18,7 @@ concurrency:
 jobs:
   ci:
     name: Rust CI
-    uses: sebastienrousseau/pipelines/.github/workflows/rust-ci.yml@13013621b3f1df283e1e1811bb78afdc6001e25c
+    uses: sebastienrousseau/pipelines/.github/workflows/rust-ci.yml@47ed7767be5273aef0bbc60c6f6c16aba5fb6f59 # v0.0.2
     with:
       rust-version: 'stable'
       run-clippy: true
@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
+      - uses: EmbarkStudios/cargo-deny-action@d8395c1c8c9df74d968a3bcbba5533e396ff43cf # v2
 
   fuzz-diff:
     name: Differential fuzz (10s smoke)
