@@ -62,6 +62,24 @@ version: 0.0.6
     if let Some(pkg) = decoder.decode_eof(&mut buf).expect("decode_eof") {
         println!("  [{i}] {} {}", pkg.name, pkg.version);
     }
+
+    // ── Pattern 3: untrusted-network frame-size cap (v0.0.6) ──
+    //
+    // Production services driving `YamlDecoder` over a network
+    // stream MUST cap inter-frame buffer growth or an adversarial
+    // producer that streams without `---` can pin arbitrary memory.
+    // Set the cap with `max_frame_size(usize)` — when the buffer
+    // exceeds it, the next `decode` call returns `Error::Io`.
+    let mut guarded = YamlDecoder::<Pkg>::new().max_frame_size(64);
+    // Stream a single doc whose first line is longer than 64 bytes
+    // and no `---` boundary lands inside the cap.
+    let oversize =
+        b"name: a-very-long-package-name-that-definitely-exceeds-sixty-four-bytes\nversion: '1'\n";
+    let mut buf = BytesMut::from(&oversize[..]);
+    match guarded.decode(&mut buf) {
+        Err(e) => println!("\nmax_frame_size(64) rejected the oversize frame: {e}"),
+        Ok(_) => println!("\nunexpected: oversize frame should have been rejected"),
+    }
 }
 
 #[cfg(not(feature = "tokio"))]

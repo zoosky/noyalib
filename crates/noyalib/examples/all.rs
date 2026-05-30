@@ -63,9 +63,28 @@ const EXAMPLES: &[&str] = &[
     // Final
     "async_io",
     "recursive",
+    // v0.0.5 — pluggable error formatting + declarative config macros
+    "i18n_formatters",
+    "config_macros",
     // Bench (last — longest)
     "bench",
 ];
+
+// Feature-gated examples that aren't run by this umbrella because
+// each one needs its own `--features X` flag. Listed here as a
+// pointer for anyone reading this file:
+//
+//   cargo run --example schema_validation     --features validate-schema
+//   cargo run --example figment               --features figment
+//   cargo run --example validation_garde      --features garde
+//   cargo run --example validation_validator  --features validator
+//   cargo run --example robotics_polymorphism --features robotics
+//   cargo run --example ariadne_diagnostic    --features ariadne
+//   cargo run --example validated_miette      --features miette,garde
+//   cargo run --example include_directive     --features include_fs
+//   cargo run --example recovery_lenient      --features recovery
+//   cargo run --example sval_streaming        --features sval
+//   cargo run --example tokio_async_reader    --features tokio
 
 fn main() {
     println!("\n  \x1b[1mnoyalib examples\x1b[0m\n");

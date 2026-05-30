@@ -38,6 +38,27 @@ nested:
         println!("  {line}");
     }
     println!("\ntotal events: {}", recorder.events.len());
+
+    // ── Pattern: non-finite float coercion ──────────────────────
+    //
+    // `.nan` / `.inf` literals are valid YAML floats but `sval_json`
+    // and similar JSON-bound consumers reject non-finites. Use
+    // `SvalConfig::coerce_non_finite_to_null` to emit `Null`
+    // instead — required for round-tripping into JSON.
+    use noyalib::Number;
+    use noyalib::sval_adapter::{SvalConfig, to_sval_writer_with_config};
+
+    let nan_value = Value::Number(Number::Float(f64::NAN));
+    let cfg = SvalConfig {
+        coerce_non_finite_to_null: true,
+    };
+
+    let mut nan_recorder = Recorder::default();
+    to_sval_writer_with_config(&mut nan_recorder, &nan_value, &cfg).expect("stream NaN");
+    println!("\nNaN with coerce_non_finite_to_null = true:");
+    for line in &nan_recorder.events {
+        println!("  {line}");
+    }
 }
 
 #[cfg(feature = "sval")]
