@@ -493,13 +493,14 @@ mod tests {
         //      configured limit; the parser then surfaces a
         //      parse error rather than OOM.
         let yaml = "a: ".to_string() + &"x".repeat(10_000);
-        let mut cfg = ParserConfig::default();
-        cfg.max_document_length = 64;
+        let cfg = ParserConfig {
+            max_document_length: 64,
+            ..ParserConfig::default()
+        };
         let mut r = BufReader::new(yaml.as_bytes());
         let _ = from_async_reader_with_config::<_, Pkg>(&mut r, &cfg)
             .await
-            .err()
-            .expect("expected parse error after truncation");
+            .expect_err("expected parse error after truncation");
     }
 
     #[test]
