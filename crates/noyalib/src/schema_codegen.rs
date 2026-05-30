@@ -61,7 +61,7 @@ use crate::value::Value;
 ///
 /// ```toml
 /// [dependencies]
-/// noyalib = { version = "0.0.1", features = ["schema"] }
+/// noyalib = { version = "0.0.6", features = ["schema"] }
 /// schemars = "1.2"
 /// ```
 ///

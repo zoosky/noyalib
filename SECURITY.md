@@ -61,6 +61,18 @@ stream **should** call `max_frame_size(_)` to a sane upper bound;
 the default `None` matches the trust contract of a process-local
 in-memory consumer.
 
+#### `max_depth` guard correctness (issue #46)
+
+The `max_depth` guard above relies on balanced increment /
+decrement of the parser's internal depth counter on every
+code path. Two correctness bugs were patched in v0.0.6 — one
+that made `from_str::<Value>` falsely report
+`RecursionLimitExceeded` on shallow `pnpm-lock.yaml` inputs,
+and one in the no-span loader path that incremented depth
+without ever checking the limit. See
+[`doc/POLICIES.md` § Resource-limit gates](doc/POLICIES.md#resource-limit-gates)
+for the full treatment.
+
 ### Supply Chain
 
 - Runtime deps audited (`cargo-deny` in CI): license validation, advisory checks, source verification.

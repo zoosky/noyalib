@@ -179,6 +179,40 @@ the shared parser limits:
   instead, required for downstreams like `sval_json` that
   reject NaN / ±∞.
 
+#### `max_depth` guard correctness (fixed in v0.0.6 / issue #46)
+
+The `max_depth` limit above relies on **balanced** increment /
+decrement of `self.depth` along every code path. Two
+correctness bugs that made the guard either over- or
+under-count were patched in v0.0.6:
+
+- *Over-count, false-positive.* `StreamingMapAccess`'s
+  iterators did not check the access object's `finished` flag.
+  Serde visitors that called `next_entry` after `Ok(None)` —
+  `ValueVisitor::visit_map` does this — re-entered the
+  iterator, read the next event from the **parent** mapping,
+  and treated it as the inner exhausted child's. The
+  recursive `deserialize_any` on each spilled value inflated
+  `self.depth` by one per empty flow `{}`, so a
+  `pnpm-lock.yaml`-shaped input with N consecutive `{}` hit
+  the limit at exactly N = `max_depth`. Fixed: explicit
+  `if self.finished { return Ok(None) }` guards on the three
+  iterators; balanced decrement on `Ok` *and* `Err` in
+  `deserialize_any` / `_seq` / `_map`.
+- *Under-count, silent bypass.* The `NoSpanLoader` path
+  (value-target fast path, `no_std` multi-document loading)
+  incremented `self.depth` on `SequenceStart` / `MappingStart`
+  but **did not compare** against `max_depth`. Adversarial
+  deeply-nested input through that path could consume stack
+  without ever firing the documented guard. Fixed: mirror
+  the span loader's check.
+
+Regression suite: `crates/noyalib/tests/issue_46.rs` — 10
+tests including a 50 000-package full `pnpm-lock-v9` shape,
+3 000 consecutive empty flow mappings, deterministic
+depth-cliff probe at `n ∈ [100, 128, 129, 130, 200, 500,
+1000]`, and a 200-level-deep sequence for the no-span path.
+
 ### Audit pipeline
 
 Each PR runs:

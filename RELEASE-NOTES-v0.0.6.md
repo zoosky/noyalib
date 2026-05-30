@@ -116,6 +116,49 @@ Folded into the v0.0.5 + v0.0.6 cuts:
   `yaml-spanned`, with optional `serde-saphyr` via the
   `compare-saphyr` feature.
 
+## Bug fixes
+
+### `pnpm-lock.yaml` recursion-limit false positive (issue #46)
+
+`from_str::<Value>` on a `pnpm-lock.yaml`-shaped input failed
+with `Error::RecursionLimitExceeded { depth: 129 }` even when
+the document was only a few levels deep. Root cause:
+`StreamingMapAccess::next_key_seed` did not check the access
+object's `finished` flag, so serde visitors that call
+`next_entry` after `Ok(None)` — `ValueVisitor::visit_map` does
+this — read the next event from the **parent** mapping and
+treated it as belonging to the now-exhausted child. The
+recursive `deserialize_any` on each spilled value inflated
+`self.depth` by exactly one per empty flow `{}`, hitting
+`max_depth + 1` after 128 entries.
+
+Fix: `finished`-guard early-returns in the three
+`StreamingMapAccess` / `StreamingSeqAccess` iterators, plus
+balanced `depth` decrement on both `Ok` and `Err` in
+`deserialize_any` / `deserialize_seq` / `deserialize_map` so
+a failed inner visit can't leak depth either.
+
+Companion audit finding: the `NoSpanLoader` path
+(`crates/noyalib/src/parser/loader.rs`) — used by
+`from_str::<Value>`'s value-target fast path and by `no_std`
+multi-document loading — incremented `self.depth` on
+`SequenceStart` / `MappingStart` but **did not check**
+against `max_depth` (the span-tracked loader does).
+Adversarial deeply-nested input through that path could
+consume stack without ever firing `RecursionLimitExceeded`.
+Now mirrored from the span loader.
+
+10 regression tests in `crates/noyalib/tests/issue_46.rs`:
+50 000-package full `pnpm-lock-v9` shape, 3 000 consecutive
+empty flow mappings, deterministic depth-cliff probe at
+`n ∈ [100, 128, 129, 130, 200, 500, 1000]`, complex
+peer-dependency keys, 200-level-deep sequence for the no-span
+path.
+
+No API change. Documents that previously failed with
+`RecursionLimitExceeded` now parse cleanly; documents that
+previously parsed are unchanged.
+
 ## Compatibility
 
 * MSRV unchanged from v0.0.5 (1.85, edition 2024).
@@ -123,6 +166,8 @@ Folded into the v0.0.5 + v0.0.6 cuts:
 * All new functionality is gated behind opt-in Cargo features
   (`recovery`, `sval`, `tokio`); no impact on existing call
   sites that don't enable them.
+* Issue #46 fix + no-span depth-check fix are pure bug fixes
+  — no API change.
 
 ## Acknowledgements
 
