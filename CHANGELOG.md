@@ -5,11 +5,18 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v0.0.6 work-in-progress
+## [Unreleased]
+
+(Nothing yet — `[v0.0.6]` is the cut.)
+
+## [v0.0.6] — 2026-05-30
 
 The **Ecosystem Integration** cut. Lands the four remaining
-open issues from the v0.0.6 milestone (#22, #24, #25, #33) and
-closes out the leftover stabilisation checklist (#19).
+open issues from the v0.0.6 milestone (#22, #24, #25, #33),
+closes out the leftover stabilisation checklist (#19), the
+i18n hooks (#18), the user-reported pnpm-lock recursion bug
+(#46), and the OpenSSF Scorecard hardening pass that lifts
+the score from 6.5/10 to ~9/10.
 
 ### Fixed — streaming deserializer depth leak on empty flow mappings (issue #46)
 
