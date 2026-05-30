@@ -58,11 +58,12 @@ on:
         type: boolean
         default: true
 
+# Least-privilege default: top-level workflow only reads.
+# The jobs that need write scope (release creation, GHCR push,
+# npm OIDC, attestation upload) declare it locally — see the
+# per-job `permissions:` blocks below.
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
-  packages: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -73,6 +74,8 @@ jobs:
   create-release:
     name: Create GitHub Release skeleton
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # creates the GitHub Release object
     outputs:
       version: ${{ steps.parse.outputs.version }}
       source_date_epoch: ${{ steps.parse.outputs.source_date_epoch }}
@@ -113,6 +116,10 @@ jobs:
     name: Build (${{ matrix.target }})
     needs: create-release
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write       # uploads .tar.* / .zip assets to the release
+      id-token: write       # Fulcio keyless signing of release artefacts
+      attestations: write   # SLSA L3 build-provenance attestation
     strategy:
       fail-fast: false
       matrix:
@@ -307,7 +314,7 @@ jobs:
           done
 
       - name: Attest build provenance (SLSA L3)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-path: |
             ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.tar.gz
@@ -318,7 +325,7 @@ jobs:
             ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}-debuginfo.tar.gz
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
 
       - name: Sign artefacts (keyless)
         env:
@@ -365,6 +372,10 @@ jobs:
     name: macOS Universal Binary
     needs: [create-release, build-release]
     runs-on: macos-14
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       VERSION:      ${{ needs.create-release.outputs.version }}
       ARCHIVE_BASE: noyalib-${{ needs.create-release.outputs.version }}-universal-apple-darwin
@@ -413,12 +424,12 @@ jobs:
           shasum -a 512 "${ARCHIVE_BASE}.tar.gz" > "${ARCHIVE_BASE}.tar.gz.sha512"
 
       - name: Attest provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-path: ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.tar.gz
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
 
       - name: Sign
         env:
@@ -451,6 +462,8 @@ jobs:
     name: Reproducible build
     needs: [create-release, build-release]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       TARGET:            x86_64-unknown-linux-gnu
       VERSION:           ${{ needs.create-release.outputs.version }}
@@ -514,6 +527,10 @@ jobs:
     needs: [create-release, build-release, lipo-universal, verify-reproducible]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # finalise GitHub Release notes
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -547,9 +564,11 @@ jobs:
     needs: [create-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # external tap repo write via HOMEBREW_TAP_TOKEN
     steps:
       - name: Bump formula
-        uses: mislav/bump-homebrew-formula-action@v3
+        uses: mislav/bump-homebrew-formula-action@56a283fa15557e9abaa4bdb63b8212abc68e655c # v3
         with:
           formula-name:    noyalib
           formula-path:    Formula/noyalib.rb
@@ -568,6 +587,8 @@ jobs:
     needs: [create-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # external AUR push via AUR_SSH_PRIVATE_KEY
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -592,7 +613,7 @@ jobs:
               pkg/arch/PKGBUILD.template > /tmp/PKGBUILD
 
       - name: Push to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3
+        uses: KSXGitHub/github-actions-deploy-aur@a97f56a8425a7a7f3b8c58607f769c69b089cadb # v3
         with:
           pkgname:        noyalib-bin
           pkgbuild:       /tmp/PKGBUILD
@@ -607,6 +628,8 @@ jobs:
     needs: [create-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # external bucket push via SCOOP_BUCKET_TOKEN
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -626,7 +649,7 @@ jobs:
               pkg/windows/scoop/noyalib.json > /tmp/noyalib.json
 
       - name: Push to Scoop bucket
-        uses: ScoopInstaller/GithubActions@v2
+        uses: ScoopInstaller/GithubActions@37a17b993c5ae4ae44fdc47379eb67010c800323 # v2.0.0
         with:
           token:    ${{ secrets.SCOOP_BUCKET_TOKEN }}
           bucket:   sebastienrousseau/scoop-bucket
@@ -638,6 +661,8 @@ jobs:
     needs: [create-release, build-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # uploads .vsix to the GitHub Release
     env:
       VERSION: ${{ needs.create-release.outputs.version }}
     steps:
@@ -645,7 +670,7 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache:        'npm'
@@ -713,7 +738,7 @@ jobs:
         with:
           version: 'latest'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -744,7 +769,7 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -765,6 +790,11 @@ jobs:
     needs: [create-release, github-release]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write      # push image manifest to ghcr.io
+      id-token: write      # cosign keyless signing of the image
+      attestations: write  # SLSA L3 image provenance
     strategy:
       fail-fast: false
       matrix:
@@ -777,16 +807,16 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push (multi-arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context:    .
           file:       ${{ matrix.image.dockerfile }}

@@ -112,9 +112,10 @@ Folded into the v0.0.5 + v0.0.6 cuts:
 * `CHANGELOG.md` updated with all changes since v0.0.1 —
   present.
 * Benchmark suite — `crates/noyalib/benches/comparison.rs`
-  compares against `serde_yaml_ng`, `yaml-rust2`, `serde_yml`,
+  compares against `serde_yaml_ng`, `yaml-rust2`,
   `yaml-spanned`, with optional `serde-saphyr` via the
-  `compare-saphyr` feature.
+  `compare-saphyr` feature. (`serde_yml` was retired from the
+  comparison in v0.0.6 — see the OpenSSF Scorecard pass below.)
 
 ## Bug fixes
 

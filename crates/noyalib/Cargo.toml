@@ -376,10 +376,12 @@ rust-yaml = "0.0.5"
 # `crates/noyalib/benches/comparison.rs` for head-to-head Rust
 # YAML benchmarks. See `doc/BENCHMARKS.md` for measured numbers.
 #
-# `serde_yml` is the maintainer's prior crate (a `serde_yaml` 0.9
-# fork). `yaml-spanned` is the closest other span-tracking parser
-# in the ecosystem.
-serde_yml = "0.0"
+# `yaml-spanned` is the closest other span-tracking parser
+# in the ecosystem. (`serde_yml` — the maintainer's prior crate
+# — was previously benched here; it was retired in v0.0.6 after
+# RUSTSEC-2025-0068 flagged it unsound + unmaintained so the
+# OpenSSF Scorecard Vulnerabilities check stays clean. The
+# `serde_yaml_ng` comparison row covers the same axis.)
 yaml-spanned = "0.0"
 # Ecosystem interop verification — proves noyalib's
 # `Deserializer<'de>` works with the standard serde wrappers

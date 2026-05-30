@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Dependabot configuration for `noyalib`.
+#
+# Three ecosystems are tracked:
+#
+# 1. `cargo` — workspace Cargo.toml + every crate manifest. Weekly
+#    runs (Monday 06:00 UTC). Grouped updates so a serde / clap
+#    bump arrives as one PR not five.
+# 2. `github-actions` — every workflow under `.github/workflows/`.
+#    Weekly runs. Updates the SHA pin alongside the version tag
+#    so the OpenSSF Scorecard `Pinned-Dependencies` check stays
+#    green.
+# 3. `npm` — the `pkg/npm-mcp-wrapper/` directory which ships the
+#    `noyalib-mcp` npm wrapper. Weekly runs.
+#
+# Reference: https://docs.github.com/en/code-security/dependabot
+
+version: 2
+updates:
+  # ── Cargo workspace ──────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps(cargo)"
+      include: scope
+    labels:
+      - dependencies
+      - rust
+    # Group related ecosystems into single PRs so reviewers don't
+    # drown in serde-version-bump churn.
+    groups:
+      serde:
+        patterns:
+          - "serde*"
+      clap:
+        patterns:
+          - "clap*"
+      miette-stack:
+        patterns:
+          - "miette*"
+          - "thiserror*"
+      tokio-stack:
+        patterns:
+          - "tokio*"
+          - "bytes"
+          - "futures*"
+      proc-macro:
+        patterns:
+          - "syn"
+          - "quote"
+          - "proc-macro2"
+      criterion:
+        patterns:
+          - "criterion*"
+          - "plotters*"
+      yaml-competitors:
+        patterns:
+          - "yaml-*"
+          - "serde_yaml*"
+          - "serde_yml*"
+          - "saphyr*"
+          - "rust-yaml"
+    # Workspace-private crates are auto-bumped via `cargo
+    # workspaces version` at release time, not by Dependabot.
+    ignore:
+      - dependency-name: "noyalib*"
+      - dependency-name: "noya-cli"
+
+  # ── GitHub Actions ──────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels:
+      - dependencies
+      - github_actions
+    groups:
+      actions:
+        patterns:
+          - "actions/*"
+      sigstore:
+        patterns:
+          - "sigstore/*"
+      rust-toolchain:
+        patterns:
+          - "dtolnay/*"
+          - "Swatinem/*"
+          - "taiki-e/*"
+
+  # ── npm wrapper (`pkg/npm-mcp-wrapper`) ─────────────────────────
+  - package-ecosystem: npm
+    directory: /pkg/npm-mcp-wrapper
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(npm)"
+      include: scope
+    labels:
+      - dependencies
+      - javascript

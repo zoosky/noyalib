@@ -488,25 +488,31 @@ Headline numbers (Apple M4 / aarch64, Rust 1.95 stable,
 `--release` with LTO=fat, codegen-units=1, panic=abort,
 criterion `--warm-up-time 2 --measurement-time 4`):
 
-| Fixture | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` | vs `serde_yml` | vs `yaml-spanned` | vs `serde-saphyr` |
-|---|---:|---:|---:|---:|---:|---:|
-| Deserialise simple (3 fields) | **1.40 µs** | **1.84×** | 1.36× | **1.96×** | 1.69× | **2.00×** |
-| Deserialise nested (20 fields) | **9.66 µs** | **1.55×** | 1.25× | **1.63×** | **1.60×** | **1.76×** |
-| Deserialise large_list (500 items) | **920 µs** | **1.42×** | 1.19× | **1.48×** | **1.38×** | **1.69×** |
-| Deserialise github_actions (deep + comments) | **46.4 µs** | **1.66×** | 1.25× | **1.72×** | **1.74×** | **1.73×** |
-| Deserialise k8s multi-document | **85.1 µs** | **1.42×** | 1.11× | — | — | — |
-| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | — | — | — | — |
-| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | — | — | — | — |
-| Serialise simple | **290 ns** | **4.34×** | — | — | — | — |
-| Serialise nested | **2.25 µs** | **3.00×** | — | — | — | — |
-| Round-trip nested | **12.0 µs** | **1.83×** | — | — | — | — |
-| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | — | — | — | — | 9.2× over memchr loop |
-| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | — | — | — | — | 2.5× over stdlib |
+| Fixture | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` | vs `yaml-spanned` | vs `serde-saphyr` |
+|---|---:|---:|---:|---:|---:|
+| Deserialise simple (3 fields) | **1.40 µs** | **1.84×** | 1.36× | 1.69× | **2.00×** |
+| Deserialise nested (20 fields) | **9.66 µs** | **1.55×** | 1.25× | **1.60×** | **1.76×** |
+| Deserialise large_list (500 items) | **920 µs** | **1.42×** | 1.19× | **1.38×** | **1.69×** |
+| Deserialise github_actions (deep + comments) | **46.4 µs** | **1.66×** | 1.25× | **1.74×** | **1.73×** |
+| Deserialise k8s multi-document | **85.1 µs** | **1.42×** | 1.11× | — | — |
+| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | — | — | — |
+| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | — | — | — |
+| Serialise simple | **290 ns** | **4.34×** | — | — | — |
+| Serialise nested | **2.25 µs** | **3.00×** | — | — | — |
+| Round-trip nested | **12.0 µs** | **1.83×** | — | — | — |
+| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | — | — | — | 9.2× over memchr loop |
+| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | — | — | — | 2.5× over stdlib |
+
+(`serde_yml` was previously a comparison column — retired in
+v0.0.6 since RUSTSEC-2025-0068 flagged it unsound + unmaintained;
+the bench arm was dropped so the OpenSSF Scorecard Vulnerabilities
+check stays clean. The headline ratios above are unchanged for
+the remaining four competitors.)
 
 `noyalib` is faster than **every other pure-Rust YAML library on
-every deserialize fixture measured**. Speedup ranges across the five
+every deserialize fixture measured**. Speedup ranges across the four
 competitors above: **1.69×–2.00×** vs `serde-saphyr`,
-**1.48×–1.96×** vs `serde_yml`, **1.42×–1.84×** vs `serde_yaml_ng`,
+**1.42×–1.84×** vs `serde_yaml_ng`,
 **1.38×–1.74×** vs `yaml-spanned`, **1.11×–1.36×** vs `yaml-rust2`.
 Serialize is **3.00×–4.34×** ahead of `serde_yaml_ng`.
 
@@ -1478,7 +1484,13 @@ value.interpolate_properties_lossy(&map);
 - `cargo vet` clean — every dependency in the graph has a local
   audit or imported coverage from Mozilla / Google / Bytecode
   Alliance / Embark / ISRG audit sets.
-- `OpenSSF Scorecard` tracked, badge in the header.
+- `OpenSSF Scorecard` tracked, badge in the header — v0.0.6
+  lifts the score from `6.5/10` to `~9/10` by demoting workflow
+  tokens to least privilege, pinning every GitHub Action by
+  SHA, wiring Dependabot, and retiring the unmaintained
+  `serde_yml` / `libyml` bench dev-deps. See
+  [`doc/POLICIES.md` § OpenSSF Scorecard posture](doc/POLICIES.md#openssf-scorecard-posture)
+  for the per-check breakdown.
 - `SLSA L3` build provenance + sigstore signing on every release.
 - `REUSE.software` 3.3 compliant — every source file carries
   SPDX headers.

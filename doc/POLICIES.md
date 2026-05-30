@@ -243,6 +243,26 @@ Weekly (or on-demand) jobs:
 - Verification recipe in
   [`pkg/VERIFY.md`](../pkg/VERIFY.md).
 
+### OpenSSF Scorecard posture
+
+The scorecard report lives at
+[`scorecard.dev/viewer/?uri=github.com/sebastienrousseau/noyalib`](https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/noyalib).
+v0.0.6 lifts the score from `6.5/10` to `~9/10` by closing
+every check that is fixable in source — the four remaining
+items below require external action and are tracked here so
+contributors can see the residual gap:
+
+| Check | Status | Action |
+|---|---|---|
+| Token-Permissions | ✓ fixed | Top-level workflow tokens demoted to `contents: read`; writes scoped per-job. |
+| Pinned-Dependencies | ✓ fixed | Every GitHub Action `uses:` is pinned by full commit SHA, with the human-readable tag in a trailing comment. |
+| Dependency-Update-Tool | ✓ fixed | [`.github/dependabot.yml`](../.github/dependabot.yml) covers `cargo`, `github-actions`, and `npm` ecosystems on a weekly schedule. |
+| Vulnerabilities | ✓ fixed | `serde_yml` / `libyml` dropped from the bench dev-deps in v0.0.6 (RUSTSEC-2025-0067 + -0068); `Cargo.lock` is now clean. |
+| **CII-Best-Practices** | external | Apply for the OpenSSF Best Practices Badge at <https://www.bestpractices.dev/>. The self-assessment maps directly onto noyalib's existing CI / policies posture; tracked for v0.1 milestone. |
+| **Code-Review** | external | Single-maintainer project. The natural fix is a second committer + branch-protection rule requiring review; until then the score will stay 0 by design. |
+| **Branch-Protection** | external | Repo-admin UI configuration required: enable "require approvals", "require codeowners review", "last push approval". |
+| **Contributors** | external | Improves organically as the project gains maintainers / contributing organisations. |
+
 ### Disclosure
 
 Report security issues to **sebastian.rousseau@gmail.com**.

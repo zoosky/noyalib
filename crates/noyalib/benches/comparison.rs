@@ -110,13 +110,12 @@ fn bench_deserialize(c: &mut Criterion) {
             });
         });
 
-        // `serde_yml` — the maintainer's prior crate (a `serde_yaml` 0.9
-        // fork). Apples-to-apples Value comparison.
-        group.bench_with_input(BenchmarkId::new("serde_yml", name), yaml, |b, input| {
-            b.iter(|| {
-                let _: serde_yml::Value = serde_yml::from_str(black_box(input)).unwrap();
-            });
-        });
+        // (`serde_yml` was previously benched here as the maintainer's
+        // prior crate. RUSTSEC-2025-0068 marked it unsound +
+        // unmaintained; the comparison row was retired so it no
+        // longer appears in `Cargo.lock` and the OpenSSF Scorecard
+        // Vulnerabilities check is clean. `serde_yaml_ng` above
+        // covers the equivalent comparison axis.)
 
         // `yaml-spanned` — the closest other span-tracking parser in
         // the ecosystem. Returns a sequence of spanned values.
