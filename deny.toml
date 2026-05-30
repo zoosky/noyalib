@@ -2,7 +2,13 @@
 all-features = true
 
 [advisories]
-unmaintained = "workspace"
+# `unmaintained = "workspace"` was removed in cargo-deny v0.20
+# (EmbarkStudios/cargo-deny#611) — the unmaintained-crate signal
+# is now delivered via RustSec advisory entries themselves
+# (`unmaintained: main` / `unsound`), so the dedicated knob is
+# redundant. Severity flow stays the same: any RustSec advisory
+# below `severity-threshold` (default `low`) fails the build
+# unless listed in `ignore` below.
 yanked = "warn"
 # Bench-only competitor surface — these crates are never compiled
 # into a release artefact. They appear in `crates/noyalib/Cargo.toml`
