@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: EmbarkStudios/cargo-deny-action@d8395c1c8c9df74d968a3bcbba5533e396ff43cf # v2
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
 
   fuzz-diff:
     name: Differential fuzz (10s smoke)
@@ -311,7 +311,9 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@50b4a718b59c718df4ef27a3b445f86cd57b9f00 # v2.80.0
+        with:
+          tool: cargo-llvm-cov
       - name: "Coverage report (gates: 96% fn / 93% region / 94% line)"
         env:
           NOYALIB_COVERAGE: '1'

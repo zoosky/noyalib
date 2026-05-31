@@ -22,7 +22,11 @@
 #     --check ci/*.yaml
 
 # ── Build stage ──────────────────────────────────────────────────
-FROM rust:1.75-bookworm AS build
+# Rust 1.85-bookworm matches the workspace MSRV (raised in v0.0.5
+# when the edition bumped to 2024). Digest pinned for OpenSSF
+# Scorecard Pinned-Dependencies; Dependabot's `docker` ecosystem
+# bumps it on its weekly cadence.
+FROM rust:1.85-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS build
 
 WORKDIR /src
 COPY . .
@@ -39,7 +43,7 @@ RUN cargo build --release --locked \
     --bin noyafmt --bin noyavalidate
 
 # ── Runtime stage ────────────────────────────────────────────────
-FROM gcr.io/distroless/cc-debian12:nonroot
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:bd2899c12b335c827750ccf2359879eab09c09b206023dcebea408947d54127c
 
 LABEL org.opencontainers.image.title="noyafmt"
 LABEL org.opencontainers.image.description="Pure-Rust YAML 1.2 formatter (lossless CST). See ghcr.io/sebastienrousseau/noyalib-mcp for the MCP server image."

@@ -16,7 +16,7 @@
 #                                          binary from a GitHub
 #                                          Release on first run)
 
-FROM rust:1.75-bookworm AS build
+FROM rust:1.85-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS build
 
 WORKDIR /src
 COPY . .
@@ -29,7 +29,7 @@ RUN cargo build --release --locked \
     --manifest-path crates/noyalib-mcp/Cargo.toml
 
 # ── Runtime stage ────────────────────────────────────────────────
-FROM gcr.io/distroless/cc-debian12:nonroot
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:bd2899c12b335c827750ccf2359879eab09c09b206023dcebea408947d54127c
 
 LABEL org.opencontainers.image.title="noyalib-mcp"
 LABEL org.opencontainers.image.description="MCP server for noyalib YAML tools — parse, format, get, set, validate over JSON-RPC stdio."
