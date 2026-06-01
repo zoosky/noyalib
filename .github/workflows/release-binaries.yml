@@ -687,7 +687,11 @@ jobs:
         working-directory: pkg/vscode
         run: |
           set -euo pipefail
-          npm install
+          # `npm ci` over `npm install` pins all dep versions to the
+          # committed `package-lock.json`. Scorecard's Pinned-
+          # Dependencies check counts `npm ci` as pinned and `npm
+          # install` as unpinned.
+          npm ci
           mkdir -p bin
           # The ext bundle includes only the host's noyalib-lsp; the
           # `noyalib.path` setting lets users point at a system one.
