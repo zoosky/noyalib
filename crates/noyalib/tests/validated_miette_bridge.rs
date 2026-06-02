@@ -8,6 +8,7 @@
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used)]
 
+#[cfg(any(feature = "garde", feature = "validator"))]
 use noyalib::Spanned;
 
 #[cfg(feature = "garde")]

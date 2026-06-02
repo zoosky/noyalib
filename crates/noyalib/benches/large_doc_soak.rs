@@ -24,9 +24,10 @@
 
 #![allow(missing_docs, unused_results)]
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use noyalib::{StreamingDeserializer, Value, from_str};
 use serde::Deserialize;
+use std::hint::black_box;
 use std::time::Duration;
 
 /// Build a synthetic mapping-of-records YAML document of approximately

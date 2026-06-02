@@ -15,8 +15,9 @@
 
 #![allow(missing_docs, unused_results)]
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use noyalib::simd::find_any_of;
+use std::hint::black_box;
 
 fn scalar_find_any_of(haystack: &[u8], needles: &[u8]) -> Option<usize> {
     for (i, &b) in haystack.iter().enumerate() {

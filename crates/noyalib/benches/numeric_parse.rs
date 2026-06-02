@@ -20,8 +20,9 @@
 
 #![allow(missing_docs, unused_results)]
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use noyalib::simd::{parse_decimal_i64, parse_decimal_u64};
+use std::hint::black_box;
 
 fn bench_parse_u64(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_decimal_u64");

@@ -15,7 +15,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use noyalib::{
     // Anchors
     ArcAnchor,
@@ -82,6 +82,7 @@ use noyalib::{
     validate_yaml_json_schema,
 };
 use serde::{Deserialize, Serialize};
+use std::hint::black_box;
 
 // ============================================================================
 // Test Data

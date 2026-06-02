@@ -25,6 +25,10 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
+[[exemptions.alloca]]
+version = "0.4.0"
+criteria = "safe-to-run"
+
 [[exemptions.annotate-snippets]]
 version = "0.12.15"
 criteria = "safe-to-deploy"
@@ -39,27 +43,63 @@ version = "1.11.1"
 criteria = "safe-to-deploy"
 suggest = false
 
+[[exemptions.clap_mangen]]
+version = "0.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.criterion]]
+version = "0.8.2"
+criteria = "safe-to-run"
+
+[[exemptions.criterion-plot]]
+version = "0.8.2"
+criteria = "safe-to-run"
+
+[[exemptions.foldhash]]
+version = "0.2.0"
+criteria = "safe-to-run"
+
 [[exemptions.futures-sink]]
 version = "0.3.32"
 criteria = "safe-to-deploy"
 suggest = false
 
 [[exemptions.granit-parser]]
-version = "0.0.2"
+version = "0.0.3"
 criteria = "safe-to-deploy"
+
+[[exemptions.hashbrown]]
+version = "0.16.1"
+criteria = "safe-to-run"
 
 [[exemptions.hashbrown]]
 version = "0.17.1"
 criteria = "safe-to-deploy"
 suggest = false
 
+[[exemptions.hashlink]]
+version = "0.11.0"
+criteria = "safe-to-run"
+
 [[exemptions.indexmap]]
 version = "2.14.0"
 criteria = "safe-to-deploy"
 suggest = false
 
+[[exemptions.itertools]]
+version = "0.13.0"
+criteria = "safe-to-run"
+
+[[exemptions.page_size]]
+version = "0.6.0"
+criteria = "safe-to-run"
+
 [[exemptions.rust-yaml]]
 version = "0.0.5"
+criteria = "safe-to-run"
+
+[[exemptions.rust-yaml]]
+version = "1.1.0"
 criteria = "safe-to-run"
 
 [[exemptions.rustc-hash]]
@@ -68,8 +108,13 @@ criteria = "safe-to-deploy"
 suggest = false
 
 [[exemptions.serde-saphyr]]
-version = "0.0.26"
+version = "0.0.27"
 criteria = "safe-to-deploy"
+
+[[exemptions.serde_json]]
+version = "1.0.150"
+criteria = "safe-to-deploy"
+suggest = false
 
 [[exemptions.sval]]
 version = "2.20.0"
@@ -90,3 +135,19 @@ suggest = false
 version = "0.7.18"
 criteria = "safe-to-deploy"
 suggest = false
+
+[[exemptions.winapi]]
+version = "0.3.9"
+criteria = "safe-to-run"
+
+[[exemptions.winapi-i686-pc-windows-gnu]]
+version = "0.4.0"
+criteria = "safe-to-run"
+
+[[exemptions.winapi-x86_64-pc-windows-gnu]]
+version = "0.4.0"
+criteria = "safe-to-run"
+
+[[exemptions.yaml-rust2]]
+version = "0.11.0"
+criteria = "safe-to-run"
