@@ -374,7 +374,7 @@ mod tests {
             p,
             Pkg {
                 name: "noyalib".into(),
-                version: "0.0.6".into(),
+                version: "0.0.7".into(),
             }
         );
     }

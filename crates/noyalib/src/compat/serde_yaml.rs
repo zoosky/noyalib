@@ -48,7 +48,7 @@
 //! # Cargo.toml — before
 //! serde_yaml = "0.9"
 //! # Cargo.toml — after
-//! noyalib = { version = "0.0.6", features = ["compat-serde-yaml"] }
+//! noyalib = { version = "0.0.7", features = ["compat-serde-yaml"] }
 //! ```
 //!
 //! ```rust,ignore
