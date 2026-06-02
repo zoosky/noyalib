@@ -7,7 +7,56 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet — `[v0.0.6]` is the cut.)
+(Nothing yet — `[v0.0.7]` is the cut.)
+
+## [v0.0.7] — 2026-06-02
+
+The **Supply-chain Hardening** cut. Closes three CVEs in the
+VS Code extension's npm tree (xml2js, qs, tmp — all dragged in
+by the legacy `vsce` devDep, which was removed), tightens the
+release pipeline with `npm ci` + exact-pinned lockfile, and
+folds in the routine Dependabot backlog: serde, clap, criterion
+0.8 (with the `std::hint::black_box` migration across 14 bench
+files), yaml-competitors, the actions group (10 actions headed
+by checkout v5 → v6), plus eight standalone action bumps and
+the sigstore cosign-installer v3 → v4 bump.
+
+### Security
+
+- **Drop legacy `vsce`.** `pkg/vscode/devDependencies` removed;
+  the release pipeline already used `npx --yes @vscode/vsce`,
+  so the legacy package was inert. Clears GHSA-776f-qx25-q3cc
+  (xml2js), GHSA-q8mj-m7cp-5q26 (qs), and GHSA-ph9p-34f9-6g65
+  (tmp). [#70]
+- **`npm install` → `npm ci`** in the `vscode-extension` job
+  with a committed, exact-pinned `package-lock.json`. [#69]
+- **cosign-installer** upgraded to v4.1.2; release artefact
+  signing flow unchanged. [#63]
+- **Auto-approve Dependabot** workflow added to satisfy
+  OpenSSF Scorecard's `Code-Review` check on a
+  solo-maintainer project. [#64]
+
+### Changed
+
+- **criterion 0.5.1 → 0.8.2.** All 14 bench files migrated from
+  `criterion::black_box` to `std::hint::black_box` (criterion
+  0.8 deprecated the re-export). [#80]
+- **yaml-competitors group bump** — yaml-rust2 0.9 → 0.11,
+  rust-yaml 0.0.5 → 1.1; both are bench/comparison-only deps,
+  not part of the runtime tree. [#80]
+- **actions group bump (10 actions)** including checkout v5 →
+  v6, cache v4 → v5, configure-pages v4 → v6,
+  upload-pages-artifact v3 → v5, plus 6 others. [#80]
+- **clap_complete 4.5 → 4.6, clap_mangen 0.2 → 0.3** in
+  noya-cli and xtask. [#80]
+- **Docker base** bumped from `rust:1.85-bookworm` to
+  `rust:1.96-bookworm` in all three Dockerfiles. [#62]
+
+### Fixed
+
+- **OpenSSF Scorecard Pinned-Dependencies** 9/10 → 10/10 by
+  exact-pinning every npm dep and switching to `npm ci`. [#66,
+  #69]
 
 ## [v0.0.6] — 2026-05-30
 
