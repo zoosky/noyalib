@@ -23,10 +23,10 @@
 #![allow(missing_docs, unused_results)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use noyalib::{StreamingDeserializer, from_str};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::hint::black_box;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]

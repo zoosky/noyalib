@@ -8,8 +8,8 @@
 #![allow(missing_docs, unused_results)]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use serde::{Deserialize, Serialize};
+use std::hint::black_box;
 
 // ── Test Data ────────────────────────────────────────────────────────
 

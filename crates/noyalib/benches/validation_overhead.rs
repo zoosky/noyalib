@@ -8,9 +8,9 @@
 #![allow(missing_docs, unused_results, clippy::unwrap_used)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use noyalib::{Spanned, from_str};
 use serde::Deserialize;
+use std::hint::black_box;
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
