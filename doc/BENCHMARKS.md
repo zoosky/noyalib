@@ -8,10 +8,6 @@ Rust 1.95 stable**, criterion `--warm-up-time 2 --measurement-time 4`.
 All libraries compiled with `--release` (LTO=fat, codegen-units=1,
 panic=abort). Run locally via `cargo bench --bench comparison`.
 
-> **Per-PR drift tracking** — [CodSpeed](https://codspeed.io/)
-> tracks every benchmark across every PR; regressions surface
-> in the *Run criterion benches under CodSpeed* CI job.
->
 > **PGO** — `cargo xtask pgo-build` runs the full LLVM
 > profile-guided optimisation pipeline (instrument → train against
 > the YAML test suite + `benches/fixtures/` → merge profdata →

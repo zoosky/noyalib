@@ -533,8 +533,7 @@ the SWAR pipeline explanation, parallel multi-doc scaling, and
 the project-metrics table — lives at
 **[`doc/BENCHMARKS.md`](doc/BENCHMARKS.md)**.
 
-Per-PR drift is tracked by [CodSpeed](https://codspeed.io/);
-algorithmic-complexity guarantees (`O(n)` parser, `O(d)`
+Algorithmic-complexity guarantees (`O(n)` parser, `O(d)`
 stack, etc.) live in
 [`POLICIES.md` §4](doc/POLICIES.md#4-performance--algorithmic-complexity).
 

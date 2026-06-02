@@ -154,30 +154,20 @@ jobs:
           COSIGN_YES: "true"
         run: |
           set -euo pipefail
-          # cosign v4 emits a sigstore protobuf bundle by default;
-          # without an explicit `--bundle` path the binary opens
-          # "" and dies with `create bundle file: open : no such
-          # file or directory`. We pass `--bundle <path>.bundle`
-          # alongside the legacy `--output-signature` / `--output-
-          # certificate` so the artefacts directory carries both
-          # formats: `.sig` + `.pem` for the existing
-          # `cosign verify-blob` flow documented in SECURITY.md,
-          # and `.bundle` for the modern sigstore verify path and
-          # for Scorecard's Signed-Releases provenance detection.
+          # cosign v4 deprecated `--output-signature` and
+          # `--output-certificate` — the flags are silently
+          # ignored and only `.bundle` is written. The bundle is
+          # a self-contained sigstore protobuf carrying both the
+          # signature and the Fulcio certificate, so verifiers
+          # use `cosign verify-blob --bundle <path>.bundle <file>`
+          # (see SECURITY.md). Scorecard's Signed-Releases check
+          # detects the bundle as a provenance asset.
           cd target/package
           for f in *.crate; do
-            cosign sign-blob \
-              --bundle "${f}.bundle" \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.pem" \
-              "$f"
+            cosign sign-blob --bundle "${f}.bundle" "$f"
           done
           cd -
-          cosign sign-blob \
-            --bundle "SBOM.txt.bundle" \
-            --output-signature "SBOM.txt.sig" \
-            --output-certificate "SBOM.txt.pem" \
-            SBOM.txt
+          cosign sign-blob --bundle "SBOM.txt.bundle" SBOM.txt
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -185,14 +175,10 @@ jobs:
           name: release-artifacts
           path: |
             target/package/*.crate
-            target/package/*.sig
-            target/package/*.pem
             target/package/*.bundle
             target/package/SHA256SUMS.txt
             target/package/SHA512SUMS.txt
             SBOM.txt
-            SBOM.txt.sig
-            SBOM.txt.pem
             SBOM.txt.bundle
           retention-days: 5
 
@@ -262,14 +248,10 @@ jobs:
             --title "noyalib $GITHUB_REF_NAME" \
             --notes-file RELEASE_NOTES.md \
             artifacts/target/package/*.crate \
-            artifacts/target/package/*.sig \
-            artifacts/target/package/*.pem \
             artifacts/target/package/*.bundle \
             artifacts/target/package/SHA256SUMS.txt \
             artifacts/target/package/SHA512SUMS.txt \
             artifacts/SBOM.txt \
-            artifacts/SBOM.txt.sig \
-            artifacts/SBOM.txt.pem \
             artifacts/SBOM.txt.bundle
 
   # ── Publish to crates.io ────────────────────────────────────────────
