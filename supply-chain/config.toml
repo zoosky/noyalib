@@ -45,7 +45,7 @@ criteria = "safe-to-deploy"
 suggest = false
 
 [[exemptions.granit-parser]]
-version = "0.0.2"
+version = "0.0.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.hashbrown]]
@@ -68,7 +68,7 @@ criteria = "safe-to-deploy"
 suggest = false
 
 [[exemptions.serde-saphyr]]
-version = "0.0.26"
+version = "0.0.27"
 criteria = "safe-to-deploy"
 
 [[exemptions.sval]]
@@ -88,5 +88,10 @@ suggest = false
 
 [[exemptions.tokio-util]]
 version = "0.7.18"
+criteria = "safe-to-deploy"
+suggest = false
+
+[[exemptions.serde_json]]
+version = "1.0.150"
 criteria = "safe-to-deploy"
 suggest = false
