@@ -15,7 +15,8 @@
 
 #![allow(missing_docs, unused_results)]
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use noyalib::cst::{format, parse_document};
 
 const SMALL: &str = "host: api.example.com\nport: 8080\n";

@@ -23,7 +23,8 @@
 
 #![allow(missing_docs, unused_results)]
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use noyalib::simd::{SimdScanner, StructuralIter, find_any_of};
 
 const STRUCTURAL_NEEDLES: &[u8] = b":-[]{}\n#";
