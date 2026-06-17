@@ -1014,6 +1014,45 @@ fn write_block_scalar(output: &mut String, s: &str, indent: usize, config: &Seri
     }
 }
 
+/// Whether a value can be safely rendered inside an `Auto`-mode flow
+/// collection. A flow collection may only contain scalars and other flow
+/// collections — a nested *block* collection would produce invalid YAML
+/// (`[a, - x]`). So in `Auto` mode the whole subtree must stay within the
+/// flow threshold for any ancestor to flow; otherwise we fall back to block.
+///
+/// `Tagged` values are conservatively treated as block-only: they carry
+/// anchors, custom tags, and the internal block-scalar/anchor magic tags that
+/// have no valid flow representation here.
+fn auto_flow_eligible(value: &Value, config: &SerializerConfig) -> bool {
+    match value {
+        Value::Sequence(s) => {
+            s.len() <= config.flow_threshold
+                && s.iter().all(|v| auto_flow_eligible(v, config))
+        }
+        Value::Mapping(m) => {
+            m.len() <= config.flow_threshold
+                && m.iter().all(|(_, v)| auto_flow_eligible(v, config))
+        }
+        Value::Tagged(_) => false,
+        _ => true,
+    }
+}
+
+/// Decide whether a collection of `len` items holding `values` should render
+/// in flow style under the active `config`.
+fn use_flow<'a, I>(len: usize, values: impl Fn() -> I, config: &SerializerConfig) -> bool
+where
+    I: Iterator<Item = &'a Value>,
+{
+    match config.flow_style {
+        FlowStyle::Block => false,
+        FlowStyle::Flow => true,
+        FlowStyle::Auto => {
+            len <= config.flow_threshold && values().all(|v| auto_flow_eligible(v, config))
+        }
+    }
+}
+
 fn write_sequence(
     output: &mut String,
     seq: &Sequence,
@@ -1025,6 +1064,10 @@ fn write_sequence(
     if seq.is_empty() {
         output.push_str("[]");
         return Ok(());
+    }
+
+    if use_flow(seq.len(), || seq.iter(), config) {
+        return write_flow_sequence(output, seq, config, depth);
     }
 
     for (i, value) in seq.iter().enumerate() {
@@ -1101,6 +1144,10 @@ fn write_mapping(
     if map.is_empty() {
         output.push_str("{}");
         return Ok(());
+    }
+
+    if use_flow(map.len(), || map.iter().map(|(_, v)| v), config) {
+        return write_flow_mapping(output, map, config, depth);
     }
 
     for (i, (key, value)) in map.iter().enumerate() {
@@ -1805,5 +1852,82 @@ mod tests {
             Err(Error::RecursionLimitExceeded { depth }) => assert!(depth > 128),
             _ => panic!("Expected RecursionLimitExceeded error, got {:?}", result),
         }
+    }
+
+    // Regression for #84: `flow_style` was stored but never consulted by the
+    // emit path, so `FlowStyle::Flow` / `Auto` silently produced block output.
+    #[test]
+    fn test_flow_style_flow_emits_inline_collections() {
+        let seq = Value::Sequence(vec![
+            Value::from(0),
+            Value::from(1),
+            Value::from(2),
+            Value::from(3),
+            Value::from(4),
+        ]);
+        let mut map = Mapping::new();
+        let _ = map.insert("a", Value::from(1));
+        let _ = map.insert("b", Value::from(2));
+        let _ = map.insert("c", Value::from(3));
+        let map = Value::Mapping(map);
+
+        let config = SerializerConfig::new().flow_style(FlowStyle::Flow);
+        assert_eq!(
+            to_string_with_config(&seq, &config).unwrap().trim_end(),
+            "[0, 1, 2, 3, 4]"
+        );
+        assert_eq!(
+            to_string_with_config(&map, &config).unwrap().trim_end(),
+            "{a: 1, b: 2, c: 3}"
+        );
+    }
+
+    #[test]
+    fn test_flow_style_auto_respects_threshold() {
+        let small = Value::Sequence((0..3).map(Value::from).collect());
+        let large = Value::Sequence((0..10).map(Value::from).collect());
+
+        let config = SerializerConfig::new()
+            .flow_style(FlowStyle::Auto)
+            .flow_threshold(4);
+
+        // Small collection (<= threshold) flows inline.
+        assert_eq!(
+            to_string_with_config(&small, &config).unwrap().trim_end(),
+            "[0, 1, 2]"
+        );
+        // Large collection (> threshold) stays block.
+        assert!(
+            to_string_with_config(&large, &config)
+                .unwrap()
+                .starts_with("- 0")
+        );
+    }
+
+    #[test]
+    fn test_flow_style_auto_falls_back_when_child_exceeds_threshold() {
+        // Outer has 2 items (<= threshold) but the inner sequence has 10
+        // (> threshold). Flowing the outer would emit an invalid block child
+        // inside flow, so Auto must keep the outer in block style.
+        let inner = Value::Sequence((0..10).map(Value::from).collect());
+        let outer = Value::Sequence(vec![Value::from(0), inner]);
+
+        let config = SerializerConfig::new()
+            .flow_style(FlowStyle::Auto)
+            .flow_threshold(4);
+        let out = to_string_with_config(&outer, &config).unwrap();
+        assert!(out.starts_with("- 0"), "outer should stay block: {out:?}");
+    }
+
+    #[test]
+    fn test_flow_style_block_is_default_unchanged() {
+        let seq = Value::Sequence((0..3).map(Value::from).collect());
+        // Default config (Block) and the no-config helper both stay block.
+        assert!(to_string(&seq).unwrap().starts_with("- 0"));
+        assert!(
+            to_string_with_config(&seq, &SerializerConfig::new())
+                .unwrap()
+                .starts_with("- 0")
+        );
     }
 }
