@@ -1026,12 +1026,10 @@ fn write_block_scalar(output: &mut String, s: &str, indent: usize, config: &Seri
 fn auto_flow_eligible(value: &Value, config: &SerializerConfig) -> bool {
     match value {
         Value::Sequence(s) => {
-            s.len() <= config.flow_threshold
-                && s.iter().all(|v| auto_flow_eligible(v, config))
+            s.len() <= config.flow_threshold && s.iter().all(|v| auto_flow_eligible(v, config))
         }
         Value::Mapping(m) => {
-            m.len() <= config.flow_threshold
-                && m.iter().all(|(_, v)| auto_flow_eligible(v, config))
+            m.len() <= config.flow_threshold && m.iter().all(|(_, v)| auto_flow_eligible(v, config))
         }
         Value::Tagged(_) => false,
         _ => true,
