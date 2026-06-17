@@ -7,7 +7,47 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet — `[v0.0.7]` is the cut.)
+(Nothing yet - `[v0.0.8]` is the cut.)
+
+## [v0.0.8] - 2026-06-17
+
+The **FlowStyle Fix** cut. Honors `SerializerConfig::flow_style` in the
+serializer so `FlowStyle::Flow` and `FlowStyle::Auto` finally emit
+inline collections (#84), folds in the batched Dependabot backlog
+(cargo, GitHub Actions, Docker base images), and updates the
+supply-chain gates for the new `proc-macro-error2` unmaintained
+advisory.
+
+No public API change. No MSRV change (still 1.85). The only behavior
+change is the FlowStyle fix: callers setting `Flow` or `Auto` now get
+inline output instead of silently getting block output.
+
+### Fixed
+
+- **`SerializerConfig::flow_style` is now honored.** `flow_style` and
+  `flow_threshold` were stored but never read by the emit path, so all
+  collections rendered as block regardless of config. `write_sequence`
+  and `write_mapping` now dispatch to the flow emitters: `Flow` is
+  always inline, `Auto` is inline within `flow_threshold` (default 4)
+  with a safe block fall-back for oversized subtrees, and `Block` is
+  unchanged. Adds four regression tests. [#84]
+
+### Changed
+
+- **Batched Dependabot bumps.** cargo: `clap_complete` 4.6.3 to 4.6.5,
+  `smallvec` 1.15.1 to 1.15.2, `memchr` 2.8.0 to 2.8.2. github-actions:
+  `actions/checkout` 6.0.2 to 6.0.3, `taiki-e/install-action` 2.81.1 to
+  2.81.8, `KSXGitHub/github-actions-deploy-aur` 3.0.1 to 4.1.3,
+  `docker/setup-buildx-action` 3.12.0 to 4.1.0, `docker/login-action`
+  3.7.0 to 4.2.0. docker: `rust:1.96-bookworm`, `debian:bookworm-slim`,
+  and `distroless/cc-debian12` digests re-pinned. [#85 to #96]
+
+### Security
+
+- **RUSTSEC-2026-0173** (`proc-macro-error2` unmaintained) ignored in
+  `deny.toml` and `.cargo/audit.toml`. Build-time only via
+  `validator_derive` to `validator`; never ships in an artefact.
+  Revisit when `validator` releases off `proc-macro-error2`.
 
 ## [v0.0.7] — 2026-06-02
 
