@@ -21,4 +21,10 @@ ignore = [
     # libyml — `libyml::string::yaml_string_extend` is unsound;
     # transitive via serde_yml. Same bench-only justification.
     "RUSTSEC-2025-0067",
+    # proc-macro-error2 is unmaintained (author confirmed). Build-time
+    # only via validator_derive -> validator (the `validate` feature);
+    # never ships in a release artefact. No maintained drop-in exists
+    # yet. Mirrors the same ignore in `deny.toml`. Revisit when
+    # validator releases off proc-macro-error2.
+    "RUSTSEC-2026-0173",
 ]
