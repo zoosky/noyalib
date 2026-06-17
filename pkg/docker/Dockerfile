@@ -26,7 +26,7 @@
 # when the edition bumped to 2024). Digest pinned for OpenSSF
 # Scorecard Pinned-Dependencies; Dependabot's `docker` ecosystem
 # bumps it on its weekly cadence.
-FROM rust:1.96-bookworm@sha256:13c186980fa33cc12759b429662a1322939dbe697484b7c33b47dd2698d28460 AS build
+FROM rust:1.96-bookworm@sha256:19817ead3289c8c631c73df281e18b59b172f6a31f4f563290f69cddd06c30e9 AS build
 
 WORKDIR /src
 COPY . .
@@ -43,7 +43,7 @@ RUN cargo build --release --locked \
     --bin noyafmt --bin noyavalidate
 
 # ── Runtime stage ────────────────────────────────────────────────
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:bd2899c12b335c827750ccf2359879eab09c09b206023dcebea408947d54127c
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:b0ae8e989418b458e0f25489bc3be523718938a2b70864cc0f6a00af1ddbd985
 
 LABEL org.opencontainers.image.title="noyafmt"
 LABEL org.opencontainers.image.description="Pure-Rust YAML 1.2 formatter (lossless CST). See ghcr.io/sebastienrousseau/noyalib-mcp for the MCP server image."
