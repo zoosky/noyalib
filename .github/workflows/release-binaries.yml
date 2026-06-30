@@ -80,7 +80,7 @@ jobs:
       version: ${{ steps.parse.outputs.version }}
       source_date_epoch: ${{ steps.parse.outputs.source_date_epoch }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
@@ -149,11 +149,11 @@ jobs:
       ARCHIVE_BASE:      noyalib-${{ needs.create-release.outputs.version }}-${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
         with:
           toolchain: stable
           targets:   ${{ matrix.target }}
@@ -277,8 +277,37 @@ jobs:
         run: |
           set -euo pipefail
           cargo install cargo-generate-rpm --locked --version 0.16.0
+          # Stage the (already stripped) binaries where the rpm asset
+          # spec references them. A targeted build leaves them under
+          # target/<target>/release/.
+          mkdir -p target/release
+          cp "target/${{ matrix.target }}/release/noyafmt" \
+             "target/${{ matrix.target }}/release/noyavalidate" \
+             target/release/
+          # cargo-generate-rpm requires a [package.metadata.generate-rpm]
+          # table. The released v0.0.8 tag predates it, so inject one at
+          # build time if the checked-out manifest lacks it (idempotent
+          # once the source carries its own). Use echo-group rather than
+          # a heredoc — a quoted heredoc terminator cannot be reached
+          # inside an indented YAML block scalar.
+          if ! grep -q 'package.metadata.generate-rpm' crates/noya-cli/Cargo.toml; then
+            {
+              echo ""
+              echo "[package.metadata.generate-rpm]"
+              echo "assets = ["
+              echo '  { source = "target/release/noyafmt", dest = "/usr/bin/noyafmt", mode = "0755" },'
+              echo '  { source = "target/release/noyavalidate", dest = "/usr/bin/noyavalidate", mode = "0755" },'
+              echo '  { source = "doc/noyafmt.1", dest = "/usr/share/man/man1/noyafmt.1", mode = "0644", doc = true },'
+              echo '  { source = "doc/noyavalidate.1", dest = "/usr/share/man/man1/noyavalidate.1", mode = "0644", doc = true },'
+              echo '  { source = "LICENSE-MIT", dest = "/usr/share/licenses/noya-cli/LICENSE-MIT", mode = "0644", doc = true },'
+              echo '  { source = "LICENSE-APACHE", dest = "/usr/share/licenses/noya-cli/LICENSE-APACHE", mode = "0644", doc = true },'
+              echo "]"
+            } >> crates/noya-cli/Cargo.toml
+          fi
+          # `--package` is the package *directory* (cargo-generate-rpm
+          # opens `<value>/Cargo.toml`), not a workspace member name.
           cargo generate-rpm --target ${{ matrix.target }} \
-              --package noya-cli \
+              --package crates/noya-cli \
               --output "${{ github.workspace }}/${ARCHIVE_BASE}.rpm"
 
       # ── .msi (Windows MSVC legs only) ──────────────────────────
@@ -288,14 +317,29 @@ jobs:
         run: |
           set -euo pipefail
           cargo install cargo-wix --locked --version 0.3.9
-          # Render WiX source with the resolved version number, then
-          # invoke cargo-wix using the rendered file.
+          # Render the WiX source: substitute the version and strip the
+          # <Icon>/ARPPRODUCTICON lines. The referenced
+          # pkg/windows/wix/noyalib.ico is not in-tree (the .msi has
+          # never built), so drop the cosmetic ARP icon rather than fail
+          # `light` with LGHT0103. cargo-wix runs `light` from the repo
+          # root, so all other Source paths resolve from there.
           mkdir -p target/wix
-          sed "s/__VERSION__/${VERSION}/g" pkg/windows/wix/noyalib.wxs \
-              > target/wix/noyalib.wxs
+          sed -e "s/__VERSION__/${VERSION}/g" \
+              -e '/<Icon /d' \
+              -e '/ARPPRODUCTICON/d' \
+              pkg/windows/wix/noyalib.wxs > target/wix/noyalib.wxs
+          # The .wxs harvests target\release\*.exe, but a targeted
+          # --no-build build leaves the binaries under
+          # target/<target>/release/. Stage them at the root-relative
+          # path the harvest expects (LICENSE-* already live at root).
+          mkdir -p target/release
+          cp "target/${{ matrix.target }}/release/noyafmt.exe" \
+             "target/${{ matrix.target }}/release/noyavalidate.exe" \
+             target/release/
           cargo wix --target ${{ matrix.target }} \
               --package noya-cli \
               --no-build \
+              --nocapture \
               --include target/wix/noyalib.wxs \
               --output "${{ github.workspace }}/${ARCHIVE_BASE}.msi"
 
@@ -305,16 +349,26 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ github.workspace }}"
+          # macOS ships `shasum` but not `sha256sum`; the Windows Git
+          # bash ships `sha256sum`/`sha512sum` (coreutils) but not
+          # `shasum`. Pick whichever exists.
+          checksum() {
+            if command -v shasum >/dev/null 2>&1; then
+              shasum -a "$1" "$2"
+            else
+              "sha${1}sum" "$2"
+            fi
+          }
           for f in ${ARCHIVE_BASE}.tar.gz ${ARCHIVE_BASE}.zip \
                    ${ARCHIVE_BASE}.deb ${ARCHIVE_BASE}.rpm \
                    ${ARCHIVE_BASE}.msi ${ARCHIVE_BASE}-debuginfo.tar.gz; do
             [[ -f "$f" ]] || continue
-            shasum -a 256 "$f" > "${f}.sha256"
-            shasum -a 512 "$f" > "${f}.sha512"
+            checksum 256 "$f" > "${f}.sha256"
+            checksum 512 "$f" > "${f}.sha512"
           done
 
       - name: Attest build provenance (SLSA L3)
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.tar.gz
@@ -338,10 +392,11 @@ jobs:
                    ${ARCHIVE_BASE}.deb ${ARCHIVE_BASE}.rpm \
                    ${ARCHIVE_BASE}.msi ${ARCHIVE_BASE}-debuginfo.tar.gz; do
             [[ -f "$f" ]] || continue
-            cosign sign-blob \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.pem" \
-              "$f"
+            # cosign v4 deprecated --output-signature/--output-certificate
+            # (silently ignored, only the bundle is written). Write a
+            # self-contained sigstore bundle; verify with
+            # `cosign verify-blob --bundle <f>.bundle <f>`.
+            cosign sign-blob --bundle "${f}.bundle" "$f"
           done
 
       # ── Upload paths ───────────────────────────────────────────
@@ -353,11 +408,21 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ github.workspace }}"
-          gh release upload "${{ inputs.tag }}" \
-            ${ARCHIVE_BASE}.tar.gz* ${ARCHIVE_BASE}.zip* \
-            ${ARCHIVE_BASE}.deb*    ${ARCHIVE_BASE}.rpm* \
-            ${ARCHIVE_BASE}.msi*    ${ARCHIVE_BASE}-debuginfo.tar.gz* \
-            --clobber 2>/dev/null || true
+          # nullglob: most targets have no .deb/.rpm/.msi, so without it
+          # the unmatched patterns reach `gh` as literal filenames and
+          # fail the whole upload. The old `2>/dev/null || true` then hid
+          # that, so only the single-glob universal upload ever landed.
+          shopt -s nullglob
+          files=( ${ARCHIVE_BASE}.tar.gz* ${ARCHIVE_BASE}.zip* \
+                  ${ARCHIVE_BASE}.deb* ${ARCHIVE_BASE}.rpm* \
+                  ${ARCHIVE_BASE}.msi* ${ARCHIVE_BASE}-debuginfo.tar.gz* )
+          for attempt in 1 2 3; do
+            if gh release upload "${{ inputs.tag }}" "${files[@]}" --clobber; then
+              break
+            fi
+            [ "$attempt" = 3 ] && { echo "::error::release upload failed after 3 attempts"; exit 1; }
+            echo "upload attempt ${attempt} failed; retrying" && sleep $((attempt * 15))
+          done
 
       - name: Upload artefact (always; dry-run consumes it)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -380,7 +445,7 @@ jobs:
       VERSION:      ${{ needs.create-release.outputs.version }}
       ARCHIVE_BASE: noyalib-${{ needs.create-release.outputs.version }}-universal-apple-darwin
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
@@ -424,7 +489,7 @@ jobs:
           shasum -a 512 "${ARCHIVE_BASE}.tar.gz" > "${ARCHIVE_BASE}.tar.gz.sha512"
 
       - name: Attest provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ${{ github.workspace }}/${{ env.ARCHIVE_BASE }}.tar.gz
 
@@ -436,9 +501,9 @@ jobs:
           COSIGN_YES: 'true'
         run: |
           cd "${{ github.workspace }}"
-          cosign sign-blob \
-            --output-signature "${ARCHIVE_BASE}.tar.gz.sig" \
-            --output-certificate "${ARCHIVE_BASE}.tar.gz.pem" \
+          # cosign v4: write a self-contained bundle (the legacy
+          # --output-signature/--output-certificate flags are ignored).
+          cosign sign-blob --bundle "${ARCHIVE_BASE}.tar.gz.bundle" \
             "${ARCHIVE_BASE}.tar.gz"
 
       - name: Upload to GitHub Release
@@ -469,24 +534,51 @@ jobs:
       VERSION:           ${{ needs.create-release.outputs.version }}
       SOURCE_DATE_EPOCH: ${{ needs.create-release.outputs.source_date_epoch }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
         with:
-          toolchain: stable
-          targets:   ${{ env.TARGET }}
+          toolchain:  stable
+          targets:    ${{ env.TARGET }}
+          components: llvm-tools-preview
+
+      # Configure RUSTFLAGS exactly as build-release does — via
+      # $GITHUB_ENV in a bash run block so $HOME expands to the real
+      # path. A step-level `env:` value leaves $HOME literal, which
+      # remaps nothing and yields a different (non-matching) binary.
+      - name: Configure reproducible build env
+        shell: bash
+        run: |
+          {
+            echo "RUSTFLAGS=--remap-path-prefix=$HOME=~ --remap-path-prefix=${{ github.workspace }}=/build"
+            echo "NOYA_GEN_ASSETS=1"
+          } >> "$GITHUB_ENV"
 
       - name: Rebuild on a clean runner
-        env:
-          RUSTFLAGS: '--remap-path-prefix=$HOME=~ --remap-path-prefix=${{ github.workspace }}=/build'
-          NOYA_GEN_ASSETS: '1'
         shell: bash
         run: |
           cargo build --release --locked --target ${{ env.TARGET }} \
               --manifest-path crates/noya-cli/Cargo.toml \
               --bin noyafmt --bin noyavalidate
+
+      - name: Strip to match the release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          # build-release strips the gnu binaries (debug-symbol split)
+          # before archiving, so the reproducibility comparison must
+          # strip identically or it compares stripped vs unstripped.
+          SYSROOT=$(rustc --print sysroot)
+          HOST_TUPLE=$(rustc --print host-tuple)
+          OBJCOPY="$SYSROOT/lib/rustlib/$HOST_TUPLE/bin/llvm-objcopy"
+          for bin in noyafmt noyavalidate; do
+            BIN="target/${TARGET}/release/${bin}"
+            "$OBJCOPY" --only-keep-debug "${BIN}" "${BIN}.debug"
+            "$OBJCOPY" --strip-debug --strip-unneeded "${BIN}"
+            "$OBJCOPY" --add-gnu-debuglink="${BIN}.debug" "${BIN}"
+          done
 
       - name: Compute local SHA256
         id: local
@@ -532,7 +624,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
@@ -590,7 +682,7 @@ jobs:
     permissions:
       contents: read  # external AUR push via AUR_SSH_PRIVATE_KEY
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
@@ -631,7 +723,7 @@ jobs:
     permissions:
       contents: read  # external bucket push via SCOOP_BUCKET_TOKEN
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
@@ -666,7 +758,7 @@ jobs:
     env:
       VERSION: ${{ needs.create-release.outputs.version }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
@@ -729,11 +821,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
         with:
           toolchain: stable
           targets:   wasm32-unknown-unknown
@@ -769,7 +861,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
@@ -807,7 +899,7 @@ jobs:
           - { name: noyalib,      dockerfile: pkg/docker/Dockerfile.full }
           - { name: noyalib-mcp,  dockerfile: pkg/docker/Dockerfile.mcp }
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
 
