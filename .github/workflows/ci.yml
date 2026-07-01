@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust ${{ matrix.toolchain }}
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ matrix.toolchain }}
       - name: Cache cargo
@@ -84,11 +84,20 @@ jobs:
     #     contention without letting a real hang sit forever; the
     #     scheduled `miri-full` (90 min) still covers the deeper
     #     sweep plus big-endian.
+    # CACHE-POISONING GUARD: Miri builds use `-Zmiri-*` flags plus
+    # the Miri sysroot — completely distinct fingerprint from every
+    # stable / nightly cargo build. Isolated CARGO_TARGET_DIR so
+    # a stale non-Miri artefact set cannot mask a Miri regression;
+    # `~/.cache/miri` and `target-miri/miri` still cache the
+    # (expensive) sysroot build across PRs via the actions/cache
+    # entry below (keyed on toolchain + Cargo.lock).
     timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-miri
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust nightly with Miri
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: nightly
           components: miri
@@ -101,13 +110,15 @@ jobs:
         with:
           path: |
             ~/.cache/miri
-            target/miri
+            target-miri/miri
           key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
             miri-${{ runner.os }}-
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          workspaces: ". -> target-miri"
+          key: miri-focused
           save-if: false
       - name: Run focused Miri suite
         run: ./scripts/miri.sh
@@ -119,21 +130,27 @@ jobs:
     # endianness assumption that would slip past the focused
     # per-PR job. Bandwidth-intensive (~30+ minutes) so gated
     # behind the schedule / manual trigger.
+    #
+    # CACHE-POISONING GUARD: same isolated CARGO_TARGET_DIR
+    # pattern as the focused Miri job.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       RUSTUP_TOOLCHAIN: nightly
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-miri-full
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust nightly with Miri
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: nightly
           components: miri
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          workspaces: ". -> target-miri-full"
+          key: miri-full
           save-if: false
       - name: Setup Miri
         run: cargo +nightly miri setup
@@ -160,14 +177,25 @@ jobs:
     # The full multi-hour campaign runs on the weekly soak job in
     # `security.yml`. 10s is enough to surface trivial regressions
     # the instant they land without slowing PR feedback.
+    #
+    # CACHE-POISONING GUARD: cargo-fuzz uses a sanitiser-enabled
+    # nightly build with `-Cinstrument-coverage=off -Cpasses=sancov-module`
+    # under the hood — a distinct fingerprint from every other
+    # job. Isolated CARGO_TARGET_DIR so a stale non-fuzz artefact
+    # set cannot short-circuit the sanitiser build.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-fuzz
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ". -> target-fuzz"
+          key: fuzz-diff
       - run: cargo install --locked cargo-fuzz
       - run: cargo +nightly fuzz run fuzz_diff -- -max_total_time=10
         working-directory: .
@@ -194,7 +222,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -223,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -242,7 +270,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -277,19 +305,37 @@ jobs:
     # - default features: std + core surface, MSRV 1.85.
     # - feature combinations beyond default require newer
     #   toolchains; the stable test matrix covers those.
+    #
+    # CACHE-POISONING GUARD: three separate CARGO_TARGET_DIRs so
+    # the no_std, default-features, and clippy checks each have
+    # their own fingerprint namespace. Sharing target/ across
+    # feature configurations is exactly how a stale-but-passing
+    # cache can mask a real regression (see no-std job below).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: "1.85.0"
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: |
+            . -> target-msrv-nostd
+            . -> target-msrv-default
+            . -> target-msrv-clippy
+          key: msrv-1.85
       - name: cargo check (no_std)
-        run: cargo check --no-default-features --locked
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-msrv-nostd
+        run: cargo check --no-default-features --lib --locked
       - name: cargo check (default features)
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-msrv-default
         run: cargo check --locked
       - name: cargo clippy on MSRV core
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-msrv-clippy
         run: cargo clippy --lib --locked -- -D warnings
 
   coverage-gate:
@@ -302,16 +348,29 @@ jobs:
     # SQLite, serde, hyper). Fails the build if region coverage
     # drops below the threshold so coverage regressions can never
     # land silently.
+    #
+    # CACHE-POISONING GUARD: coverage instrumentation adds
+    # `-C instrument-coverage` and NOYALIB_COVERAGE=1 gates the
+    # `#[cfg(noyalib_coverage)]` code paths — completely distinct
+    # fingerprint from every other cargo job. Isolated
+    # CARGO_TARGET_DIR + scoped cache key so a stale
+    # non-instrumented artefact set can never mask an
+    # instrumentation regression.
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-coverage
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: nightly
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ". -> target-coverage"
+          key: coverage-nightly
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
         with:
           tool: cargo-llvm-cov
       - name: "Coverage report (gates: 96% fn / 93% region / 94% line)"
@@ -362,7 +421,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -400,15 +459,103 @@ jobs:
     # The README and CHANGELOG promise that `default-features = false`
     # builds without `std`. This job enforces that promise on every
     # push so the claim never silently regresses.
+    #
+    # CACHE-POISONING GUARD: this job uses an isolated CARGO_TARGET_DIR
+    # so the no_std fingerprint can never be served from a previous
+    # `cargo check` that ran with `std` on (those would share the
+    # default `target/` under Swatinem/rust-cache and silently return
+    # a stale-but-passing result, masking real no_std regressions —
+    # exactly what hid the missing `crate::prelude::Vec` / `vec` import
+    # in doc_boundary.rs and the unused `crate::span_context` import in
+    # de.rs through v0.0.9 and v0.0.10).
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-no-std
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          # Scope the cache to this job's isolated target dir, and
+          # split the cache namespace so it can't share state with the
+          # `std`-on jobs. Belt-and-braces: even if Swatinem changes
+          # default behaviour, the explicit CARGO_TARGET_DIR above is
+          # the real guarantee.
+          workspaces: ". -> target-no-std"
+          key: no-std
       - name: cargo check --no-default-features
-        run: cargo check --no-default-features --lib
+        run: cargo check --no-default-features --lib --locked
+
+  readme-examples:
+    name: README examples (root)
+    # Every `` ```rust `` code block in the workspace-root
+    # README.md is extracted and compiled against `noyalib` from a
+    # scratch project. Broken landing-page examples fail the PR.
+    #
+    # Cannot use `#[doc = include_str!("../../../README.md")]` in
+    # noyalib's lib.rs because the workspace-root README lives
+    # outside the crate's package layout, so `cargo publish
+    # --dry-run` would fail verification. The script-based path
+    # (`scripts/check-readme-examples.sh`) preserves the "every
+    # README example is tested" invariant without breaking
+    # publish.
+    #
+    # CACHE-POISONING GUARD: isolated CARGO_TARGET_DIR. The
+    # scratch project this job spins up must never be served a
+    # cached artefact set from a different feature configuration.
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-readme-examples
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ". -> target-readme-examples"
+          key: readme-examples
+      - name: Compile every ```rust block in README.md
+        run: bash scripts/check-readme-examples.sh
+
+  docs-strict:
+    name: rustdoc (strict)
+    # Mirror the same RUSTDOCFLAGS the docs.yml deployment job uses,
+    # but on every PR — broken intra-doc links and bad codeblock
+    # fence attributes should fail a PR, not break the Pages
+    # deployment after merge. (For three days through v0.0.9 +
+    # v0.0.10 the docs.yml job was silently failing on main while
+    # PRs sailed through; this gate closes that hole.)
+    #
+    # CACHE-POISONING GUARD: isolated CARGO_TARGET_DIR. rustdoc
+    # fingerprints depend on RUSTDOCFLAGS env; if a Swatinem cache
+    # from a different job (without the strict flags) restored
+    # into target/, cargo could serve a stale hit and mask new
+    # broken doc links.
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-docs-strict
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ". -> target-docs-strict"
+          key: docs-strict
+      - name: cargo doc --no-deps --all-features (strict)
+        env:
+          RUSTDOCFLAGS: >-
+            -D warnings
+            -D rustdoc::broken_intra_doc_links
+            -D rustdoc::private_intra_doc_links
+            -D rustdoc::invalid_codeblock_attributes
+            -D rustdoc::invalid_html_tags
+            -D rustdoc::bare_urls
+        run: cargo doc --workspace --no-deps --all-features --locked
 
   verify-signatures:
     name: Verify commit signatures
