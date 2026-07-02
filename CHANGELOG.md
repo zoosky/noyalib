@@ -7,7 +7,139 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet - `[v0.0.11]` is the cut.)
+(Nothing yet - `[v0.0.12]` is the cut.)
+
+## [v0.0.12] - 2026-07-02
+
+Three threads land together in this cut:
+
+1. **`noyalib-wasm` split** — first satellite to leave the
+   monorepo under [ADR-0005](doc/adr/0005-workspace-split.md).
+   Moves to
+   [`sebastienrousseau/noyalib-wasm`](https://github.com/sebastienrousseau/noyalib-wasm)
+   with 11 commits of history preserved. Strict-lockstep
+   versioning contract: satellite pins `noyalib = "=0.0.12"`.
+2. **MCP-discoverability** — registers `noyalib-mcp` with the
+   official Model Context Protocol Registry (via OCI packaging),
+   adds MCP-spec conformance CI, ships a Glama directory
+   manifest, and cross-links the sibling banking MCP servers.
+3. **Workspace-split CI shared-workflows** (phases 1–4, PRs
+   #135–#139): 20+ new `shared-*.yml` reusable workflows,
+   `ci.yml` refactored to delegate to them (-480 lines), CI
+   duration monitor, crates.io ownership harness, and ADR-0005.
+
+Lockstep versioning: 4 in-workspace publishable crates
+(`noyalib`, `noyalib-mcp`, `noyalib-lsp`, `noya-cli`) bump from
+`0.0.11` → `0.0.12`. `noyalib-wasm` releases the same `0.0.12`
+from the satellite repo. `xtask` stays at `0.0.1` per workspace
+convention.
+
+### Added — workspace split (v0.0.12 pilot)
+
+- **`noyalib-wasm` extracted** to
+  [`sebastienrousseau/noyalib-wasm`](https://github.com/sebastienrousseau/noyalib-wasm)
+  via `git subtree split`. 11 commits with authorship
+  preserved. Satellite consumes reusable workflows from this
+  repo pinned by SHA; a hardening pass here propagates within
+  48h via Dependabot.
+- **Permissions-gotcha table** added to ADR-0005 §Shared
+  reusable workflows — v0.0.13 / v0.0.14 / v0.0.15 satellites
+  MUST union `pull-requests: read` into their caller
+  `ci.yml permissions:` block or first CI runs will
+  startup_failure with 0 scheduled jobs. Discovered on the
+  pilot; documented so successors don't repeat.
+- **Post-implementation update** in ADR-0005 records the
+  pilot's concrete outcome (subtree extraction, lockstep
+  enforcement, ruleset applied).
+
+### Removed — workspace split (v0.0.12 pilot)
+
+- `crates/noyalib-wasm/` directory (history preserved on the
+  satellite repo). Root `Cargo.toml` workspace member list
+  drops the entry.
+- `release.yml` version cross-check now covers 3 in-workspace
+  satellites; the `noyalib-wasm` cross-check moves to the
+  satellite's own release workflow.
+- `release-binaries.yml` drops the `npm-publish` job for
+  `@noyalib/noyalib-wasm`. That publish now runs from the
+  satellite repo.
+- Coverage `ignore-filename-regex` in `.github/workflows/ci.yml`,
+  `shared-coverage.yml`, and `scripts/coverage-gap-report.sh`
+  no longer references `crates/noyalib-wasm/src/lib.rs`.
+- README ecosystem table + per-crate README pointers link to
+  the satellite repo. `doc/USER-GUIDE.md` and
+  `doc/ARCHITECTURE.md` reflect the split.
+
+### Added — MCP registry work (noyalib-mcp only)
+
+- **Official MCP Registry integration.** `noyalib-mcp` is now
+  registered with the official Model Context Protocol Registry
+  (`registry.modelcontextprotocol.io`) as
+  `io.github.sebastienrousseau/noyalib-mcp`. A new `server.json` at
+  the repo root provides the registry metadata using
+  `registryType: oci` (crates.io is not a supported registryType, so
+  the OCI image at `ghcr.io/sebastienrousseau/noyalib-mcp` is the
+  package artefact). The `noyalib-mcp` README carries an
+  `mcp-name: io.github.sebastienrousseau/noyalib-mcp` marker used by
+  the registry for OCI ownership verification.
+- **Auto-publish workflow** (`.github/workflows/publish-mcp.yml`) —
+  on every `v*.*.*` tag push:
+  1. Builds and pushes the OCI image (reusing the existing
+     production-grade `pkg/docker/Dockerfile.mcp` — distroless,
+     non-root, signed) to GHCR.
+  2. Authenticates to the MCP Registry via GitHub OIDC (no secrets
+     required), syncs the tag version into `server.json`, and runs
+     `mcp-publisher publish`.
+- **Protocol conformance CI** (`.github/workflows/mcp-inspect.yml`) —
+  builds `noyalib-mcp` release binary, then runs
+  `@modelcontextprotocol/inspector --cli` against `tools/list`.
+  Path-filtered to the `noyalib-mcp` / `noyalib-core` / `noyalib-schema`
+  paths to keep the CI budget bounded.
+- **Glama directory manifest** (`glama.json`) — Glama listing with
+  OCI runtime spec (`docker run -i ghcr.io/sebastienrousseau/noyalib-mcp`).
+- **Suite discoverability.** `crates/noyalib-mcp/README.md` now
+  cross-links sibling banking MCP servers (`pain001-mcp`,
+  `bankstatementparser-mcp`, `camt053-mcp`, `acmt001-mcp`) under a
+  "Related MCP Servers" section, positioning `noyalib-mcp` as
+  structured-data tooling that complements the ISO 20022 servers.
+- **REUSE compliance** — pre-commit hook auto-registered `server.json`
+  under `REUSE.toml` license aggregation.
+
+### Added — workspace CI (pre-existing on branch)
+
+Reviewed via separate PRs #135–#139:
+
+- **Workspace-split CI shared workflows** (phases 1–4):
+  - `.github/workflows/shared-*.yml` — 20+ reusable workflows for
+    cargo-deny, cargo-machete, cargo-vet, coverage, fuzz-diff, miri
+    (focused + full), msrv-core, no-std, per-crate-msrv, readme-examples,
+    reuse, rustdoc-strict, test-matrix, vendor-offline,
+    verify-signatures, and workflow-propagation.
+  - `.github/workflows/ci.yml` refactored to delegate to shared
+    workflows (-480 lines).
+- `.github/workflows/ci-duration-monitor.yml` +
+  `scripts/ci-duration-monitor.sh` — CI-duration SLA monitor.
+- `.github/workflows/crates-io-ownership.yml` +
+  `scripts/check-crates-io-ownership.sh` — ownership drift harness.
+- `scripts/shared-workflow-propagation-monitor.sh` — shared-workflow
+  propagation SLA monitor.
+- `doc/adr/0005-workspace-split.md` — architecture decision record
+  for the workspace-split refactor.
+
+### Changed
+
+- GitHub repository description and topics — noyalib itself was
+  already at the 20-topic ceiling and is a general-purpose YAML
+  library (not banking), so no GitHub-metadata changes for it in
+  this cut.
+
+### No functional / API changes to non-MCP crates
+
+- Only `noyalib-mcp` has a substantive change (the MCP registry
+  work above). The other four publishable crates (`noyalib`,
+  `noyalib-lsp`, `noyalib-wasm`, `noya-cli`) bump to `0.0.12` as
+  part of the workspace-lockstep cut but ship no code changes —
+  existing consumers can upgrade without any migration.
 
 ## [v0.0.11] - 2026-07-01
 
