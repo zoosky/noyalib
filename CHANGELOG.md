@@ -7,7 +7,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet - `[v0.0.12]` is the cut.)
+### Fixed
+
+- Duplicate mapping keys now resolve consistently across the typed
+  and span views. Under the default `DuplicateKeyPolicy::Last`, the
+  loader replaced a re-inserted key's value in place but *appended* a
+  second span entry, de-synchronising `Value::Mapping` from its
+  parallel `SpanTree`: `span_at` / `get` returned the shadowed first
+  occurrence, `Spanned<T>` fields positioned after a duplicate
+  carried a neighbour's span, and `remove` on a key following a
+  duplicate deleted the wrong line. The green-tree walker behind
+  `span_at` likewise stopped at the first matching key. Both layers
+  now select the last occurrence — the node `as_value` keeps — and
+  the walker defers to the typed cache when an undecodable
+  (double-quoted / complex) key could hide a duplicate.
+
+### Added
+
+- `Mapping::get_index_of` — index lookup by key, mirroring
+  `IndexMap::get_index_of`.
 
 ## [v0.0.12] - 2026-07-02
 
