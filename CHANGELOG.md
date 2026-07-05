@@ -7,7 +7,84 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet - `[v0.0.12]` is the cut.)
+(Nothing yet - `[v0.0.13]` is the cut.)
+
+## [v0.0.13] - 2026-07-05
+
+The **workspace-split completion** cut. All three remaining
+satellites — `noyalib-mcp`, `noyalib-lsp`, `noya-cli` — leave
+the monorepo per ADR-0005 in a single bundled release,
+alongside `noyalib-wasm` which had already split at v0.0.12.
+The parent repo becomes a **single-crate** repo hosting only
+the `noyalib` library core.
+
+Also folds in three PR takeovers:
+
+- **`lossless-u64`** opt-in feature from @canardleteer's PR #117
+  (via PR #142 rebase).
+- **Duplicate mapping key last-wins fix** from @zoosky's PR #143.
+
+Lockstep versioning: `noyalib` bumps `0.0.12` → `0.0.13`.
+All four satellites publish `=0.0.13` from their own repos:
+- [`sebastienrousseau/noyalib-wasm@0.0.13`](https://github.com/sebastienrousseau/noyalib-wasm)
+- [`sebastienrousseau/noyalib-mcp@0.0.13`](https://github.com/sebastienrousseau/noyalib-mcp)
+- [`sebastienrousseau/noyalib-lsp@0.0.13`](https://github.com/sebastienrousseau/noyalib-lsp)
+- [`sebastienrousseau/noya-cli@0.0.13`](https://github.com/sebastienrousseau/noya-cli)
+
+### Added — workspace split (v0.0.13 pilot)
+
+- **`noyalib-mcp` extracted** to
+  [`sebastienrousseau/noyalib-mcp`](https://github.com/sebastienrousseau/noyalib-mcp)
+  via `git subtree split`. 14 commits with authorship
+  preserved. Multi-channel release (crates.io + npm wrapper +
+  GHCR container + MCP Registry) with SLSA L3 + sigstore on
+  every channel.
+- **Post-implementation update** in ADR-0005 records the
+  pilot's concrete outcome (subtree extraction, lockstep
+  enforcement, `pull-requests: read` applied preemptively per
+  v0.0.12 lesson).
+
+### Added — lossless-u64 feature (PR #117 takeover, PR #142)
+
+- Opt-in `lossless-u64` Cargo feature: adds
+  `Number::Unsigned(u64)` behind `cfg(feature = "lossless-u64")`
+  so integer values in `[i64::MAX + 1, u64::MAX]` round-trip
+  losslessly instead of falling back to `Float`. Runtime opt-in
+  on the parser side via
+  `ParserConfig::lossless_u64_integers(bool)`; serializer side
+  is compile-time-only.
+- `Number` enum marked `#[non_exhaustive]` so future numeric
+  variants don't break match arms.
+- Dedicated CI feature-matrix guard with isolated
+  `CARGO_TARGET_DIR` per leg (defaults + all-features).
+- 6 DoS-budget × u64 proptest properties in
+  `dos_limits_lossless_u64` module — every parser DoS budget
+  must fire before scalar resolution, and no `u64::MAX`-adjacent
+  scalar can silently wrap to negative `Integer`.
+- Original submission credit: @canardleteer's
+  [PR #117](https://github.com/sebastienrousseau/noyalib/pull/117).
+  ADR-0004 documents the design.
+
+### Removed — workspace split (v0.0.13 pilot)
+
+- `crates/noyalib-mcp/` directory (history preserved on
+  satellite). Root `Cargo.toml` workspace member list drops
+  the entry.
+- `.github/workflows/mcp-inspect.yml`,
+  `.github/workflows/publish-mcp.yml` — moved to satellite.
+- `pkg/npm-mcp-wrapper/`, `pkg/docker/Dockerfile.mcp` — moved
+  to satellite.
+- `server.json`, `glama.json` — moved to satellite.
+- `release.yml` version cross-check now covers 2 in-workspace
+  satellites; publish loop drops `noyalib-mcp`.
+- `release-binaries.yml` drops the `npm-publish-mcp` job and
+  the `container-publish` matrix's `noyalib-mcp` row.
+- Coverage `ignore-filename-regex` in `ci.yml`,
+  `shared-coverage.yml`, and `coverage-gap-report.sh` no
+  longer references `crates/noyalib-mcp/`.
+- README ecosystem table + per-crate README pointers link to
+  the satellite. `doc/USER-GUIDE.md` and `doc/ARCHITECTURE.md`
+  reflect the split.
 
 ## [v0.0.12] - 2026-07-02
 
