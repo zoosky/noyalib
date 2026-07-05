@@ -686,6 +686,18 @@ fn write_value(
                 let _ = write!(output, "{n}");
             }
         }
+        #[cfg(feature = "lossless-u64")]
+        Value::Number(Number::Unsigned(n)) => {
+            #[cfg(feature = "fast-int")]
+            {
+                let mut buf = itoa::Buffer::new();
+                output.push_str(buf.format(*n));
+            }
+            #[cfg(not(feature = "fast-int"))]
+            {
+                let _ = write!(output, "{n}");
+            }
+        }
         Value::Number(Number::Float(n)) => {
             if n.is_nan() {
                 output.push_str(".nan");
@@ -1483,10 +1495,22 @@ impl ser::Serializer for Serializer {
 
     fn serialize_u64(self, v: u64) -> Result<Value> {
         if v <= i64::MAX as u64 {
-            Ok(Value::Number(Number::Integer(v as i64)))
-        } else {
+            return Ok(Value::Number(Number::Integer(v as i64)));
+        }
+        // Values above `i64::MAX` require the `lossless-u64` feature.
+        // Without it the `Number::Unsigned` variant does not exist and
+        // there is no lossless representation to fall back to — return
+        // an explicit serialise-time error so callers can surface the
+        // limit to their users.
+        #[cfg(feature = "lossless-u64")]
+        {
+            Ok(Value::Number(Number::Unsigned(v)))
+        }
+        #[cfg(not(feature = "lossless-u64"))]
+        {
             Err(Error::Serialize(format!(
-                "u64 value {v} exceeds i64::MAX and cannot be represented losslessly"
+                "u64 value {v} exceeds i64::MAX and cannot be represented losslessly; \
+                 enable the `lossless-u64` Cargo feature to opt in to unsigned integer support"
             )))
         }
     }
@@ -1760,6 +1784,8 @@ impl ser::SerializeMap for SerializeMap {
         let key_str = match key_value {
             Value::String(s) => s,
             Value::Number(Number::Integer(n)) => n.to_string(),
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => n.to_string(),
             Value::Bool(b) => b.to_string(),
             _ => return Err(Error::Serialize("map key must be a string".to_string())),
         };

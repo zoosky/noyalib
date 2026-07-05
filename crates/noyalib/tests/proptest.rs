@@ -7,6 +7,8 @@
 // Copyright (c) 2026 Noyalib. All rights reserved.
 
 use noyalib::{Mapping, Number, Value, from_str, from_value, to_string, to_value};
+#[cfg(feature = "lossless-u64")]
+use noyalib::{ParserConfig, from_str_with_config};
 use proptest::prelude::*;
 
 // ============================================================================
@@ -14,9 +16,23 @@ use proptest::prelude::*;
 // ============================================================================
 
 /// Generate arbitrary Number values
+#[cfg(not(feature = "lossless-u64"))]
 fn arb_number() -> impl Strategy<Value = Number> {
     prop_oneof![
         any::<i64>().prop_map(Number::Integer),
+        // Use finite floats to avoid NaN comparison issues
+        any::<f64>()
+            .prop_filter("finite floats only", |f| f.is_finite())
+            .prop_map(Number::Float),
+    ]
+}
+
+/// Generate arbitrary Number values, including canonical unsigned values.
+#[cfg(feature = "lossless-u64")]
+fn arb_number() -> impl Strategy<Value = Number> {
+    prop_oneof![
+        any::<i64>().prop_map(Number::Integer),
+        ((i64::MAX as u64 + 1)..=u64::MAX).prop_map(Number::Unsigned),
         // Use finite floats to avoid NaN comparison issues
         any::<f64>()
             .prop_filter("finite floats only", |f| f.is_finite())
@@ -98,6 +114,18 @@ proptest! {
         let parsed: Value = from_str(&yaml).expect("deserialization should succeed");
 
         prop_assert_eq!(parsed.as_i64(), Some(n));
+    }
+
+    /// Unsigned integers should roundtrip exactly when the opt-in is active.
+    #[cfg(feature = "lossless-u64")]
+    #[test]
+    fn roundtrip_unsigned_integer(n in any::<u64>()) {
+        let value = Value::Number(Number::from(n));
+        let yaml = to_string(&value).expect("serialization should succeed");
+        let cfg = ParserConfig::new().lossless_u64_integers(true);
+        let parsed: Value = from_str_with_config(&yaml, &cfg).expect("deserialization should succeed");
+
+        prop_assert_eq!(parsed.as_u64(), Some(n));
     }
 
     /// Booleans should roundtrip exactly
@@ -419,6 +447,8 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Null, Value::Null) => true,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Number(Number::Integer(a)), Value::Number(Number::Integer(b))) => a == b,
+        #[cfg(feature = "lossless-u64")]
+        (Value::Number(Number::Unsigned(a)), Value::Number(Number::Unsigned(b))) => a == b,
         (Value::Number(Number::Float(a)), Value::Number(Number::Float(b))) => {
             (a - b).abs() < 1e-10 || (a.is_nan() && b.is_nan())
         }
@@ -426,6 +456,14 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             (*a as f64 - b).abs() < 1e-10
         }
         (Value::Number(Number::Float(a)), Value::Number(Number::Integer(b))) => {
+            (a - *b as f64).abs() < 1e-10
+        }
+        #[cfg(feature = "lossless-u64")]
+        (Value::Number(Number::Unsigned(a)), Value::Number(Number::Float(b))) => {
+            (*a as f64 - b).abs() < 1e-10
+        }
+        #[cfg(feature = "lossless-u64")]
+        (Value::Number(Number::Float(a)), Value::Number(Number::Unsigned(b))) => {
             (a - *b as f64).abs() < 1e-10
         }
         (Value::String(a), Value::String(b)) => a == b,
@@ -441,5 +479,174 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             a.tag() == b.tag() && values_equal(a.value(), b.value())
         }
         _ => false,
+    }
+}
+
+// ============================================================================
+// DoS-limit × lossless-u64 interaction
+// ============================================================================
+
+/// The `lossless-u64` opt-in must not weaken any of the parser's
+/// hardening budgets (`max_depth`, `max_document_length`,
+/// `max_alias_expansions`, `max_mapping_keys`,
+/// `max_sequence_length`). Every scalar-resolution path — including
+/// the new `Number::Unsigned` route — sits inside the loader loop
+/// that increments those counters, so the budget check MUST fire
+/// before the scalar resolver runs.
+///
+/// The tests below feed adversarial documents that pair a
+/// budget-triggering shape with a `u64::MAX` (or MAX-adjacent)
+/// value. The library MUST return a `LimitExceeded` (or moral
+/// equivalent) `Error` — never `Ok`, never a panic. The variant
+/// matters less than the mechanical fact that the limit fires.
+#[cfg(feature = "lossless-u64")]
+mod dos_limits_lossless_u64 {
+    use super::*;
+
+    proptest! {
+        /// A deeply-nested document ending in a `u64` scalar must
+        /// error on the depth limit — never succeed, never panic.
+        #[test]
+        fn depth_limit_fires_before_u64_scalar(
+            depth in 200usize..1_000,
+            n in (i64::MAX as u64 + 1)..=u64::MAX,
+        ) {
+            // Build "[ [ [ ... [ N ] ... ] ] ]" nested `depth` levels.
+            let mut yaml = String::with_capacity(depth * 2 + 32);
+            for _ in 0..depth {
+                yaml.push('[');
+            }
+            yaml.push_str(&n.to_string());
+            for _ in 0..depth {
+                yaml.push(']');
+            }
+            yaml.push('\n');
+
+            let cfg = ParserConfig::new()
+                .max_depth(128)
+                .lossless_u64_integers(true);
+            let res: Result<Value, _> = from_str_with_config(&yaml, &cfg);
+            prop_assert!(res.is_err(),
+                "depth {} vs max_depth 128 should fail, got Ok({:?})",
+                depth,
+                res.ok());
+        }
+
+        /// A document *at* the depth limit ending in a `u64::MAX`
+        /// scalar must round-trip cleanly (the budget check should
+        /// not fire before a legal document finishes).
+        #[test]
+        fn depth_limit_permits_legal_u64_scalar(
+            n in (i64::MAX as u64 + 1)..=u64::MAX,
+        ) {
+            let depth = 32; // well within default max_depth 128
+            let mut yaml = String::with_capacity(depth * 2 + 32);
+            for _ in 0..depth { yaml.push('['); }
+            yaml.push_str(&n.to_string());
+            for _ in 0..depth { yaml.push(']'); }
+            yaml.push('\n');
+
+            let cfg = ParserConfig::new()
+                .max_depth(128)
+                .lossless_u64_integers(true);
+            let v: Value = from_str_with_config(&yaml, &cfg)
+                .expect("legal-depth u64 doc should parse");
+            // Walk down to the scalar and confirm it kept its value.
+            let mut cursor = &v;
+            for _ in 0..depth {
+                match cursor {
+                    Value::Sequence(s) => cursor = &s[0],
+                    other => panic!("expected sequence, got {other:?}"),
+                }
+            }
+            match cursor {
+                Value::Number(Number::Unsigned(m)) => prop_assert_eq!(*m, n),
+                other => panic!("expected Unsigned({n}), got {other:?}"),
+            }
+        }
+
+        /// A document larger than `max_document_length` must error
+        /// even when its payload is a plain `u64` scalar.
+        #[test]
+        fn document_length_limit_fires_before_u64_scalar(
+            padding in 2_000usize..8_000,
+            n in (i64::MAX as u64 + 1)..=u64::MAX,
+        ) {
+            // "# " + N spaces + "id: <n>\n" — padding drives past
+            // `max_document_length = 1024`.
+            let mut yaml = String::from("# ");
+            yaml.extend(core::iter::repeat_n(' ', padding));
+            yaml.push_str(&format!("\nid: {n}\n"));
+
+            let cfg = ParserConfig::new()
+                .max_document_length(1024)
+                .lossless_u64_integers(true);
+            let res: Result<Value, _> = from_str_with_config(&yaml, &cfg);
+            prop_assert!(res.is_err(),
+                "doc-length {} vs max 1024 should fail, got Ok",
+                yaml.len());
+        }
+
+        /// A mapping with more keys than `max_mapping_keys` must
+        /// error — the u64 value in each entry must NOT provide a
+        /// bypass.
+        #[test]
+        fn mapping_keys_limit_fires_before_u64_scalar(
+            keys in 65usize..256,
+            n in (i64::MAX as u64 + 1)..=u64::MAX,
+        ) {
+            let mut yaml = String::new();
+            for i in 0..keys {
+                yaml.push_str(&format!("k{i}: {n}\n"));
+            }
+
+            let cfg = ParserConfig::new()
+                .max_mapping_keys(64)
+                .lossless_u64_integers(true);
+            let res: Result<Value, _> = from_str_with_config(&yaml, &cfg);
+            prop_assert!(res.is_err(),
+                "keys {} vs max_mapping_keys 64 should fail, got Ok",
+                keys);
+        }
+
+        /// A sequence longer than `max_sequence_length` must error
+        /// even when every element is a lossless `u64`.
+        #[test]
+        fn sequence_length_limit_fires_before_u64_scalar(
+            elems in 65usize..256,
+            n in (i64::MAX as u64 + 1)..=u64::MAX,
+        ) {
+            let mut yaml = String::from("[");
+            for i in 0..elems {
+                if i > 0 { yaml.push_str(", "); }
+                yaml.push_str(&n.to_string());
+            }
+            yaml.push_str("]\n");
+
+            let cfg = ParserConfig::new()
+                .max_sequence_length(64)
+                .lossless_u64_integers(true);
+            let res: Result<Value, _> = from_str_with_config(&yaml, &cfg);
+            prop_assert!(res.is_err(),
+                "elems {} vs max_sequence_length 64 should fail, got Ok",
+                elems);
+        }
+
+        /// No `u64::MAX` scalar can be silently interpreted as an
+        /// `i64` (wrap-to-negative). Under the opt-in it MUST come
+        /// back as `Number::Unsigned` (or fail cleanly); the
+        /// `as_i64()` accessor MUST NOT return `Some(-1)`.
+        #[test]
+        fn no_signed_wrap_at_u64_max(n in (i64::MAX as u64 + 1)..=u64::MAX) {
+            let yaml = format!("id: {n}\n");
+            let cfg = ParserConfig::new().lossless_u64_integers(true);
+            let v: Value = from_str_with_config(&yaml, &cfg)
+                .expect("legal-shape u64 doc should parse");
+            let scalar = &v["id"];
+            prop_assert!(
+                !matches!(scalar, Value::Number(Number::Integer(_))),
+                "u64::MAX-adjacent scalar {n} incorrectly parsed as Integer: {scalar:?}"
+            );
+        }
     }
 }
