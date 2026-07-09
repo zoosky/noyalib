@@ -49,6 +49,10 @@ pub struct ParseConfig {
     #[cfg(feature = "lossless-u64")]
     pub lossless_u64_integers: bool,
     pub policies: Vec<Arc<dyn crate::policy::Policy>>,
+    /// Tags registered for strip-through. When set, the loader resolves a
+    /// registered tag's scalar as if untagged (matching the streaming path)
+    /// instead of producing a [`Value::Tagged`].
+    pub tag_registry: Option<Arc<crate::TagRegistry>>,
 }
 
 impl Default for ParseConfig {
@@ -76,6 +80,7 @@ impl Default for ParseConfig {
             #[cfg(feature = "lossless-u64")]
             lossless_u64_integers: false,
             policies: Vec::new(),
+            tag_registry: None,
         }
     }
 }
@@ -126,6 +131,7 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             #[cfg(feature = "lossless-u64")]
             lossless_u64_integers: c.lossless_u64_integers,
             policies: c.policies.clone(),
+            tag_registry: c.tag_registry.clone(),
         }
     }
 }
@@ -208,6 +214,11 @@ enum Frame {
     MappingKey {
         map: Mapping,
         span_entries: Vec<((usize, usize), SpanTree)>,
+        /// The original typed key of each inserted entry, in insertion
+        /// order (parallel to `map`). Retained to tell a genuine YAML
+        /// duplicate (`1`/`1`) apart from a distinct-typed collision
+        /// (`1`/`"1"`) once both collapse to the same string key.
+        typed_keys: Vec<Value>,
         start: usize,
         anchor: Option<String>,
         merge_values: Vec<Value>,
@@ -219,7 +230,10 @@ enum Frame {
     MappingValue {
         map: Mapping,
         span_entries: Vec<((usize, usize), SpanTree)>,
+        typed_keys: Vec<Value>,
         key: String,
+        /// The typed key that produced `key`, kept for the collision check.
+        key_value: Value,
         key_span: (usize, usize),
         start: usize,
         anchor: Option<String>,
@@ -234,6 +248,10 @@ struct Loader<'a> {
     docs: Vec<(Value, SpanTree)>,
     stack: Vec<Frame>,
     anchor_map: IndexMap<String, (Value, SpanTree)>,
+    /// Source byte-index of each anchor's definition (parity with
+    /// the streaming path's `anchor_def_spans`) — powers the
+    /// "did you mean …?" affordance on `Error::UnknownAnchorAt`.
+    anchor_def_spans: IndexMap<String, usize>,
     alias_count: usize,
     alias_bytes: usize,
     config: &'a ParseConfig,
@@ -262,6 +280,7 @@ impl<'a> Loader<'a> {
             docs: Vec::with_capacity(1),
             stack: Vec::with_capacity(16),
             anchor_map: IndexMap::with_capacity(4),
+            anchor_def_spans: IndexMap::with_capacity(4),
             alias_count: 0,
             alias_bytes: 0,
             config,
@@ -318,6 +337,7 @@ impl<'a> Loader<'a> {
             Event::DocumentStart => {
                 self.in_document = true;
                 self.anchor_map.clear();
+                self.anchor_def_spans.clear();
                 self.alias_count = 0;
                 self.alias_bytes = 0;
                 // Budget: max_documents
@@ -355,10 +375,23 @@ impl<'a> Loader<'a> {
 
                 let (value, span_tree) =
                     self.anchor_map.get(&anchor).cloned().ok_or_else(|| {
+                        let alias_loc = crate::error::Location::from_index(input, span.start);
+                        let suggestion = crate::error::closest_name(
+                            &anchor,
+                            self.anchor_def_spans.keys().map(|s| s.as_str()),
+                        )
+                        .and_then(|s| {
+                            self.anchor_def_spans.get(s).map(|&idx| {
+                                (
+                                    s.to_string(),
+                                    crate::error::Location::from_index(input, idx),
+                                )
+                            })
+                        });
                         Error::UnknownAnchorAt {
                             name: anchor.clone(),
-                            location: crate::error::Location::from_index(input, span.start),
-                            suggestion: None,
+                            location: alias_loc,
+                            suggestion,
                         }
                     })?;
 
@@ -372,7 +405,11 @@ impl<'a> Loader<'a> {
                     return Err(Error::RepetitionLimitExceeded);
                 }
 
-                self.push_node(value, span_tree, input)?;
+                // Wrap the anchor's cloned tree so span resolution can tell it
+                // reached this value *through* an alias — a read resolves
+                // through (issue #149), a write must refuse (would splice the
+                // anchor's bytes, a different key).
+                self.push_node(value, SpanTree::Alias(Box::new(span_tree)), input)?;
             }
             Event::Scalar {
                 value,
@@ -381,35 +418,45 @@ impl<'a> Loader<'a> {
                 tag,
                 span,
             } => {
-                let v = if let Some(t) = tag {
-                    resolve_tagged_scalar(&t.0, &t.1, &value, self.config.lossless_u64_integers())?
-                } else if style != crate::parser::ScalarStyle::Plain {
-                    // Quoted/literal/folded scalars always resolve as
-                    // strings — YAML schema resolution only applies to
-                    // plain scalars.
-                    Value::String(value.into_owned())
-                } else {
-                    match crate::streaming::resolve_plain_ext(
-                        &value,
-                        self.config.strict_booleans,
-                        self.config.legacy_booleans,
-                        self.config.no_schema,
-                        self.config.legacy_octal_numbers,
-                        self.config.legacy_sexagesimal,
-                        self.config.lossless_u64_integers(),
-                    ) {
-                        crate::streaming::Scalar::Null => Value::Null,
-                        crate::streaming::Scalar::Bool(b) => Value::Bool(b),
-                        crate::streaming::Scalar::Int(i) => Value::Number(Number::Integer(i)),
-                        #[cfg(feature = "lossless-u64")]
-                        crate::streaming::Scalar::Uint(u) => Value::Number(Number::Unsigned(u)),
-                        crate::streaming::Scalar::Float(f) => Value::Number(Number::Float(f)),
-                        crate::streaming::Scalar::Str(s) => Value::String(s.into_owned()),
-                    }
-                };
+                // An empty plain scalar with no anchor or tag is the
+                // implicit null the parser synthesizes for an absent
+                // block-mapping value or empty sequence item. The span it
+                // was handed is the `:` / `-` indicator it followed, not the
+                // value's own bytes, so mark the leaf zero-width: the node
+                // has no source of its own and `span_at` should report None.
+                // Quoted empties carry a non-Plain style and `~` / `null` a
+                // non-empty value, so both keep their real spans.
+                let is_implicit_empty = value.is_empty()
+                    && matches!(style, crate::parser::ScalarStyle::Plain)
+                    && anchor.is_none()
+                    && tag.is_none();
+                let v =
+                    if let Some(t) = tag {
+                        if self.config.tag_registry.as_ref().is_some_and(|r| {
+                            crate::streaming::tag_is_registry_stripped(&t.0, &t.1, r)
+                        }) {
+                            // Registered tag: strip through and resolve as if
+                            // untagged, exactly as the streaming path does.
+                            resolve_untagged_scalar(value, style, self.config)
+                        } else {
+                            resolve_tagged_scalar(
+                                &t.0,
+                                &t.1,
+                                &value,
+                                self.config.lossless_u64_integers(),
+                            )?
+                        }
+                    } else {
+                        resolve_untagged_scalar(value, style, self.config)
+                    };
 
-                let st = SpanTree::Leaf(span.start, span.end);
+                let st = if is_implicit_empty {
+                    SpanTree::Leaf(span.start, span.start)
+                } else {
+                    SpanTree::Leaf(span.start, span.end)
+                };
                 if let Some(name) = anchor {
+                    let _ = self.anchor_def_spans.insert(name.clone(), span.start);
                     let _ = self.anchor_map.insert(name, (v.clone(), st.clone()));
                 }
                 self.push_node(v, st, input)?;
@@ -420,6 +467,9 @@ impl<'a> Loader<'a> {
                 self.depth += 1;
                 if self.depth > self.config.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
+                if let Some(name) = anchor.as_ref() {
+                    let _ = self.anchor_def_spans.insert(name.clone(), span.start);
                 }
                 self.stack.push(Frame::Sequence {
                     items: Vec::new(),
@@ -440,7 +490,7 @@ impl<'a> Loader<'a> {
                 }) = self.stack.pop()
                 {
                     let inner = Value::Sequence(items);
-                    let v = wrap_with_tag(inner, tag.as_ref());
+                    let v = wrap_with_tag(inner, tag.as_ref(), self.config.tag_registry.as_deref());
                     let st = SpanTree::Sequence {
                         start,
                         end: span.end,
@@ -465,9 +515,13 @@ impl<'a> Loader<'a> {
                 if self.depth > self.config.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
+                if let Some(name) = anchor.as_ref() {
+                    let _ = self.anchor_def_spans.insert(name.clone(), span.start);
+                }
                 self.stack.push(Frame::MappingKey {
                     map: Mapping::new(),
                     span_entries: Vec::new(),
+                    typed_keys: Vec::new(),
                     start: span.start,
                     anchor,
                     merge_values: Vec::new(),
@@ -479,6 +533,7 @@ impl<'a> Loader<'a> {
                 if let Some(Frame::MappingKey {
                     mut map,
                     span_entries,
+                    typed_keys: _,
                     start,
                     anchor,
                     merge_values,
@@ -490,7 +545,7 @@ impl<'a> Loader<'a> {
                     }
 
                     let inner = Value::Mapping(map);
-                    let v = wrap_with_tag(inner, tag.as_ref());
+                    let v = wrap_with_tag(inner, tag.as_ref(), self.config.tag_registry.as_deref());
                     let st = SpanTree::Mapping {
                         start,
                         end: span.end,
@@ -530,11 +585,25 @@ impl<'a> Loader<'a> {
             Frame::MappingKey {
                 map,
                 span_entries,
+                typed_keys,
                 start,
                 anchor,
                 merge_values,
                 tag,
             } => {
+                // Retain the typed key before it is coerced to a string, so
+                // the insert site can tell a genuine duplicate apart from a
+                // distinct-typed collision. Skip the clone when the key is
+                // a merge key (`<<`) that will be buffered rather than
+                // inserted — merge values bypass the collision check, so
+                // the clone would be pure waste on `<<`-heavy documents.
+                let is_buffered_merge_key = matches!(&value, Value::String(s) if s == MERGE_KEY)
+                    && !matches!(self.config.merge_key_policy, MergeKeyPolicy::AsOrdinary);
+                let key_value = if is_buffered_merge_key {
+                    Value::Null
+                } else {
+                    value.clone()
+                };
                 // Coerce scalar keys to strings; complex keys (sequences,
                 // mappings) are stringified via their YAML serialization
                 // so the final `Mapping<String, Value>` can hold them.
@@ -555,6 +624,7 @@ impl<'a> Loader<'a> {
                 };
                 let old_map = core::mem::take(map);
                 let old_span_entries = core::mem::take(span_entries);
+                let old_typed_keys = core::mem::take(typed_keys);
                 let old_start = *start;
                 let old_anchor = anchor.take();
                 let old_merge_values = core::mem::take(merge_values);
@@ -563,7 +633,9 @@ impl<'a> Loader<'a> {
                 *self.stack.last_mut().unwrap() = Frame::MappingValue {
                     map: old_map,
                     span_entries: old_span_entries,
+                    typed_keys: old_typed_keys,
                     key: key_str,
+                    key_value,
                     key_span,
                     start: old_start,
                     anchor: old_anchor,
@@ -574,7 +646,9 @@ impl<'a> Loader<'a> {
             Frame::MappingValue {
                 map,
                 span_entries,
+                typed_keys,
                 key,
+                key_value,
                 key_span,
                 start,
                 anchor,
@@ -609,11 +683,26 @@ impl<'a> Loader<'a> {
                     // slot is discarded. Each branch is the last use of
                     // `key`, so the move is sound.
                     let key = core::mem::take(key);
+                    let key_value = core::mem::take(key_value);
+                    // Distinct-typed collision: the string key already exists
+                    // but was produced by a *different* typed key (e.g. `1`
+                    // then `"1"`, or `true` then `"true"`). Collapsing them
+                    // would silently drop an entry, so refuse regardless of
+                    // DuplicateKeyPolicy. A genuine duplicate (same typed key)
+                    // falls through to the policy below.
+                    if let Some(idx) = map.get_index_of(&key) {
+                        // Nested (not a `let`-chain) to keep the crate's
+                        // 1.85 MSRV: `let`-chains stabilized in 1.88.
+                        if typed_keys[idx] != key_value {
+                            return Err(Error::KeyCollision(key));
+                        }
+                    }
                     match self.config.duplicate_key_policy {
                         DuplicateKeyPolicy::First => {
                             if !map.contains_key(&key) {
                                 let _ = map.insert(key, value);
                                 span_entries.push((*key_span, span));
+                                typed_keys.push(key_value);
                             }
                         }
                         DuplicateKeyPolicy::Last => {
@@ -627,9 +716,12 @@ impl<'a> Loader<'a> {
                             if let Some(idx) = map.get_index_of(&key) {
                                 let _ = map.insert(key, value);
                                 span_entries[idx] = (*key_span, span);
+                                // `typed_keys[idx]` is unchanged: a genuine
+                                // duplicate carries the same typed key.
                             } else {
                                 let _ = map.insert(key, value);
                                 span_entries.push((*key_span, span));
+                                typed_keys.push(key_value);
                             }
                         }
                         DuplicateKeyPolicy::Error => {
@@ -638,12 +730,14 @@ impl<'a> Loader<'a> {
                             }
                             let _ = map.insert(key, value);
                             span_entries.push((*key_span, span));
+                            typed_keys.push(key_value);
                         }
                     }
                 }
 
                 let old_map = core::mem::take(map);
                 let old_span_entries = core::mem::take(span_entries);
+                let old_typed_keys = core::mem::take(typed_keys);
                 let old_start = *start;
                 let old_anchor = anchor.take();
                 let old_merge_values = core::mem::take(merge_values);
@@ -652,6 +746,7 @@ impl<'a> Loader<'a> {
                 *self.stack.last_mut().unwrap() = Frame::MappingKey {
                     map: old_map,
                     span_entries: old_span_entries,
+                    typed_keys: old_typed_keys,
                     start: old_start,
                     anchor: old_anchor,
                     merge_values: old_merge_values,
@@ -744,13 +839,22 @@ enum NoSpanFrame {
     },
     MappingKey {
         map: Mapping,
+        // Parallel to `map`: retains the *typed* value that produced
+        // each string key so the value-arm's collision check can tell
+        // a distinct-typed collision (`1` vs `"1"`) apart from a
+        // genuine duplicate (`1` twice). Mirrors the span-full loader.
+        typed_keys: Vec<Value>,
         anchor: Option<String>,
         merge_values: Vec<Value>,
         tag: Option<(String, String)>,
     },
     MappingValue {
         map: Mapping,
+        typed_keys: Vec<Value>,
         key: String,
+        // The typed key value the current `key` string was derived
+        // from; consumed by the collision check in the value arm.
+        key_value: Value,
         anchor: Option<String>,
         merge_values: Vec<Value>,
         tag: Option<(String, String)>,
@@ -761,8 +865,17 @@ struct NoSpanLoader<'a> {
     docs: Vec<Value>,
     stack: Vec<NoSpanFrame>,
     anchor_map: IndexMap<String, Value>,
+    // Source byte-index of each anchor's definition, keyed by name.
+    // Populated alongside `anchor_map` so an unknown-alias error can
+    // point at the closest known definition — the same "did you mean
+    // `&logger`?" affordance the streaming path already offers.
+    anchor_def_spans: IndexMap<String, usize>,
     alias_count: usize,
     alias_bytes: usize,
+    // Merge-key occurrences seen across the current document (for
+    // `max_merge_keys`). Mirrors the span-full loader's counter so a
+    // billion-merges DoS is refused on the `Value` fast path too.
+    merge_key_count: usize,
     config: &'a ParseConfig,
     depth: usize,
     in_document: bool,
@@ -774,8 +887,10 @@ impl<'a> NoSpanLoader<'a> {
             docs: Vec::new(),
             stack: Vec::new(),
             anchor_map: IndexMap::new(),
+            anchor_def_spans: IndexMap::new(),
             alias_count: 0,
             alias_bytes: 0,
+            merge_key_count: 0,
             config,
             depth: 0,
             in_document: false,
@@ -796,6 +911,24 @@ impl<'a> NoSpanLoader<'a> {
             Event::DocumentStart => {
                 self.in_document = true;
                 self.anchor_map.clear();
+                self.anchor_def_spans.clear();
+                // Reset the per-document alias budget, matching the span-full
+                // Loader (see DocumentStart above). Without this, alias counts
+                // accumulate across a multi-document stream, so a stream whose
+                // documents are each within budget can be spuriously rejected
+                // on the no-span path — a std/no_std divergence.
+                self.alias_count = 0;
+                self.alias_bytes = 0;
+                // Budget: max_documents (mirror the span-full Loader).
+                // `from_str::<Value>` always routes through this loader, so
+                // without this the fast path silently materialises the whole
+                // stream past the caller's document limit.
+                if self.docs.len() + 1 > self.config.max_documents {
+                    return Err(Error::Budget(crate::BudgetBreach::MaxDocuments {
+                        limit: self.config.max_documents,
+                        observed: self.docs.len() + 1,
+                    }));
+                }
             }
             Event::DocumentEnd => {
                 self.in_document = false;
@@ -806,14 +939,33 @@ impl<'a> NoSpanLoader<'a> {
                     return Err(Error::RepetitionLimitExceeded);
                 }
                 let value = self.anchor_map.get(&anchor).cloned().ok_or_else(|| {
+                    let alias_loc = crate::error::Location::from_index(input, span.start);
+                    let suggestion = crate::error::closest_name(
+                        &anchor,
+                        self.anchor_def_spans.keys().map(|s| s.as_str()),
+                    )
+                    .and_then(|s| {
+                        self.anchor_def_spans.get(s).map(|&idx| {
+                            (
+                                s.to_string(),
+                                crate::error::Location::from_index(input, idx),
+                            )
+                        })
+                    });
                     Error::UnknownAnchorAt {
                         name: anchor,
-                        location: crate::error::Location::from_index(input, span.start),
-                        suggestion: None,
+                        location: alias_loc,
+                        suggestion,
                     }
                 })?;
                 self.alias_bytes += estimate_value_size(&value);
-                if self.alias_bytes > MAX_ALIAS_BYTES {
+                // Bound cumulative alias expansion by both the crate-level
+                // hard cap and the caller-supplied `max_document_length`.
+                // Mirrors the span-full loader (billion-laughs guard) so
+                // the `Value` fast path can't outrun either budget.
+                if self.alias_bytes > self.config.max_document_length
+                    || self.alias_bytes > MAX_ALIAS_BYTES
+                {
                     return Err(Error::RepetitionLimitExceeded);
                 }
                 self.push_value(value)?;
@@ -823,40 +975,40 @@ impl<'a> NoSpanLoader<'a> {
                 style,
                 anchor,
                 tag,
-                ..
+                span,
             } => {
-                let v = if let Some(t) = tag {
-                    resolve_tagged_scalar(&t.0, &t.1, &value, self.config.lossless_u64_integers())?
-                } else if style != crate::parser::ScalarStyle::Plain {
-                    Value::String(value.into_owned())
-                } else {
-                    match crate::streaming::resolve_plain_ext(
-                        &value,
-                        self.config.strict_booleans,
-                        self.config.legacy_booleans,
-                        self.config.no_schema,
-                        self.config.legacy_octal_numbers,
-                        self.config.legacy_sexagesimal,
-                        self.config.lossless_u64_integers(),
-                    ) {
-                        crate::streaming::Scalar::Null => Value::Null,
-                        crate::streaming::Scalar::Bool(b) => Value::Bool(b),
-                        crate::streaming::Scalar::Int(i) => Value::Number(Number::Integer(i)),
-                        #[cfg(feature = "lossless-u64")]
-                        crate::streaming::Scalar::Uint(u) => Value::Number(Number::Unsigned(u)),
-                        crate::streaming::Scalar::Float(f) => Value::Number(Number::Float(f)),
-                        crate::streaming::Scalar::Str(s) => Value::String(s.into_owned()),
-                    }
-                };
+                let v =
+                    if let Some(t) = tag {
+                        if self.config.tag_registry.as_ref().is_some_and(|r| {
+                            crate::streaming::tag_is_registry_stripped(&t.0, &t.1, r)
+                        }) {
+                            // Registered tag: strip through and resolve as if
+                            // untagged, exactly as the streaming path does.
+                            resolve_untagged_scalar(value, style, self.config)
+                        } else {
+                            resolve_tagged_scalar(
+                                &t.0,
+                                &t.1,
+                                &value,
+                                self.config.lossless_u64_integers(),
+                            )?
+                        }
+                    } else {
+                        resolve_untagged_scalar(value, style, self.config)
+                    };
                 if let Some(name) = anchor {
+                    let _ = self.anchor_def_spans.insert(name.clone(), span.start);
                     let _ = self.anchor_map.insert(name, v.clone());
                 }
                 self.push_value(v)?;
             }
-            Event::SequenceStart { anchor, tag, .. } => {
+            Event::SequenceStart { anchor, tag, span } => {
                 self.depth += 1;
                 if self.depth > self.config.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
+                }
+                if let Some(name) = anchor.as_ref() {
+                    let _ = self.anchor_def_spans.insert(name.clone(), span.start);
                 }
                 self.stack.push(NoSpanFrame::Sequence {
                     items: Vec::new(),
@@ -868,20 +1020,24 @@ impl<'a> NoSpanLoader<'a> {
                 self.depth = self.depth.saturating_sub(1);
                 if let Some(NoSpanFrame::Sequence { items, anchor, tag }) = self.stack.pop() {
                     let inner = Value::Sequence(items);
-                    let v = wrap_with_tag(inner, tag.as_ref());
+                    let v = wrap_with_tag(inner, tag.as_ref(), self.config.tag_registry.as_deref());
                     if let Some(name) = anchor {
                         let _ = self.anchor_map.insert(name, v.clone());
                     }
                     self.push_value(v)?;
                 }
             }
-            Event::MappingStart { anchor, tag, .. } => {
+            Event::MappingStart { anchor, tag, span } => {
                 self.depth += 1;
                 if self.depth > self.config.max_depth {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
+                if let Some(name) = anchor.as_ref() {
+                    let _ = self.anchor_def_spans.insert(name.clone(), span.start);
+                }
                 self.stack.push(NoSpanFrame::MappingKey {
                     map: Mapping::new(),
+                    typed_keys: Vec::new(),
                     anchor,
                     merge_values: Vec::new(),
                     tag,
@@ -891,6 +1047,7 @@ impl<'a> NoSpanLoader<'a> {
                 self.depth = self.depth.saturating_sub(1);
                 if let Some(NoSpanFrame::MappingKey {
                     mut map,
+                    typed_keys: _,
                     anchor,
                     merge_values,
                     tag,
@@ -900,7 +1057,7 @@ impl<'a> NoSpanLoader<'a> {
                         apply_merge(&mut map, mv)?;
                     }
                     let inner = Value::Mapping(map);
-                    let v = wrap_with_tag(inner, tag.as_ref());
+                    let v = wrap_with_tag(inner, tag.as_ref(), self.config.tag_registry.as_deref());
                     if let Some(name) = anchor {
                         let _ = self.anchor_map.insert(name, v.clone());
                     }
@@ -918,22 +1075,44 @@ impl<'a> NoSpanLoader<'a> {
         }
         match self.stack.last_mut().unwrap() {
             NoSpanFrame::Sequence { items, .. } => {
+                if items.len() >= self.config.max_sequence_length {
+                    return Err(Error::Serialize(
+                        "sequence length limit exceeded".to_owned(),
+                    ));
+                }
                 items.push(value);
             }
             NoSpanFrame::MappingKey {
                 map,
+                typed_keys,
                 anchor,
                 merge_values,
                 tag,
             } => {
+                // Retain the typed key before coercing to a string so
+                // the value arm can distinguish a distinct-typed
+                // collision (`1` vs `"1"`) from a genuine duplicate.
+                // Skip the clone on merge keys that will be buffered
+                // rather than inserted; merge values bypass the
+                // collision check, so the clone would be waste.
+                let is_buffered_merge_key = matches!(&value, Value::String(s) if s == MERGE_KEY)
+                    && !matches!(self.config.merge_key_policy, MergeKeyPolicy::AsOrdinary);
+                let key_value = if is_buffered_merge_key {
+                    Value::Null
+                } else {
+                    value.clone()
+                };
                 if let Some(key) = value_to_key_string(value) {
                     let old_map = core::mem::take(map);
+                    let old_typed_keys = core::mem::take(typed_keys);
                     let old_anchor = anchor.take();
                     let old_merge_values = core::mem::take(merge_values);
                     let old_tag = tag.take();
                     *self.stack.last_mut().unwrap() = NoSpanFrame::MappingValue {
                         map: old_map,
+                        typed_keys: old_typed_keys,
                         key,
+                        key_value,
                         anchor: old_anchor,
                         merge_values: old_merge_values,
                         tag: old_tag,
@@ -942,7 +1121,9 @@ impl<'a> NoSpanLoader<'a> {
             }
             NoSpanFrame::MappingValue {
                 map,
+                typed_keys,
                 key,
+                key_value,
                 anchor,
                 merge_values,
                 tag,
@@ -957,20 +1138,65 @@ impl<'a> NoSpanLoader<'a> {
                     ));
                 }
                 if is_merge && !merge_treat_as_ordinary {
+                    self.merge_key_count = self.merge_key_count.saturating_add(1);
+                    if self.merge_key_count > self.config.max_merge_keys {
+                        return Err(Error::Budget(crate::BudgetBreach::MaxMergeKeys {
+                            limit: self.config.max_merge_keys,
+                            observed: self.merge_key_count,
+                        }));
+                    }
                     merge_values.push(value);
                 } else {
+                    if map.len() >= self.config.max_mapping_keys {
+                        return Err(Error::Serialize("mapping key limit exceeded".to_owned()));
+                    }
                     // Steal the owned key out of the frame instead of
                     // cloning it — the frame is overwritten (without
                     // `key`) immediately below, so the emptied slot is
                     // discarded.
-                    let _ = map.insert(core::mem::take(key), value);
+                    let key = core::mem::take(key);
+                    let key_value = core::mem::take(key_value);
+                    // Distinct-typed collision: the string key already
+                    // exists but was produced by a different typed key
+                    // (e.g. `1` then `"1"`). Silently collapsing these
+                    // would drop an entry — refuse regardless of
+                    // DuplicateKeyPolicy so the fast `Value` path has
+                    // the same guard as the span-full loader.
+                    if let Some(idx) = map.get_index_of(&key) {
+                        if typed_keys[idx] != key_value {
+                            return Err(Error::KeyCollision(key));
+                        }
+                        // Genuine duplicate: apply the caller's
+                        // policy. Mirrors the span-full loader arms.
+                        match self.config.duplicate_key_policy {
+                            DuplicateKeyPolicy::First => {
+                                // Keep the first occurrence: no-op.
+                            }
+                            DuplicateKeyPolicy::Last => {
+                                let _ = map.insert(key, value);
+                            }
+                            DuplicateKeyPolicy::Error => {
+                                return Err(Error::DuplicateKey(key));
+                            }
+                        }
+                    } else {
+                        let _ = map.insert(key, value);
+                        typed_keys.push(key_value);
+                    }
+                    debug_assert_eq!(
+                        map.len(),
+                        typed_keys.len(),
+                        "typed_keys must remain parallel to map"
+                    );
                 }
                 let old_map = core::mem::take(map);
+                let old_typed_keys = core::mem::take(typed_keys);
                 let old_anchor = anchor.take();
                 let old_merge_values = core::mem::take(merge_values);
                 let old_tag = tag.take();
                 *self.stack.last_mut().unwrap() = NoSpanFrame::MappingKey {
                     map: old_map,
+                    typed_keys: old_typed_keys,
                     anchor: old_anchor,
                     merge_values: old_merge_values,
                     tag: old_tag,
@@ -1013,6 +1239,24 @@ fn value_to_key_string(value: Value) -> Option<String> {
             }
         }
         Value::Number(Number::Float(n)) => {
+            // Special-value floats need spec-shaped spellings so a
+            // YAML `nan:` or `.inf:` key round-trips as the string
+            // it was written as. Rust's Debug prints these as `NaN`
+            // and `inf`; ryu prints them as `NaN` and `inf` too —
+            // both diverge from the resolver's accepted plain forms
+            // (`nan`, `inf`, `-inf`) that keyed lookups typically
+            // use. Canonicalise to lowercase-plain here so keys
+            // survive `Value` deserialization.
+            if n.is_nan() {
+                return Some("nan".into());
+            }
+            if n.is_infinite() {
+                return Some(if n.is_sign_negative() {
+                    "-inf".into()
+                } else {
+                    "inf".into()
+                });
+            }
             #[cfg(feature = "fast-float")]
             {
                 Some(ryu::Buffer::new().format(n).to_owned())
@@ -1059,10 +1303,19 @@ fn value_to_key_string(value: Value) -> Option<String> {
 /// stripped — they are no-ops on a sequence/mapping anyway and
 /// `!!seq` / `!!map` would otherwise leak into the deserialise
 /// return path as redundant metadata.
-fn wrap_with_tag(inner: Value, tag: Option<&(String, String)>) -> Value {
+fn wrap_with_tag(
+    inner: Value,
+    tag: Option<&(String, String)>,
+    registry: Option<&crate::TagRegistry>,
+) -> Value {
     let Some((handle, suffix)) = tag else {
         return inner;
     };
+    // A tag registered for strip-through drops the tag and exposes the bare
+    // collection, matching what the streaming path yields.
+    if registry.is_some_and(|r| crate::streaming::tag_is_registry_stripped(handle, suffix, r)) {
+        return inner;
+    }
     // `!!seq` / `!!map` (and the explicit URI form) are
     // pure-metadata core tags on collections; the `Sequence` or
     // `Mapping` variant of `Value` already conveys "seq" /
@@ -1094,6 +1347,40 @@ fn concat_str(a: &str, b: &str) -> String {
 /// Resolve a tagged scalar into a typed `Value`. Handles the YAML 1.2
 /// core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
 /// and any custom tag falls through to the `Tagged` wrapper.
+/// Resolve a scalar as if it carried no tag: quoted / literal / folded →
+/// `String`; plain → YAML 1.2 schema resolution (via the shared
+/// `resolve_plain_ext`, so the two loaders and the streaming path agree).
+/// This is also the strip-through result for a tag registered in the active
+/// [`TagRegistry`], keeping AST and streaming byte-for-byte equivalent.
+fn resolve_untagged_scalar(
+    value: Cow<'_, str>,
+    style: crate::parser::ScalarStyle,
+    config: &ParseConfig,
+) -> Value {
+    if style != crate::parser::ScalarStyle::Plain {
+        // Quoted/literal/folded scalars always resolve as strings — YAML
+        // schema resolution only applies to plain scalars.
+        return Value::String(value.into_owned());
+    }
+    match crate::streaming::resolve_plain_ext(
+        &value,
+        config.strict_booleans,
+        config.legacy_booleans,
+        config.no_schema,
+        config.legacy_octal_numbers,
+        config.legacy_sexagesimal,
+        config.lossless_u64_integers(),
+    ) {
+        crate::streaming::Scalar::Null => Value::Null,
+        crate::streaming::Scalar::Bool(b) => Value::Bool(b),
+        crate::streaming::Scalar::Int(i) => Value::Number(Number::Integer(i)),
+        #[cfg(feature = "lossless-u64")]
+        crate::streaming::Scalar::Uint(u) => Value::Number(Number::Unsigned(u)),
+        crate::streaming::Scalar::Float(f) => Value::Number(Number::Float(f)),
+        crate::streaming::Scalar::Str(s) => Value::String(s.into_owned()),
+    }
+}
+
 fn resolve_tagged_scalar(
     handle: &str,
     suffix: &str,
@@ -1259,4 +1546,48 @@ fn run_event_policies(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression (v0.0.14 review): NoSpanLoader must zero the alias budget
+    // at each DocumentStart, like the span-full Loader. A multi-document
+    // stream whose documents are each within budget must not be rejected
+    // because the per-document counts accumulate across the stream (a
+    // std/no_std divergence, since the no-span loader is the no_std default).
+    #[test]
+    fn no_span_loader_resets_alias_budget_per_document() {
+        let src = "\
+p: &x 1
+q: *x
+r: *x
+---
+p: &y 2
+q: *y
+r: *y
+---
+p: &z 3
+q: *z
+r: *z
+";
+        // Each document uses exactly 2 aliases (== the limit); three
+        // documents sum to 6. Pre-fix the no-span loader accumulated and
+        // tripped RepetitionLimitExceeded partway through the second doc.
+        let config = ParseConfig {
+            max_alias_expansions: 2,
+            ..ParseConfig::default()
+        };
+        let docs = load_all_no_spans(src, &config)
+            .expect("each document is within the per-document alias budget");
+        assert_eq!(docs.len(), 3);
+
+        // Cross-path parity: the span-full loader already resets per
+        // document, so it accepts the identical stream under the identical
+        // budget. Both paths must agree.
+        let via_span_full =
+            crate::parser::parse(src, &config).expect("span-full loader accepts the same stream");
+        assert_eq!(via_span_full.len(), 3);
+    }
 }

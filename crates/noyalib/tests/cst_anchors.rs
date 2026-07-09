@@ -349,3 +349,141 @@ other: 1
     assert!(doc.to_string().contains("&flags"));
     assert!(doc.to_string().contains("other: 2"));
 }
+
+// ── Regression: set/set_value must not write through an alias ────────
+
+#[test]
+fn set_through_alias_is_refused_not_written_to_the_anchor() {
+    // v0.0.14 review regression. `span_at` resolves an alias reference
+    // *through* to its anchor's value span (issue #149) — the correct
+    // target for a read. `set` / `set_value` reused that span for writes,
+    // so `set("ref", …)` spliced over the ANCHOR's value (`foo` on the
+    // `base:` line), silently corrupting a *different* key and leaving the
+    // alias untouched. They must refuse the edit instead.
+    let mut doc = parse_document("base: &a foo\nref: *a\n").unwrap();
+    let before = doc.to_string();
+
+    let err = doc.set("ref", "bar");
+    assert!(
+        err.is_err(),
+        "set through an alias must be refused, not silently mis-applied to the anchor"
+    );
+    assert_eq!(
+        doc.to_string(),
+        before,
+        "a refused set must leave the document byte-for-byte unchanged (no anchor corruption)"
+    );
+
+    // set_value shares the hazard and the guard.
+    let err = doc.set_value("ref", &noyalib::Value::String("bar".into()));
+    assert!(err.is_err());
+    assert_eq!(doc.to_string(), before);
+
+    // A plain (non-aliased) sibling value is still writable — the guard is
+    // scoped to alias targets, it does not block ordinary edits.
+    let mut doc2 = parse_document("base: &a foo\nplain: keep\n").unwrap();
+    doc2.set("plain", "changed").unwrap();
+    assert!(doc2.to_string().contains("plain: changed"));
+}
+
+#[test]
+fn set_through_aliased_sequence_item_is_refused() {
+    // The same hazard exists for an alias used as a sequence item.
+    let mut doc = parse_document("anchor: &a foo\nlist:\n  - *a\n").unwrap();
+    let before = doc.to_string();
+    assert!(doc.set("list.0", "bar").is_err());
+    assert_eq!(doc.to_string(), before);
+}
+
+// ── Regression: alias-write guard must cover undecodable (quoted) keys ──
+
+#[test]
+fn set_through_double_quoted_alias_key_is_refused() {
+    // ultrareview BUG003. The alias-write guard matched keys via
+    // `entry_key_text`, which can't decode double-quoted keys, so
+    // `set("target_key", …)` on a double-quoted alias entry slipped past
+    // the guard and spliced the ANCHOR's value — silent corruption of a
+    // different key. Must be refused.
+    let src = "anchor_key: &a foo\n\"target_key\": *a\n";
+    let mut doc = parse_document(src).unwrap();
+    let before = doc.to_string();
+    assert!(
+        doc.set("target_key", "bar").is_err(),
+        "set through a double-quoted alias key must be refused"
+    );
+    assert_eq!(
+        doc.to_string(),
+        before,
+        "document must be unchanged (no anchor corruption)"
+    );
+}
+
+#[test]
+fn set_double_quoted_key_with_plain_value_still_works() {
+    // No regression: an ordinary double-quoted key whose value is NOT an
+    // alias is still writable — the guard only fires on alias values.
+    let mut doc = parse_document("\"my key\": old\nplain: keep\n").unwrap();
+    doc.set("my key", "new").unwrap();
+    assert!(
+        doc.to_string().contains("\"my key\": new"),
+        "got {:?}",
+        doc.to_string()
+    );
+    assert!(doc.to_string().contains("plain: keep"));
+}
+
+// ── Alias-write guard: resolution-layer coverage (ultrareview #2) ──────
+// The guard now keys off resolve_span's through-alias flag (the same
+// resolution span_at uses), closing four holes the green-tree detector
+// missed: flow collections, nested descent, mixed duplicate keys, and a
+// false-positive refusal.
+
+#[test]
+fn set_through_alias_in_flow_sequence_is_refused() {
+    // HOLE1: flow collections keep flat tokens (no SequenceItem nodes), so
+    // the old green-walk missed them and set spliced the anchor.
+    let mut doc = parse_document("a: &x foo\nb: [*x, 2]\n").unwrap();
+    let before = doc.to_string();
+    assert!(doc.set("b[0]", "bar").is_err());
+    assert_eq!(doc.to_string(), before, "anchor must be untouched");
+}
+
+#[test]
+fn set_nested_through_alias_is_refused() {
+    // HOLE2: `ref.foo` descends through the alias into the anchor's mapping.
+    let mut doc = parse_document("anchor: &a\n  foo: 1\n  bar: 2\nref: *a\n").unwrap();
+    let before = doc.to_string();
+    assert!(doc.set("ref.foo", "10").is_err());
+    assert_eq!(
+        doc.to_string(),
+        before,
+        "anchor's nested value must be untouched"
+    );
+}
+
+#[test]
+fn set_duplicate_key_last_is_alias_is_refused() {
+    // HOLE3: `key: value1` then `"key": *a` — DuplicateKeyPolicy::Last makes
+    // the resolved value the alias entry, even though a decodable plain entry
+    // also matched the key.
+    let mut doc = parse_document("anchor_key: &a foo\nkey: value1\n\"key\": *a\n").unwrap();
+    let before = doc.to_string();
+    assert!(doc.set("key", "bar").is_err());
+    assert_eq!(doc.to_string(), before, "anchor must be untouched");
+}
+
+#[test]
+fn set_quoted_key_with_plain_value_beside_alias_sibling_still_works() {
+    // HOLE4: a plain-valued double-quoted key must remain writable even when
+    // an unrelated sibling is an alias (the old boolean-flag guard wrongly
+    // refused this).
+    let mut doc =
+        parse_document("anchor: &a foo\n\"my key\": old\n\"other quoted\": *a\n").unwrap();
+    doc.set("my key", "new").unwrap();
+    assert!(
+        doc.to_string().contains("\"my key\": new"),
+        "got {:?}",
+        doc.to_string()
+    );
+    assert!(doc.to_string().contains("&a foo"), "anchor unchanged");
+}

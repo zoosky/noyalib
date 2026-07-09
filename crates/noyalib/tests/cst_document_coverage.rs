@@ -653,6 +653,40 @@ fn coverage_doc_span_at_empty_path_returns_root_collection() {
     assert!(span.is_some() || span.is_none());
 }
 
+// ── Implicit-null nodes have no span of their own ───────────────────
+
+#[test]
+fn coverage_doc_span_at_implicit_null_is_none() {
+    // An absent block-mapping value is the implicit null; its bytes are
+    // the `:` indicator, which is not the value, so span_at reports None.
+    let doc = parse_document("c:\nother: 1\n").unwrap();
+    assert_eq!(doc.span_at("c"), None);
+
+    // Same at end of input.
+    let doc = parse_document("a: 1\nc:\n").unwrap();
+    assert_eq!(doc.span_at("c"), None);
+
+    // Empty sequence item (the `-` indicator) is likewise byte-less.
+    let doc = parse_document("- \n- x\n").unwrap();
+    assert_eq!(doc.span_at("[0]"), None);
+}
+
+#[test]
+fn coverage_doc_span_at_explicit_null_and_empty_quote_keep_span() {
+    // Explicit nulls and quoted empties DO have source bytes.
+    let doc = parse_document("c: ~\nother: 1\n").unwrap();
+    let (s, e) = doc.span_at("c").unwrap();
+    assert_eq!(&doc.source()[s..e], "~");
+
+    let doc = parse_document("c: null\n").unwrap();
+    let (s, e) = doc.span_at("c").unwrap();
+    assert_eq!(&doc.source()[s..e], "null");
+
+    let doc = parse_document("c: ''\n").unwrap();
+    let (s, e) = doc.span_at("c").unwrap();
+    assert_eq!(&doc.source()[s..e], "''");
+}
+
 // ── parse_stream propagates errors from document_boundaries (L985) ──
 
 #[test]
@@ -768,6 +802,89 @@ fn coverage_doc_span_at_mapping_value_is_a_sequence() {
     assert!(txt.contains("- one"));
 }
 
+// ── Keep-chomped block scalars retain their kept trailing blanks ────
+
+#[test]
+fn coverage_doc_span_at_keep_chomped_block_scalar_keeps_trailing_blanks() {
+    // `|+` chomping keeps trailing line breaks as *content*. The value
+    // span must include them; trimming (as clip/strip spans do) would
+    // yield a slice that re-parses to a shorter, different value.
+    let src = "key: |+\n  kept\n\n\n";
+    let doc = parse_document(src).unwrap();
+    let (s, e) = doc.span_at("key").unwrap();
+    assert_eq!(&doc.source()[s..e], "|+\n  kept\n\n\n");
+    // The slice re-parses to exactly the scalar's value.
+    let reparsed: Value = noyalib::from_str(&doc.source()[s..e]).unwrap();
+    assert_eq!(reparsed, Value::String("kept\n\n\n".to_string()));
+}
+
+#[test]
+fn coverage_doc_span_at_folded_keep_chomped_keeps_trailing_blanks() {
+    // Same for the folded (`>+`) keep-chomped form.
+    let src = "key: >+\n  kept\n\n\n";
+    let doc = parse_document(src).unwrap();
+    let (s, e) = doc.span_at("key").unwrap();
+    assert_eq!(&doc.source()[s..e], ">+\n  kept\n\n\n");
+}
+
+#[test]
+fn coverage_doc_span_at_clip_and_strip_block_scalars_still_trim() {
+    // Clip (`|`) and strip (`|-`) block scalars do NOT own trailing
+    // blank lines, so their value span is trimmed as before.
+    let clip = parse_document("key: |\n  kept\n\n\n").unwrap();
+    let (s, e) = clip.span_at("key").unwrap();
+    assert_eq!(&clip.source()[s..e], "|\n  kept");
+
+    let strip = parse_document("key: |-\n  kept\n\n\n").unwrap();
+    let (s, e) = strip.span_at("key").unwrap();
+    assert_eq!(&strip.source()[s..e], "|-\n  kept");
+}
+
+// ── Block-collection value spans include their first line's indent ──
+
+#[test]
+fn coverage_doc_span_at_block_mapping_value_is_uniformly_indented() {
+    // The value span must include the first line's indentation so the
+    // slice is uniformly indented and re-parses to the selected value.
+    let src = "config:\n  debug: true\n  level: info\nafter: 1\n";
+    let doc = parse_document(src).unwrap();
+    let (s, e) = doc.span_at("config").unwrap();
+    assert_eq!(&doc.source()[s..e], "  debug: true\n  level: info");
+    let reparsed: Value = noyalib::from_str(&doc.source()[s..e]).unwrap();
+    assert_eq!(reparsed, doc.as_value().get("config").cloned().unwrap());
+}
+
+#[test]
+fn coverage_doc_span_at_nested_block_sequence_does_not_renest() {
+    // Regression: a dedented first line ('- alpha\n    - beta') silently
+    // re-parses as the single scalar ["alpha - beta"]. The uniformly
+    // indented slice re-parses to the real two-element sequence.
+    let src = "spec:\n  items:\n    - alpha\n    - beta\n";
+    let doc = parse_document(src).unwrap();
+    let (s, e) = doc.span_at("spec.items").unwrap();
+    assert_eq!(&doc.source()[s..e], "    - alpha\n    - beta");
+    let reparsed: Value = noyalib::from_str(&doc.source()[s..e]).unwrap();
+    // Two elements, not one folded scalar.
+    assert_eq!(reparsed.as_sequence().map(|s| s.len()), Some(2));
+    let expected = doc
+        .as_value()
+        .get("spec")
+        .and_then(|s| s.get("items"))
+        .cloned()
+        .unwrap();
+    assert_eq!(reparsed, expected);
+}
+
+#[test]
+fn coverage_doc_span_at_same_line_nested_sequence_not_extended() {
+    // The inner sequence of `- - a` shares its line with the outer `-`,
+    // so its span must NOT be widened over the `- ` prefix.
+    let src = "outer:\n  - - a\n";
+    let doc = parse_document(src).unwrap();
+    let (s, e) = doc.span_at("outer[0]").unwrap();
+    assert_eq!(&doc.source()[s..e], "- a");
+}
+
 // ── resolve_span sequence index out-of-bounds typed-cache fallback ──
 
 #[test]
@@ -848,4 +965,23 @@ fn coverage_doc_insert_entry_into_empty_mapping_errors() {
             || msg.contains("not a mapping"),
         "{msg}"
     );
+}
+
+#[test]
+fn coverage_doc_span_at_anchored_tagged_keep_chomped_keeps_trailing_blanks() {
+    // ultrareview BUG001: an anchor (`&name`) / tag (`!Tag`, `!!str`) property
+    // widens the value span start over `&` / `!`, so the keep-chomp guard must
+    // skip the prefix before inspecting the block indicator. Otherwise the kept
+    // trailing blank lines are trimmed and the slice re-parses to a shorter
+    // value.
+    for (src, want) in [
+        ("key: &anc |+\n  kept\n\n\n", "&anc |+\n  kept\n\n\n"),
+        ("key: !!str |+\n  kept\n\n\n", "!!str |+\n  kept\n\n\n"),
+        ("key: !Tag |+\n  kept\n\n\n", "!Tag |+\n  kept\n\n\n"),
+        ("key: &anc >+\n  kept\n\n\n", "&anc >+\n  kept\n\n\n"),
+    ] {
+        let doc = parse_document(src).unwrap();
+        let (s, e) = doc.span_at("key").unwrap();
+        assert_eq!(&doc.source()[s..e], want, "span for {src:?}");
+    }
 }

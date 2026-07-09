@@ -199,7 +199,7 @@ impl Document {
         // through `set` / `set_value` no longer warms the typed
         // cache between iterations.
         if let Some((s, e)) = resolve_path_in_green(&self.green, &segments, &self.source) {
-            return Some(trim_trailing_blank(&self.source, s, e));
+            return Some(trim_value_span(&self.source, s, e));
         }
         // Fallback for paths the green-tree walker doesn't
         // currently handle — e.g. quoted keys with escapes,
@@ -207,8 +207,10 @@ impl Document {
         self.ensure_cache();
         let cache = self.cache.borrow();
         let (value, span_tree) = cache.as_ref().expect("ensure_cache populated");
-        let (s, e) = resolve_span(value, span_tree, &segments)?;
-        Some(trim_trailing_blank(&self.source, s, e))
+        // Reads resolve an alias through to its anchor (issue #149); the
+        // through-alias flag only matters for writes (see `write_span`).
+        let ((s, e), _through_alias) = resolve_span(value, span_tree, &segments)?;
+        Some(trim_value_span(&self.source, s, e))
     }
 
     /// Populate the typed cache from `self.source` if it is empty.
@@ -474,10 +476,36 @@ impl Document {
     /// assert_eq!(doc.to_string(), "name: foo\nversion: 0.0.2\n");
     /// ```
     pub fn set(&mut self, path: &str, fragment: &str) -> Result<()> {
-        let (s, e) = self
-            .span_at(path)
-            .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
+        let (s, e) = self.write_span(path)?;
         self.replace_span(s, e, fragment)
+    }
+
+    /// Resolve `path` to a byte span for a **write**, refusing when the value
+    /// is (or resolves through) an alias reference.
+    ///
+    /// `span_at` resolves an alias *through* to its anchor's value span (issue
+    /// #149) — the right target for a read, but splicing there would rewrite
+    /// the **anchor's** bytes, a different key. The green-tree fast path never
+    /// yields an alias (it bails on `AliasMark`), so only the typed-cache
+    /// fallback can; `resolve_span`'s `through_alias` flag is the single source
+    /// of truth for that, so the two paths cannot disagree.
+    fn write_span(&self, path: &str) -> Result<(usize, usize)> {
+        let segments = parse_query_path(path);
+        if let Some((s, e)) = resolve_path_in_green(&self.green, &segments, &self.source) {
+            return Ok(trim_value_span(&self.source, s, e));
+        }
+        self.ensure_cache();
+        let cache = self.cache.borrow();
+        let (value, span_tree) = cache.as_ref().expect("ensure_cache populated");
+        let ((s, e), through_alias) = resolve_span(value, span_tree, &segments)
+            .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
+        if through_alias {
+            return Err(Error::Parse(format!(
+                "cannot set `{path}`: its value is (or resolves through) an alias \
+                 reference; edit the anchor definition or replace the alias explicitly"
+            )));
+        }
+        Ok(trim_value_span(&self.source, s, e))
     }
 
     /// Replace the value at `path` with a typed [`Value`], formatting
@@ -516,9 +544,7 @@ impl Document {
     /// assert_eq!(doc.to_string(), "name: noyalib\nversion: 0.0.2\n");
     /// ```
     pub fn set_value(&mut self, path: &str, value: &Value) -> Result<()> {
-        let (s, e) = self
-            .span_at(path)
-            .ok_or_else(|| Error::Parse(format!("path not found: {path}")))?;
+        let (s, e) = self.write_span(path)?;
         let kind = leaf_kind_at(&self.green, s).ok_or_else(|| {
             Error::Parse("could not locate green-tree leaf at target span".into())
         })?;
@@ -1324,6 +1350,32 @@ fn decode_single_quoted(raw: &str) -> Option<Cow<'_, str>> {
 /// Find the value position inside a `MappingEntry` and either
 /// return its byte range (if `tail` is empty) or recurse into it
 /// with `tail`.
+/// Whether a resolved value node is a block (indentation-structured)
+/// collection, whose span begins on its own source line.
+fn is_block_collection(k: SyntaxKind) -> bool {
+    matches!(k, SyntaxKind::BlockMapping | SyntaxKind::BlockSequence)
+}
+
+/// Back `start` up over the inline whitespace that indents a value's first
+/// line, but only when that value begins its own line (the whitespace run is
+/// preceded by a line break or the start of input). A value that shares its
+/// line with a `-` / `:` / `{` (e.g. the inner sequence of `- - a`) is left
+/// untouched. This makes a block collection's slice uniformly indented — its
+/// first line keeps the indentation the following lines already carry — so it
+/// re-parses to the selected value instead of silently re-nesting.
+fn extend_to_line_start(source: &str, start: usize) -> usize {
+    let b = source.as_bytes();
+    let mut i = start;
+    while i > 0 && matches!(b[i - 1], b' ' | b'\t') {
+        i -= 1;
+    }
+    if i == 0 || matches!(b[i - 1], b'\n' | b'\r') {
+        i
+    } else {
+        start
+    }
+}
+
 fn resolve_value_in_entry(
     entry: &GreenNode,
     base: usize,
@@ -1332,17 +1384,19 @@ fn resolve_value_in_entry(
 ) -> Option<(usize, usize)> {
     let (value_kind, value_range, value_node) = entry_value(entry, base)?;
     if tail.is_empty() {
-        return Some(value_range);
+        // A block collection's node starts at its first key/item token,
+        // leaving its first line's indentation just outside the span; widen
+        // to the line start so the slice is uniformly indented.
+        let start = if is_block_collection(value_kind) {
+            extend_to_line_start(source, value_range.0)
+        } else {
+            value_range.0
+        };
+        return Some((start, value_range.1));
     }
     // Recursing further requires the value to be a composite.
     let node = value_node?;
-    walk_path(node, tail, value_range.0, source).map(|(s, e)| {
-        // Defensive: ensure recursion stays inside the value's
-        // span — composite parents may contain trailing trivia
-        // that's outside the conceptual "value" range.
-        let _ = value_kind;
-        (s, e)
-    })
+    walk_path(node, tail, value_range.0, source)
 }
 
 fn resolve_value_in_item(
@@ -1351,9 +1405,14 @@ fn resolve_value_in_item(
     tail: &[QuerySegment],
     source: &str,
 ) -> Option<(usize, usize)> {
-    let (_, value_range, value_node) = item_value(item, base)?;
+    let (value_kind, value_range, value_node) = item_value(item, base)?;
     if tail.is_empty() {
-        return Some(value_range);
+        let start = if is_block_collection(value_kind) {
+            extend_to_line_start(source, value_range.0)
+        } else {
+            value_range.0
+        };
+        return Some((start, value_range.1));
     }
     let node = value_node?;
     walk_path(node, tail, value_range.0, source)
@@ -1386,10 +1445,17 @@ fn entry_value(
                     if *kind == SyntaxKind::ColonIndicator {
                         after_colon = true;
                     }
+                } else if *kind == SyntaxKind::AliasMark {
+                    // An alias reference (`*name`) is a single token with
+                    // no value node of its own; its bytes are a dangling
+                    // alias that does not re-parse standalone. Bail so
+                    // span_at falls back to the typed cache, whose SpanTree
+                    // resolves the alias through to its anchor definition's
+                    // self-contained value span.
+                    return None;
                 } else if is_value_property_kind(*kind) {
-                    // `!Tag` / `&anchor` / `*alias` prefix —
-                    // remember the earliest start and keep
-                    // scanning for the scalar that follows.
+                    // `!Tag` / `&anchor` prefix — remember the earliest
+                    // start and keep scanning for the scalar that follows.
                     let _ = prefix_start.get_or_insert(child_start);
                 } else if !is_trivia_kind(*kind) {
                     let start = prefix_start.unwrap_or(child_start);
@@ -1433,6 +1499,10 @@ fn item_value(
                     if *kind == SyntaxKind::DashIndicator {
                         after_dash = true;
                     }
+                } else if *kind == SyntaxKind::AliasMark {
+                    // Alias reference as a sequence item: bail to the typed
+                    // cache, which resolves it to the anchor's value span.
+                    return None;
                 } else if is_value_property_kind(*kind) {
                     let _ = prefix_start.get_or_insert(child_start);
                 } else if !is_trivia_kind(*kind) {
@@ -1473,10 +1543,10 @@ fn is_trivia_kind(k: SyntaxKind) -> bool {
 /// tag and the quoted scalar) rather than `6..13` (the tag
 /// alone, which was the pre-fix behaviour).
 fn is_value_property_kind(k: SyntaxKind) -> bool {
-    matches!(
-        k,
-        SyntaxKind::AnchorMark | SyntaxKind::TagMark | SyntaxKind::AliasMark
-    )
+    // Alias marks are handled separately (they bail the green walk to the
+    // typed cache); only anchor/tag definition prefixes stretch the value
+    // span to cover the property plus the scalar / node that follows.
+    matches!(k, SyntaxKind::AnchorMark | SyntaxKind::TagMark)
 }
 
 // ── Path resolution ─────────────────────────────────────────────────
@@ -1492,18 +1562,117 @@ fn trim_trailing_blank(source: &str, start: usize, mut end: usize) -> (usize, us
     (start, end)
 }
 
+/// Trim trailing separator whitespace from a *value* span, except for
+/// keep-chomped (`|+` / `>+`) block scalars, whose trailing line breaks are
+/// content rather than separation. Trimming those would yield a slice that
+/// re-parses to a shorter, different value (`"kept\n"` instead of the true
+/// `"kept\n\n\n"`).
+fn trim_value_span(source: &str, start: usize, end: usize) -> (usize, usize) {
+    if is_keep_chomped_block_scalar(source, start, end) {
+        (start, end)
+    } else {
+        trim_trailing_blank(source, start, end)
+    }
+}
+
+/// Whether `[start, end)` denotes a keep-chomped block scalar: it begins with
+/// a `|` / `>` block indicator carrying a `+` chomping indicator on the header
+/// line (`|+`, `>+`, `|+2`, `|2+`). A value span's start is the block
+/// indicator itself (the scanner marks it there), and no plain/quoted scalar
+/// or collection value begins with a bare `|` / `>`, so this cannot misfire on
+/// other node kinds.
+fn is_keep_chomped_block_scalar(source: &str, start: usize, end: usize) -> bool {
+    let bytes = source.as_bytes();
+    // The value span's start may have been widened leftward over an anchor
+    // (`&name`) / tag (`!Tag`, `!!str`) property prefix (see `entry_value`), so
+    // the block indicator is not necessarily at `start`. Skip those property
+    // tokens before inspecting for `|` / `>`, otherwise an anchored/tagged
+    // keep-chomped scalar (`key: &anc |+`) is misclassified and its kept
+    // trailing blank lines are trimmed.
+    let start = skip_value_property_prefix(bytes, start, end);
+    if start >= end || (bytes[start] != b'|' && bytes[start] != b'>') {
+        return false;
+    }
+    // A `+` anywhere on the header line (before the first line break) is the
+    // keep-chomping indicator.
+    for &b in &bytes[start + 1..end] {
+        match b {
+            b'\n' | b'\r' => return false,
+            b'+' => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Advance past leading anchor (`&name`) / tag (`!Tag`, `!!str`) property
+/// tokens and the whitespace between them, returning the index of the value
+/// content proper. Value spans are widened leftward over these properties, so
+/// callers inspecting the value's first byte must skip them first.
+fn skip_value_property_prefix(bytes: &[u8], mut start: usize, end: usize) -> usize {
+    loop {
+        while start < end && matches!(bytes[start], b' ' | b'\t') {
+            start += 1;
+        }
+        if start < end && matches!(bytes[start], b'&' | b'!') {
+            start += 1;
+            while start < end && !matches!(bytes[start], b' ' | b'\t' | b'\n' | b'\r') {
+                start += 1;
+            }
+        } else {
+            return start;
+        }
+    }
+}
+
+/// The end byte of a span tree, transparently unwrapping alias indirection.
+fn span_tree_end(t: &SpanTree) -> usize {
+    match t {
+        SpanTree::Leaf(_, e) => *e,
+        SpanTree::Sequence { end, .. } | SpanTree::Mapping { end, .. } => *end,
+        SpanTree::Alias(inner) => span_tree_end(inner),
+    }
+}
+
+/// The `(start, end)` bounds of a span tree, transparently unwrapping alias
+/// indirection.
+fn span_tree_bounds(t: &SpanTree) -> (usize, usize) {
+    match t {
+        SpanTree::Leaf(s, e) => (*s, *e),
+        SpanTree::Sequence { start, end, .. } | SpanTree::Mapping { start, end, .. } => {
+            (*start, *end)
+        }
+        SpanTree::Alias(inner) => span_tree_bounds(inner),
+    }
+}
+
+/// Resolve `segments` to a byte span in the typed cache. The returned `bool`
+/// is `true` when resolution passed *through* an alias reference (the span
+/// then belongs to the anchor, not the addressed key) — correct to return for
+/// a read, but a write must refuse it.
 fn resolve_span(
     value: &Value,
     span_tree: &SpanTree,
     segments: &[QuerySegment],
-) -> Option<(usize, usize)> {
+) -> Option<((usize, usize), bool)> {
+    // An alias site substitutes the anchor's (value, tree). Resolve against the
+    // anchor but flag that the path went through an alias — at any depth, so
+    // `ref` and `ref.nested` and `[*a]` are all caught.
+    if let SpanTree::Alias(inner) = span_tree {
+        return resolve_span(value, inner, segments).map(|(span, _)| (span, true));
+    }
     if segments.is_empty() {
-        return Some(match span_tree {
-            SpanTree::Leaf(s, e) => (*s, *e),
+        return match span_tree {
+            // A zero-width leaf marks an implicit null (an absent
+            // block-mapping value or empty sequence item): the node has no
+            // source bytes of its own, so it has no span.
+            SpanTree::Leaf(s, e) if s == e => None,
+            SpanTree::Leaf(s, e) => Some(((*s, *e), false)),
             SpanTree::Sequence { start, end, .. } | SpanTree::Mapping { start, end, .. } => {
-                (*start, *end)
+                Some(((*start, *end), false))
             }
-        });
+            SpanTree::Alias(_) => None, // unwrapped above
+        };
     }
     let (head, tail) = segments.split_first()?;
     match (head, value, span_tree) {
@@ -1591,10 +1760,7 @@ fn entry_line_span(
                 .position(|(mk, _)| mk == k)
                 .ok_or_else(|| Error::Parse(format!("path not found: missing key {k:?}")))?;
             let ((key_start, _key_end), child_tree) = &entries[pos];
-            let raw_value_end = match child_tree {
-                SpanTree::Leaf(_, e) => *e,
-                SpanTree::Sequence { end, .. } | SpanTree::Mapping { end, .. } => *end,
-            };
+            let raw_value_end = span_tree_end(child_tree);
             let (_, value_end) = trim_trailing_blank(source, *key_start, raw_value_end);
             require_single_line(source, *key_start, value_end)?;
             Ok(line_extent(source, *key_start, value_end))
@@ -1608,12 +1774,7 @@ fn entry_line_span(
             let item_tree = items
                 .get(*i)
                 .ok_or_else(|| Error::Parse(format!("path not found: index {i} out of bounds")))?;
-            let (value_start, raw_value_end) = match item_tree {
-                SpanTree::Leaf(s, e) => (*s, *e),
-                SpanTree::Sequence { start, end, .. } | SpanTree::Mapping { start, end, .. } => {
-                    (*start, *end)
-                }
-            };
+            let (value_start, raw_value_end) = span_tree_bounds(item_tree);
             let (_, value_end) = trim_trailing_blank(source, value_start, raw_value_end);
             // The `-` indicator sits before the value on the same line,
             // separated by inline whitespace. Walk backward to find it.

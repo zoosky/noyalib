@@ -246,6 +246,62 @@ impl fmt::Display for BudgetBreach {
     }
 }
 
+/// Coarse-grained classification of an [`Error`], exposed for
+/// callers that need to route errors without pattern-matching
+/// every variant. Prefer this over inventing per-variant boolean
+/// accessors (`is_syntax()`, `is_io()`, …): one classifier scales
+/// as new variants land under [`Error`]'s `#[non_exhaustive]`
+/// attribute.
+///
+/// This enum is itself `#[non_exhaustive]` so future variants
+/// (e.g. a dedicated Timeout kind) can be added without a semver
+/// break.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{from_str, ErrorKind, Value};
+/// let err = from_str::<Value>("1: a\n\"1\": b\n").unwrap_err();
+/// assert_eq!(err.kind(), ErrorKind::KeyCollision);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    /// The document was malformed: unterminated flow collection,
+    /// bad indentation, invalid escape, unexpected token, etc.
+    Syntax,
+    /// An I/O operation failed while reading the input.
+    Io,
+    /// A configurable DoS budget or hard security limit was
+    /// exceeded (recursion depth, alias expansion, mapping size,
+    /// merge-key count, …). Covers every `Error::Budget` breach
+    /// as well as [`Error::RecursionLimitExceeded`] and
+    /// [`Error::RepetitionLimitExceeded`].
+    Budget,
+    /// A user-supplied [`crate::policy::Policy`] rejected the
+    /// document, or a policy-only structural rule (merge-value
+    /// shape, scalar-in-merge) tripped.
+    Policy,
+    /// Two distinct-typed YAML keys collapsed to the same string
+    /// key — see [`Error::KeyCollision`].
+    KeyCollision,
+    /// A genuine duplicate key was refused under
+    /// [`crate::DuplicateKeyPolicy::Error`].
+    DuplicateKey,
+    /// The parser reached end-of-stream where more input was
+    /// required.
+    EndOfStream,
+    /// The document parsed but the requested target type could
+    /// not be built (missing field, unknown field, type mismatch,
+    /// bad tag, unknown anchor, …). Covers the whole
+    /// serde-facing "shape doesn't match" family.
+    Data,
+    /// The error came in via [`Error::Custom`] or [`Error::Message`]
+    /// (usually from a `serde::de::Error` bridge) and doesn't map
+    /// cleanly to any of the other kinds.
+    Other,
+}
+
 /// # Examples
 ///
 /// ```
@@ -422,6 +478,35 @@ pub enum Error {
     /// let _e = noyalib::Error::DuplicateKey("name".into());
     /// ```
     DuplicateKey(String),
+
+    /// Two distinct-typed keys collapsed to the same string key.
+    ///
+    /// The mapping key model is `Mapping<String, Value>`, so keys are
+    /// stringified. Distinct YAML keys that share a spelling — e.g. the
+    /// integer `1` and the string `"1"`, or `true` and `"true"` — would
+    /// silently overwrite each other, losing an entry. This is raised
+    /// instead, carrying the collapsed string key. Unlike
+    /// [`Self::DuplicateKey`], it fires regardless of `DuplicateKeyPolicy`
+    /// because it is data loss, not an authored duplicate.
+    ///
+    /// # Examples
+    ///
+    /// The construction shape:
+    ///
+    /// ```
+    /// let _e = noyalib::Error::KeyCollision("1".into());
+    /// ```
+    ///
+    /// Reproduces from real YAML. The integer key `1` and the
+    /// string key `"1"` both stringify to `"1"`, so parsing must
+    /// refuse rather than silently drop the first entry:
+    ///
+    /// ```
+    /// use noyalib::{Error, Value, from_str};
+    /// let err = from_str::<Value>("1: a\n\"1\": b\n").unwrap_err();
+    /// assert!(matches!(err, Error::KeyCollision(_)));
+    /// ```
+    KeyCollision(String),
 
     /// Repetition limit exceeded (security limit against billion-laughs).
     ///
@@ -711,6 +796,11 @@ impl fmt::Display for Error {
                 write!(f, "recursion depth limit exceeded: {depth}")
             }
             Error::DuplicateKey(name) => write!(f, "duplicate key: {name}"),
+            Error::KeyCollision(name) => write!(
+                f,
+                "distinct mapping keys collide after string conversion: {name} \
+                 (e.g. `1` and `\"1\"`, or `true` and `\"true\"`)"
+            ),
             Error::RepetitionLimitExceeded => f.write_str("alias expansion limit exceeded"),
             Error::Budget(breach) => write!(f, "{breach}"),
             Error::UnknownAnchor(name) => write!(f, "unknown anchor: {name}"),
@@ -739,10 +829,17 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+// `core::error::Error` stabilised in Rust 1.81 — the crate MSRV
+// is 1.85, so the trait implementation is unconditional. Only
+// the `Io(std::io::Error)` arm needs an in-line `cfg` gate,
+// because `Error::Io` itself is `#[cfg(feature = "std")]`. Under
+// `no_std` callers keep full access to the trait for routing via
+// `core::error::Error`-consuming ecosystems (`snafu-nostd`,
+// `miette` no-std shim, embedded HAL error stacks).
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "std")]
             Error::Io(e) => Some(e),
             Error::Shared(arc) => Some(arc.as_ref()),
             _ => None,
@@ -774,6 +871,56 @@ impl Error {
             Error::UnknownAnchorAt { location, .. } => Some(*location),
             Error::Shared(arc) => arc.location(),
             _ => None,
+        }
+    }
+
+    /// Coarse-grained classification for routing without matching
+    /// every variant of the `#[non_exhaustive]` [`Error`] enum.
+    ///
+    /// The mapping is stable across variant additions: new
+    /// variants land under an existing [`ErrorKind`] whenever
+    /// possible, so downstream `match err.kind()` sites keep
+    /// compiling. When a new *category* is needed the enum grows
+    /// (also `#[non_exhaustive]`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::{from_str, ErrorKind, Value};
+    ///
+    /// let syntax = from_str::<Value>("a: [unclosed").unwrap_err();
+    /// assert_eq!(syntax.kind(), ErrorKind::Syntax);
+    ///
+    /// let collision = from_str::<Value>("1: a\n\"1\": b\n").unwrap_err();
+    /// assert_eq!(collision.kind(), ErrorKind::KeyCollision);
+    /// ```
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Error::Parse(_) | Error::ParseWithLocation { .. } => ErrorKind::Syntax,
+            Error::Serialize(_) => ErrorKind::Data,
+            Error::Deserialize(_) | Error::DeserializeWithLocation { .. } => ErrorKind::Data,
+            #[cfg(feature = "std")]
+            Error::Io(_) => ErrorKind::Io,
+            Error::Custom(_) => ErrorKind::Other,
+            Error::RecursionLimitExceeded { .. } => ErrorKind::Budget,
+            Error::DuplicateKey(_) => ErrorKind::DuplicateKey,
+            Error::KeyCollision(_) => ErrorKind::KeyCollision,
+            Error::RepetitionLimitExceeded => ErrorKind::Budget,
+            Error::Budget(_) => ErrorKind::Budget,
+            Error::UnknownAnchor(_) | Error::UnknownAnchorAt { .. } => ErrorKind::Data,
+            Error::MissingField(_) | Error::UnknownField(_) => ErrorKind::Data,
+            Error::ScalarInMergeElement
+            | Error::SequenceInMergeElement
+            | Error::TaggedInMerge
+            | Error::ScalarInMerge => ErrorKind::Policy,
+            Error::Invalid(_) => ErrorKind::Data,
+            Error::TypeMismatch { .. } => ErrorKind::Data,
+            Error::Shared(arc) => arc.kind(),
+            Error::EndOfStream => ErrorKind::EndOfStream,
+            Error::MoreThanOneDocument => ErrorKind::Data,
+            Error::EmptyTag => ErrorKind::Syntax,
+            Error::FailedToParseNumber(_) => ErrorKind::Syntax,
+            Error::Message(_, _) => ErrorKind::Other,
         }
     }
 
@@ -1392,6 +1539,7 @@ impl miette::Diagnostic for Error {
             Error::Budget(_) => "noyalib::budget",
             Error::UnknownAnchor(_) | Error::UnknownAnchorAt { .. } => "noyalib::unknown_anchor",
             Error::DuplicateKey(_) => "noyalib::duplicate_key",
+            Error::KeyCollision(_) => "noyalib::key_collision",
             Error::EndOfStream => "noyalib::eof",
             Error::MoreThanOneDocument => "noyalib::multi_document",
             Error::Io(_) => "noyalib::io",
@@ -1424,6 +1572,9 @@ impl miette::Diagnostic for Error {
             Error::DuplicateKey(_) => {
                 Some("use DuplicateKeyPolicy::Last or ::Error to control behaviour".into())
             }
+            Error::KeyCollision(_) => Some(
+                "give the colliding keys distinct spellings, or quote them consistently".into(),
+            ),
             Error::MoreThanOneDocument => {
                 Some("use noyalib::load_all() to parse multi-document streams".into())
             }
