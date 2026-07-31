@@ -450,3 +450,18 @@ fn rename_refuses_duplicate_old_key_via_integrity_guard() {
     assert_eq!(doc.to_string(), src);
     assert_eq!(doc.as_value()["k"].as_str(), Some("two"));
 }
+
+// ── Path resolution failures while locating the key ─────────────────
+
+#[test]
+fn rename_key_rejects_unresolvable_nested_paths() {
+    // Both fail inside `entry_key_site` as it recurses toward the key,
+    // and leave the document untouched.
+    let mut doc = parse_document("outer:\n  inner: 1\nseq:\n  - a\n").unwrap();
+    let before = doc.to_string();
+    // Missing intermediate key.
+    assert!(doc.rename_key("missing.inner", "x").is_err());
+    // Index past the end of a sequence while resolving.
+    assert!(doc.rename_key("seq[9].inner", "x").is_err());
+    assert_eq!(doc.to_string(), before);
+}

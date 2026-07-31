@@ -14,6 +14,122 @@
 use noyalib::cst::{Emit, EmitCtx, parse_document};
 use noyalib::{FlowStyle, Mapping, ScalarStyle, Value};
 
+// ── Coverage of the typed-`Emit` surface and `Entry`/`Document`
+//    edit helpers introduced alongside the auto-formatting mutators.
+//    These exercise impls and forwarders that the happy-path tests
+//    above reach only through `&str` and `Value`. ─────────────────────
+
+#[test]
+fn an_owned_string_value_inserts_as_a_string() {
+    // The owned-`String` `Emit` impl has its own `expected_value`
+    // oracle, distinct from the `&str` impl the other tests drive.
+    let mut doc = parse_document("labels:\n  app: noyalib\n").unwrap();
+    let port: String = "8080".to_owned();
+    doc.insert_entry_value("labels", "port", &port).unwrap();
+    // Quoted: the plain spelling would load as a number.
+    assert_eq!(
+        doc.to_string(),
+        "labels:\n  app: noyalib\n  port: \"8080\"\n",
+    );
+    assert_eq!(doc.as_value()["labels"]["port"], Value::from("8080"));
+}
+
+#[test]
+fn a_reference_value_routes_through_the_blanket_impl() {
+    // Passing `&&str` binds the mutator's `E` to `&str`, whose `Emit`
+    // comes from `impl<T: Emit + ?Sized> Emit for &T` — a layer the
+    // direct `&str` and `Value` callers never touch.
+    let mut doc = parse_document("items:\n  - one\n").unwrap();
+    let item: &str = "two";
+    doc.push_back_value("items", &item).unwrap();
+    assert_eq!(doc.to_string(), "items:\n  - one\n  - two\n");
+    assert_eq!(doc.as_value()["items"][1], Value::from("two"));
+}
+
+#[test]
+fn every_numeric_emit_impl_is_exercised() {
+    // Each integer / float width carries its own `Emit` impl; drive
+    // them all through the mutators so a regression in any single one
+    // surfaces here rather than only in a downstream caller.
+    let mut doc = parse_document("nums:\n  - 0\n").unwrap();
+    doc.push_back_value("nums", &1_i8).unwrap();
+    doc.push_back_value("nums", &2_i16).unwrap();
+    doc.push_back_value("nums", &3_i32).unwrap();
+    doc.push_back_value("nums", &4_i64).unwrap();
+    doc.push_back_value("nums", &5_isize).unwrap();
+    doc.push_back_value("nums", &6_u8).unwrap();
+    doc.push_back_value("nums", &7_u16).unwrap();
+    doc.push_back_value("nums", &8_u32).unwrap();
+    doc.push_back_value("nums", &9_u64).unwrap();
+    doc.push_back_value("nums", &10_usize).unwrap();
+    doc.push_back_value("nums", &1.5_f32).unwrap();
+    doc.push_back_value("nums", &2.5_f64).unwrap();
+    let seq = doc.as_value()["nums"].as_sequence().unwrap().to_vec();
+    assert_eq!(seq.len(), 13);
+    assert_eq!(seq[1], Value::from(1_i64));
+    assert_eq!(seq[10], Value::from(10_i64));
+    // The expected_value oracles must agree with the spellings too.
+    assert_eq!(3_i32.expected_value().unwrap(), Value::from(3_i64));
+    assert_eq!(9_u64.expected_value().unwrap(), Value::from(9_i64));
+    assert_eq!(1.5_f32.expected_value().unwrap(), Value::from(1.5_f32));
+}
+
+#[test]
+fn entry_span_at_and_set_value_forward_to_the_document() {
+    let mut doc = parse_document("a:\n  b: 1\n").unwrap();
+    assert!(doc.entry("a.b").span_at().is_some());
+    assert!(doc.entry("a.missing").span_at().is_none());
+    doc.entry("a.b").set_value(&Value::from(2_i64)).unwrap();
+    assert_eq!(doc.as_value()["a"]["b"], Value::from(2_i64));
+}
+
+#[test]
+fn entry_or_insert_with_and_and_modify_run() {
+    let mut doc = parse_document("service:\n  port: 8080\n").unwrap();
+    // and_modify runs on the occupied branch; the following or_insert
+    // is then a no-op.
+    let inserted = doc
+        .entry("service.port")
+        .and_modify(|d| {
+            let _ = d.set("service.port", "9090");
+        })
+        .or_insert("8080")
+        .unwrap();
+    assert!(!inserted);
+    assert!(doc.to_string().contains("port: 9090"));
+    // or_insert_with builds the default lazily on the vacant branch.
+    let inserted = doc
+        .entry("service.host")
+        .or_insert_with(|| "localhost".to_owned())
+        .unwrap();
+    assert!(inserted);
+    assert!(doc.to_string().contains("host: localhost"));
+}
+
+#[test]
+fn entry_or_insert_value_rejects_unaddressable_paths() {
+    let mut doc = parse_document("items:\n  - one\n").unwrap();
+    // A vacant sequence-index path cannot take a mapping insert.
+    assert!(
+        doc.entry("items[5]")
+            .or_insert_value(&Value::from(1_i64))
+            .is_err()
+    );
+    // A vacant top-level key has no parent mapping to grow.
+    assert!(
+        doc.entry("fresh")
+            .or_insert_value(&Value::from(1_i64))
+            .is_err()
+    );
+    assert_eq!(doc.to_string(), "items:\n  - one\n");
+}
+
+#[test]
+fn entry_not_found_error_names_the_path() {
+    let err = noyalib::Error::entry_not_found("a.b.c");
+    assert!(err.to_string().contains("a.b.c"));
+}
+
 fn seq(items: &[Value]) -> Value {
     Value::Sequence(items.to_vec())
 }

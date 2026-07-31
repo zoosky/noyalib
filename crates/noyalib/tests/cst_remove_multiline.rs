@@ -102,3 +102,18 @@ fn typed_value_after_nested_removal() {
     let expected: Value = from_str("a: 1\nb: 2\n").unwrap();
     assert_eq!(v, expected);
 }
+
+// ── Path resolution failures while locating the entry ───────────────
+
+#[test]
+fn remove_rejects_unresolvable_nested_paths() {
+    // Both fail inside `entry_line_span` as it recurses toward the
+    // entry, and leave the document untouched.
+    let mut doc = parse_document("outer:\n  inner: 1\n  other: 2\nseq:\n  - a\n  - b\n").unwrap();
+    let before = doc.to_string();
+    // Missing intermediate key.
+    assert!(doc.remove("missing.inner").is_err());
+    // Index past the end while resolving a nested sequence.
+    assert!(doc.remove("seq[9].inner").is_err());
+    assert_eq!(doc.to_string(), before);
+}

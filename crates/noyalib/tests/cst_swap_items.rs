@@ -124,3 +124,20 @@ fn typed_value_reflects_the_swap() {
     let expected: Value = from_str("- 3\n- 2\n- 1\n").unwrap();
     assert_eq!(v, expected);
 }
+
+// ── Path resolution failures while locating the sequence ────────────
+
+#[test]
+fn swap_items_rejects_unresolvable_paths() {
+    // Each of these fails inside `sequence_len_at`, before any splice,
+    // and leaves the document untouched.
+    let mut doc = parse_document("m:\n  - a\n  - b\n").unwrap();
+    let before = doc.to_string();
+    // Index out of bounds while resolving the path itself.
+    assert!(doc.swap_items("m[9]", 0, 1).is_err());
+    // Missing key while resolving the path.
+    assert!(doc.swap_items("missing[0]", 0, 1).is_err());
+    // Resolves to a scalar, not a sequence.
+    assert!(doc.swap_items("m[0]", 0, 1).is_err());
+    assert_eq!(doc.to_string(), before);
+}
