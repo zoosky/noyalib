@@ -99,19 +99,14 @@ fn a_changed_value_still_writes() {
 }
 
 #[test]
-fn the_no_op_follows_the_value_types_own_equality() {
-    // Whether Int(1) equals Float(1.0) depends on `Number`'s PartialEq
-    // (feature configuration can change it); the invariant pinned here
-    // is that `set_value` is a no-op exactly when the crate's own
-    // `Value` equality says the values are equal.
+fn a_different_number_writes_and_the_equal_second_set_is_a_no_op() {
+    // 1.5 is unequal to the loaded 1 under any feature set, so it
+    // writes; the second set of the same value is then a no-op.
+    // (1.0 over 1 is deliberately not pinned here: whether they are
+    // equal follows `Number`'s `PartialEq` for the active features.)
     let mut d = parse_document("a: 1\n").unwrap();
-    d.set_value("a", &Value::from(1.0_f64)).unwrap();
-    let expected = if Value::from(1_i64) == Value::from(1.0_f64) {
-        "a: 1\n"
-    } else {
-        "a: 1.0\n"
-    };
-    assert_eq!(d.to_string(), expected);
+    d.set_value("a", &Value::from(1.5_f64)).unwrap();
+    assert_eq!(d.to_string(), "a: 1.5\n");
     d.set_value("a", &Value::from(1.5_f64)).unwrap();
     assert_eq!(d.to_string(), "a: 1.5\n");
 }
