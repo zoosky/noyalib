@@ -734,13 +734,47 @@ impl Document {
     /// assert_eq!(doc.as_value()["title"].as_str(), Some("multi\nline"));
     /// ```
     ///
+    /// # Collections (#328)
+    ///
+    /// A `Value::Sequence` / `Value::Mapping` replaces an existing
+    /// **collection** node in that node's own style — flow stays flow
+    /// (`tags: [a, b]` set to `[a, c]` emits `tags: [a, c]`), block
+    /// stays block at the old value's column. The splice is verified
+    /// to load back as the document with exactly this path replaced,
+    /// or it is rolled back. Replacing a *scalar* with a collection is
+    /// still refused: a value that must move onto its own lines is a
+    /// layout decision `set` expresses with a fragment.
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    /// use noyalib::{Value, from_str};
+    ///
+    /// let mut doc = parse_document("tags: [a, b]\nname: x\n").unwrap();
+    /// let tags: Value = from_str("[a, c]").unwrap();
+    /// doc.set_value("tags", &tags).unwrap();
+    /// assert_eq!(doc.to_string(), "tags: [a, c]\nname: x\n");
+    /// ```
+    ///
+    /// # Anchored nodes (#338)
+    ///
+    /// A write into a value that `*name` alias sites share lands at
+    /// every one of them, so it is refused — the same policy
+    /// [`rename_key`](Self::rename_key), [`remove`](Self::remove) and
+    /// the inserters follow. Call
+    /// [`materialise_aliases_of`](Self::materialise_aliases_of) first
+    /// to give each site its own copy. Setting a value **equal** to
+    /// the current one stays a no-op wherever it points.
+    ///
     /// # Errors
     ///
     /// - Path not found.
-    /// - Target is a collection or block scalar.
-    /// - Caller passed a `Sequence` / `Mapping` (use `set` with a
-    ///   pre-formatted fragment for those — `set_value` is scalar-only
-    ///   for now).
+    /// - The target sits inside an anchored value with live alias
+    ///   references.
+    /// - Target is a block scalar being replaced by a multi-line
+    ///   string it cannot represent.
+    /// - Caller passed a `Sequence` / `Mapping` and the target is a
+    ///   scalar (use `set` with a pre-formatted fragment to grow a
+    ///   scalar into a collection).
     /// - The same errors as [`Document::replace_span`] otherwise.
     ///
     /// # Examples
@@ -775,6 +809,18 @@ impl Document {
                 return Ok(());
             }
         }
+        // A collection value replaces a collection node in the node's
+        // own style — flow stays flow, block stays block (#328). The
+        // scalar formatter below cannot spell one, so branch off here.
+        if matches!(value, Value::Sequence(_) | Value::Mapping(_)) {
+            return self.replace_collection_value(path, value, s, e);
+        }
+        // One policy for anchored nodes (#338): a write into a value
+        // that `*name` sites share lands at every one of them, so it is
+        // refused with the same guidance rename_key and the inserters
+        // give. (An equal value already returned above: a no-op is
+        // harmless wherever it points.)
+        self.refuse_inside_aliased_anchor("set_value", path, s)?;
         // An empty span is an implicit null's insertion point, not a value to
         // overwrite: there is no scalar leaf there to read a style from, and
         // no `: ` separator either, since the span starts right after the
@@ -824,6 +870,275 @@ impl Document {
             fragment
         };
         self.replace_span(s, e, &fragment)
+    }
+
+    /// The collection arm of [`set_value`](Self::set_value) (#328): a
+    /// `Value::Sequence` / `Value::Mapping` replaces an existing
+    /// collection node in that node's own style. `tags: [a, b]` set to
+    /// `[a, c]` stays flow; a block sequence stays block, re-indented
+    /// to the old value's column. The candidate document is parsed and
+    /// compared against the expected typed value (the document with
+    /// exactly this path replaced) *before* the splice, so a rendering
+    /// the site cannot hold leaves the source byte-identical.
+    ///
+    /// Replacing a **scalar** with a collection is still refused — a
+    /// value that must move onto its own lines is a layout decision
+    /// `set` expresses with a fragment.
+    fn replace_collection_value(
+        &mut self,
+        path: &str,
+        value: &Value,
+        s: usize,
+        e: usize,
+    ) -> Result<()> {
+        let segments = parse_query_path(path);
+        let (expected, tree_span) = {
+            self.ensure_cache();
+            let cache = self.cache.borrow();
+            let (root, span_tree) = cache.as_ref().expect("ensure_cache populated");
+            if !matches!(
+                typed_value_at(root, &segments),
+                Some(Value::Sequence(_) | Value::Mapping(_))
+            ) {
+                return Err(Error::Parse(
+                    "set_value cannot replace a scalar with a collection (use `set` with a \
+                     fragment)"
+                        .into(),
+                ));
+            }
+            let mut expected = root.clone();
+            match path_value_mut(&mut expected, &segments) {
+                Some(slot) => *slot = value.clone(),
+                None => return Err(Error::Parse(format!("path not found: {path}"))),
+            }
+            let tree_span = resolve_span(root, span_tree, &segments).map(|(span, _)| span);
+            (expected, tree_span)
+        };
+        // The green resolver mis-spans an indentless block sequence
+        // (`tags:\n- a`), so prefer the loader's span tree for
+        // collection nodes; then step past any leading indent the span
+        // swept up, so the splice starts at the node's first byte and
+        // the column below is the node's own.
+        let (s, e) = tree_span.map_or((s, e), |(ts, te)| trim_value_span(&self.source, ts, te));
+        let s = s + self.source[s..e].bytes().take_while(|&b| b == b' ').count();
+        // One policy for anchored nodes (#338): a write into a value
+        // that `*name` sites share is refused with the same guidance
+        // every other mutator gives.
+        self.refuse_inside_aliased_anchor("set_value", path, s)?;
+        // The node's own style decides the rendering: a `[` / `{` at
+        // the span start, or any flow ancestor, means flow (block
+        // collections cannot nest inside flow ones).
+        let flow_site = matches!(self.source.as_bytes().get(s), Some(b'[' | b'{'))
+            || in_flow_collection(&self.green, s);
+        let fragment = if flow_site {
+            let cfg = crate::SerializerConfig::new().flow_style(crate::FlowStyle::Flow);
+            crate::to_string_value_with_config(value, &cfg)?
+                .trim_end_matches('\n')
+                .to_owned()
+        } else {
+            // Block rendering starts at column 0; shift every
+            // continuation line to the old value's own column so the
+            // fragment sits where the node it replaces sat.
+            let line_start = self.source[..s].rfind('\n').map_or(0, |i| i + 1);
+            let column = s - line_start;
+            let cfg = crate::SerializerConfig::new()
+                .indent(self.indent_unit())
+                .flow_style(crate::FlowStyle::Block);
+            let rendered = crate::to_string_value_with_config(value, &cfg)?;
+            let pad = " ".repeat(column);
+            rendered
+                .trim_end_matches('\n')
+                .replace('\n', &format!("\n{pad}"))
+        };
+        // Oracle before the splice: the candidate must load back as
+        // the document with exactly this one path replaced.
+        let mut candidate = String::with_capacity(self.source.len() + fragment.len());
+        candidate.push_str(&self.source[..s]);
+        candidate.push_str(&fragment);
+        candidate.push_str(&self.source[e..]);
+        let reparsed = parse_document(&candidate).map_err(|err| {
+            Error::Parse(format!(
+                "set_value: replacing `{path}` with the rendered collection would not \
+                 re-parse ({err}); the document was left unchanged"
+            ))
+        })?;
+        if *reparsed.as_value() != expected {
+            return Err(Error::Parse(format!(
+                "set_value: replacing `{path}` failed the integrity check — the rendered \
+                 collection did not load back as the value given; the document was left \
+                 unchanged"
+            )));
+        }
+        self.replace_span(s, e, &fragment)
+    }
+
+    /// Like [`set_value`](Self::set_value), but creates every missing
+    /// mapping level along `path` on the way (#327, ADR-0009).
+    ///
+    /// A frontmatter writer setting `menu.visible` must not care
+    /// whether `menu:` exists yet — the writer it replaces creates it.
+    /// `set_path` resolves the deepest existing ancestor and:
+    ///
+    /// - **whole path exists** — behaves exactly like
+    ///   [`set_value`](Self::set_value) (upsert, equal-value no-op,
+    ///   scalar-only replacement);
+    /// - **a block-mapping ancestor exists** — inserts the remaining
+    ///   chain through
+    ///   [`insert_entry_value`](Self::insert_entry_value), which owns
+    ///   the indentation, quoting, and the typed-oracle guard;
+    /// - **the document is empty** (nothing but comments, blank lines,
+    ///   or a bare `---`) — appends the rendered chain after the
+    ///   existing bytes, so a comment header survives its document's
+    ///   first key.
+    ///
+    /// The style machinery is the same one every `*_value` mutator
+    /// uses: quoting stays with [`Emit`], new levels indent at the
+    /// document's [`indent_unit`](Self::indent_unit), and the edit is
+    /// verified to change exactly the addressed path before it is
+    /// kept.
+    ///
+    /// # Errors
+    ///
+    /// - An existing path segment resolves to a scalar (`title.x`
+    ///   where `title` is a string) or to a null value other than the
+    ///   empty document root; the source is left byte-identical.
+    /// - A missing segment is a sequence index — `set_path` creates
+    ///   mappings, never sequence items.
+    /// - The nearest existing ancestor is a flow collection or an
+    ///   empty `{}` — the flow inserters are tracked by #338; the
+    ///   refusal is clean.
+    /// - The same errors as [`set_value`](Self::set_value) /
+    ///   [`insert_entry_value`](Self::insert_entry_value) otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    /// use noyalib::Value;
+    ///
+    /// // Creates the missing `menu:` level.
+    /// let mut doc = parse_document("title: x\n").unwrap();
+    /// doc.set_path("menu.visible", &Value::Bool(true)).unwrap();
+    /// assert_eq!(doc.to_string(), "title: x\nmenu:\n  visible: true\n");
+    ///
+    /// // An empty document receives its first key.
+    /// let mut doc = parse_document("").unwrap();
+    /// doc.set_path("menu.visible", &Value::Bool(true)).unwrap();
+    /// assert_eq!(doc.to_string(), "menu:\n  visible: true\n");
+    ///
+    /// // An existing leaf is an ordinary upsert.
+    /// let mut doc = parse_document("menu:\n  visible: false\n").unwrap();
+    /// doc.set_path("menu.visible", &Value::Bool(true)).unwrap();
+    /// assert_eq!(doc.to_string(), "menu:\n  visible: true\n");
+    /// ```
+    pub fn set_path(&mut self, path: &str, value: &Value) -> Result<()> {
+        if let Err(e) = self.validate() {
+            return Err(Error::Parse(format!(
+                "set_path: the document does not parse, so `{path}` cannot be resolved \
+                 ({e}); the document was left unchanged"
+            )));
+        }
+        let segments = parse_query_path(path);
+        if segments.is_empty() {
+            return Err(Error::Parse(
+                "set_path requires a non-empty path (the document root is not an entry)".into(),
+            ));
+        }
+        self.ensure_cache();
+        let missing_from = {
+            let cache = self.cache.borrow();
+            let (root, _) = cache.as_ref().expect("ensure_cache populated");
+            first_missing_segment(root, &segments, path)?
+        };
+        if missing_from == segments.len() {
+            return self.set_value(path, value);
+        }
+        // Everything still to create must be a mapping key: a sequence
+        // has no natural "missing item" to materialise.
+        for segment in &segments[missing_from..] {
+            match segment {
+                QuerySegment::Key(_) => {}
+                QuerySegment::Index(i) => {
+                    return Err(Error::Parse(format!(
+                        "set_path: `{path}` needs sequence item [{i}] created, and set_path \
+                         creates mappings only — push the item with `push_back_value` first"
+                    )));
+                }
+                QuerySegment::Wildcard | QuerySegment::RecursiveDescent => {
+                    return Err(Error::Parse(format!(
+                        "set_path: `{path}` contains a wildcard or recursive-descent segment, \
+                         which does not address a single entry"
+                    )));
+                }
+            }
+        }
+        // Wrap the value in one mapping per missing level below the
+        // first, innermost out: `menu.theme.dark` over an existing root
+        // becomes insert(root, "menu", {theme: {dark: value}}).
+        let mut nested = value.clone();
+        for segment in segments[missing_from + 1..].iter().rev() {
+            let QuerySegment::Key(key) = segment else {
+                unreachable!("non-key segments rejected above")
+            };
+            let mut level = Mapping::new();
+            let _ = level.insert(key.clone(), nested);
+            nested = Value::Mapping(level);
+        }
+        let QuerySegment::Key(first_missing) = &segments[missing_from] else {
+            unreachable!("non-key segments rejected above")
+        };
+
+        let root_is_null = {
+            let cache = self.cache.borrow();
+            let (root, _) = cache.as_ref().expect("ensure_cache populated");
+            matches!(root, Value::Null)
+        };
+        if missing_from == 0 && root_is_null {
+            return self.append_first_entry(path, first_missing, nested);
+        }
+        let ancestor_path = format_query_prefix(&segments[..missing_from]);
+        self.insert_entry_value(&ancestor_path, first_missing, &nested)
+    }
+
+    /// The empty-document arm of [`set_path`](Self::set_path): render
+    /// the whole new chain and append it after the existing bytes
+    /// (comments, blank lines, a bare `---`), so nothing an author
+    /// wrote is disturbed. The candidate is parsed and compared to the
+    /// expected typed value *before* the document is touched — a null
+    /// the author spelled out (`null`, `~`) fails that check and is
+    /// refused with the source byte-identical.
+    fn append_first_entry(&mut self, path: &str, key: &str, nested: Value) -> Result<()> {
+        let mut expected_root = Mapping::new();
+        let _ = expected_root.insert(key.to_owned(), nested);
+        let expected = Value::Mapping(expected_root);
+        let config = crate::SerializerConfig::new().indent(self.indent_unit());
+        let mut rendered = crate::to_string_value_with_config(&expected, &config)?;
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        let needs_break = !self.source.is_empty() && !self.source.ends_with('\n');
+        let fragment = if needs_break {
+            format!("\n{rendered}")
+        } else {
+            rendered
+        };
+        let mut candidate = String::with_capacity(self.source.len() + fragment.len());
+        candidate.push_str(&self.source);
+        candidate.push_str(&fragment);
+        let candidate_value: Value = crate::from_str(&candidate).map_err(|e| {
+            Error::Parse(format!(
+                "set_path: `{path}` cannot be created here — the document's root is not a \
+                 mapping and not empty ({e}); the document was left unchanged"
+            ))
+        })?;
+        if candidate_value != expected {
+            return Err(Error::Parse(format!(
+                "set_path: `{path}` cannot be created here — the document's root already \
+                 holds a non-mapping value; the document was left unchanged"
+            )));
+        }
+        let end = self.source.len();
+        self.replace_span(end, end, &fragment)
     }
 
     /// Remove the value at `path` along with its surrounding entry
@@ -893,6 +1208,11 @@ impl Document {
     /// # Errors
     ///
     /// - Path not found.
+    /// - The entry sits inside an anchored value with live alias
+    ///   references — removing it here would remove it at every
+    ///   `*name` site too (#338); call
+    ///   [`materialise_aliases_of`](Self::materialise_aliases_of)
+    ///   first.
     /// - A flow separator that cannot be located on the member's line.
     /// - The same parse-after-edit errors as
     ///   [`Document::replace_span`]; on failure the document is left
@@ -915,6 +1235,25 @@ impl Document {
             let (value, span_tree) = cache.as_ref().expect("ensure_cache populated");
             entry_line_span(value, span_tree, &self.source, &segments, None)?
         };
+        // One policy for anchored nodes (#338): an entry inside a value
+        // that `*name` sites share disappears from every one of them,
+        // so the removal is refused with the same guidance rename_key
+        // and the inserters give.
+        let removal_start = match &removal {
+            Removal::Line { start, .. }
+            | Removal::FlowMember { start, .. }
+            | Removal::SpanWithinLine { start, .. }
+            | Removal::SoleEntry { start, .. } => *start,
+        };
+        // A whole-line removal starts at the line's first byte — before
+        // the indentation, which sits outside the anchored content span
+        // — so probe from the entry's first content byte instead.
+        let probe = removal_start
+            + self.source[removal_start..]
+                .bytes()
+                .take_while(|&b| b == b' ')
+                .count();
+        self.refuse_inside_aliased_anchor("remove", path, probe)?;
         // What to splice, and what to put back. Only `Line` can take the
         // unguarded fast path below; the other two always face the oracle,
         // because both edit *inside* a line shared with other data.
@@ -1028,9 +1367,9 @@ impl Document {
     /// state and an error is returned.
     ///
     /// Restrictions in this phase:
-    /// - Block mappings only — flow-mapping entries (`{a: 1}`) are
-    ///   a follow-up, mirroring [`Document::remove`]'s block-only
-    ///   scope.
+    /// - Both block-mapping and flow-mapping entries rename (#338);
+    ///   in flow context a new key whose plain spelling would read as
+    ///   flow structure (`,` `[` `]` `{` `}`) is double-quoted.
     /// - The entry's key must be a simple scalar token (plain,
     ///   single-quoted, or double-quoted). Alias keys (`*name :`)
     ///   are rejected. Explicit complex keys (`? [a, b]`) are not
@@ -1179,15 +1518,15 @@ impl Document {
             }
         }
 
-        if parent_kind == SyntaxKind::FlowMapping {
+        // Both block-mapping entries and flow-mapping entries are
+        // renameable (#338): the key token is a scalar span either
+        // way, and the splice-then-oracle tail below is style-blind.
+        if !matches!(
+            parent_kind,
+            SyntaxKind::MappingEntry | SyntaxKind::FlowMapping
+        ) {
             return Err(Error::Parse(format!(
-                "rename_key: `{path}` addresses a flow-mapping entry — only block \
-                 mappings are supported (flow-mapping renames are a follow-up)"
-            )));
-        }
-        if parent_kind != SyntaxKind::MappingEntry {
-            return Err(Error::Parse(format!(
-                "rename_key: `{path}` does not address a block-mapping entry key"
+                "rename_key: `{path}` does not address a mapping entry key"
             )));
         }
         if !matches!(
@@ -1217,8 +1556,18 @@ impl Document {
 
         // Spell the new key, style-matched to the token it replaces
         // (plain stays plain when the plain spelling re-parses to
-        // `new_key`, quoted stays quoted in the same style).
+        // `new_key`, quoted stays quoted in the same style). In flow
+        // context `,` `[` `]` `{` `}` are structural anywhere in a
+        // plain scalar, so a plain spelling unsafe there is quoted.
         let replacement = format_key_for_site(new_key, token_kind);
+        let replacement = if parent_kind == SyntaxKind::FlowMapping
+            && !replacement.starts_with(['"', '\''])
+            && !is_plain_safe_in_flow(&replacement)
+        {
+            format_double_quoted(new_key)
+        } else {
+            replacement
+        };
         if replacement == self.source[tok_start..tok_end] {
             // Spelling-identical after formatting — nothing to splice.
             return Ok(());
@@ -1559,6 +1908,10 @@ impl Document {
     /// - `path` does not resolve to a sequence.
     /// - The sequence is a flow collection (`[…]`).
     /// - The sequence has no existing items to anchor indentation on.
+    /// - The fragment changed the document beyond the single item
+    ///   asked for — reaching outside the sequence (`"v\nqq: 7"`) or
+    ///   smuggling extra items into it (`"v\n  - w"`); the document
+    ///   is left unchanged.
     /// - The same parse-after-edit errors as
     ///   [`Document::replace_span`].
     ///
@@ -1574,7 +1927,9 @@ impl Document {
     pub fn push_back(&mut self, path: &str, fragment: &str) -> Result<()> {
         let p = path.to_owned();
         let f = fragment.to_owned();
-        self.guarded_insert(path, "push_back", move |d| d.push_back_inner(&p, &f))
+        self.guarded_insert(path, "push_back", InsertGrowth::SeqPlusOne, move |d| {
+            d.push_back_inner(&p, &f)
+        })
     }
 
     fn push_back_inner(&mut self, path: &str, fragment: &str) -> Result<()> {
@@ -1732,11 +2087,38 @@ impl Document {
     /// Block mappings only in this phase; flow mappings (`{…}`) and
     /// empty mappings are rejected.
     ///
+    /// Only the *fragment* is verbatim YAML. The key is a **name**: a
+    /// spelling whose plain form would not re-parse to it (`a: b`,
+    /// `[x]`, a leading `- `) is quoted automatically, exactly as
+    /// [`Document::rename_key`] documents for its new key, and the
+    /// existing-key check reads the mapping's own entries — a key
+    /// holding `.` or `[` (`app.io/name`, ubiquitous in Kubernetes
+    /// labels) inserts as that literal key rather than resolving
+    /// through the path syntax.
+    ///
+    /// # The fragment cannot reach outside the entry
+    ///
+    /// After the splice, the document's shape outside `mapping_path`
+    /// must be unchanged and the mapping must have gained exactly the
+    /// one entry asked for — a fragment or key that smuggles sibling
+    /// entries (a line break the splice never intended, `v\rc: 3`) is
+    /// refused and the document left untouched, the same oracle
+    /// [`Document::set`] and [`Document::push_back`] apply.
+    ///
     /// # Errors
     ///
     /// - `mapping_path` does not resolve to a mapping.
     /// - The mapping is empty (no anchor for indentation; use `set`
     ///   with a fragment instead).
+    /// - `key` is `<<` (the loader reads any `<<` key as a merge
+    ///   directive, whatever its quote style) or carries a
+    ///   non-printable character.
+    /// - `key` already exists but contains `.` or `[`, which the path
+    ///   syntax cannot address to replace its value — `remove` the
+    ///   entry and insert it afresh, or splice it with `set`.
+    /// - The fragment added or removed entries beyond the one asked
+    ///   for (the integrity oracle above); the document is left
+    ///   unchanged.
     /// - The same parse-after-edit errors as
     ///   [`Document::replace_span`].
     ///
@@ -1754,24 +2136,93 @@ impl Document {
     /// assert!(out.contains("env: prod"));
     /// ```
     pub fn insert_entry(&mut self, mapping_path: &str, key: &str, fragment: &str) -> Result<()> {
-        // Easy path: if the key already exists, just replace.
+        // The key half is a *name*, not YAML. `rename_key` and
+        // `insert_entry_value` already refuse the spellings no quote
+        // style can carry; the verbatim tier held the last hole — a
+        // key holding a line break spliced sibling entries the caller
+        // never asked for.
+        if key == MERGE_KEY_SPELLING {
+            return Err(Error::Parse(format!(
+                "insert_entry: `{MERGE_KEY_SPELLING}` cannot be used as a key name — the loader \
+                 treats any `{MERGE_KEY_SPELLING}` key as a merge directive whatever its quote \
+                 style, so the entry would not round-trip as a key"
+            )));
+        }
+        if let Some(bad) = first_non_printable(key) {
+            return Err(Error::Parse(format!(
+                "insert_entry: the key contains the non-printable character U+{:04X}, which is \
+                 outside YAML's printable character set — mapping keys may not carry control \
+                 characters (tab excepted)",
+                bad as u32
+            )));
+        }
+
+        // Existing-key upsert, decided on the mapping's own entries
+        // rather than on a composed path: `"{path}.{key}"` means
+        // something else entirely for a key holding `.` or `[`
+        // (`app.io/name`, ubiquitous in Kubernetes labels), and used
+        // to overwrite whatever *nested* entry the composition
+        // happened to resolve.
         let child_path = if mapping_path.is_empty() {
             key.to_owned()
         } else {
             format!("{mapping_path}.{key}")
         };
-        if self.span_at(&child_path).is_some() {
+        let addressable = !key.contains('.') && !key.contains('[');
+        self.ensure_cache();
+        let in_mapping = {
+            let cache = self.cache.borrow();
+            let (doc_value, _) = cache.as_ref().expect("ensure_cache populated");
+            let target = if mapping_path.is_empty() {
+                Some(doc_value)
+            } else {
+                path_value(doc_value, mapping_path)
+            };
+            matches!(target, Some(Value::Mapping(m)) if m.get(key).is_some())
+        };
+        if in_mapping && !addressable {
+            return Err(Error::Parse(format!(
+                "insert_entry: `{mapping_path}` already has a key `{key}`, and a key containing \
+                 `.` or `[` cannot be addressed by the path syntax to replace its value — \
+                 `remove` the entry and insert it afresh, or splice it with `set`"
+            )));
+        }
+        // A key token of its own means the entry is here (an implicit
+        // null included); a key present in the typed view *without*
+        // one is inherited through a `<<` merge, and the insert
+        // appends an explicit override instead.
+        if in_mapping && self.key_span(&child_path).is_some() {
             return self.set(&child_path, fragment);
         }
 
-        // New-key path — splice a sibling line. The anchor comes from
-        // `mapping_insert_anchor`, which reads the target mapping's own
-        // entries out of the span tree; this used to take the last key
-        // from the typed view and compose it back into a path string,
-        // which no key holding a `.` or `[` survives.
+        let p = mapping_path.to_owned();
+        let k = key.to_owned();
+        let f = fragment.to_owned();
+        self.guarded_insert(
+            mapping_path,
+            "insert_entry",
+            InsertGrowth::MapEntry(key),
+            move |d| d.insert_entry_splice(&p, &k, &f),
+        )
+    }
+
+    /// The new-key splice for [`Document::insert_entry`]: a sibling
+    /// line after the mapping's last entry. Runs under
+    /// [`Document::guarded_insert`].
+    fn insert_entry_splice(&mut self, mapping_path: &str, key: &str, fragment: &str) -> Result<()> {
+        // The anchor comes from `mapping_insert_anchor`, which reads
+        // the target mapping's own entries out of the span tree; this
+        // used to take the last key from the typed view and compose it
+        // back into a path string, which no key holding a `.` or `[`
+        // survives.
         self.ensure_cache();
         let (key_col, line_end, _) = self.mapping_insert_anchor(mapping_path)?;
         let indent: String = " ".repeat(key_col);
+        // The key adopts the site's spelling, quoted when its plain
+        // form would not re-parse to the name given — the same
+        // courtesy `rename_key` documents for its new key.
+        let ctx = self.emit_ctx_at(key_col, mapping_path);
+        let key = emit_key(key, &ctx);
 
         // Single-line values (scalars, flow collections, anything
         // without an interior newline) splice inline. Multi-line
@@ -1822,6 +2273,10 @@ impl Document {
     /// - `item_path` does not end in an index.
     /// - The path does not resolve to a sequence item in a block
     ///   sequence.
+    /// - The fragment changed the document beyond the single item
+    ///   asked for — the same containment oracle
+    ///   [`Document::push_back`] documents; the document is left
+    ///   unchanged.
     /// - The same parse-after-edit errors as
     ///   [`Document::replace_span`].
     ///
@@ -1844,9 +2299,12 @@ impl Document {
             .map_or_else(|| item_path.to_owned(), |b| item_path[..b].to_owned());
         let p = item_path.to_owned();
         let f = fragment.to_owned();
-        self.guarded_insert(&container, "insert_after", move |d| {
-            d.insert_after_inner(&p, &f)
-        })
+        self.guarded_insert(
+            &container,
+            "insert_after",
+            InsertGrowth::SeqPlusOne,
+            move |d| d.insert_after_inner(&p, &f),
+        )
     }
 
     fn insert_after_inner(&mut self, item_path: &str, fragment: &str) -> Result<()> {
@@ -1998,11 +2456,17 @@ impl Document {
     /// *inherits* through a `<<` merge has no entry here at all, so an
     /// explicit one is created to override it.
     ///
+    /// A new key into a **flow** mapping — `{a: 1}`, `{}`, or a whole
+    /// document spelled as one — splices `, key: value` before the
+    /// closing brace (#338); only single-line flow mappings accept
+    /// inserts.
+    ///
     /// # Errors
     ///
-    /// - `mapping_path` does not resolve to a mapping, or the mapping
-    ///   is empty (no anchor for indentation — use [`Document::set`]
-    ///   with a fragment to give it its first entry).
+    /// - `mapping_path` does not resolve to a mapping, or an empty
+    ///   **block**-context mapping leaves no entry to anchor
+    ///   indentation on (use [`Document::set`] with a fragment).
+    /// - The flow mapping at `mapping_path` spans more than one line.
     /// - `key` is `<<` (the loader reads any `<<` key as a merge
     ///   directive, whatever its quote style) or carries a
     ///   non-printable character.
@@ -2112,6 +2576,33 @@ impl Document {
             )));
         }
 
+        // A new key into a **flow** mapping — `{a: 1}`, `{}`, or the
+        // whole document being one — splices `, key: value` before the
+        // closing brace instead of appending a line (#338). Upserts of
+        // an existing key fall through: `set` already writes into flow
+        // sites.
+        if existing.is_none() {
+            if let Some((fs, fe)) = self.flow_collection_span(mapping_path, b'{') {
+                self.refuse_multiline_flow("insert_entry_value", mapping_path, fs, fe)?;
+                self.refuse_inside_aliased_anchor("insert_entry_value", mapping_path, fs)?;
+                let ctx = self.emit_ctx_at(0, mapping_path);
+                let key_spelling = emit_key(key, &ctx);
+                let rendered = Self::emit_flow_member(&expected_child)?;
+                let body_is_empty = self.source[fs + 1..fe - 1].trim().is_empty();
+                let member = if body_is_empty {
+                    format!("{key_spelling}: {rendered}")
+                } else {
+                    format!(", {key_spelling}: {rendered}")
+                };
+                let snapshot = self.clone();
+                return self.guarded_item_splice(
+                    |doc| doc.replace_span(fe - 1, fe - 1, &member),
+                    &expected,
+                    &snapshot,
+                    &format!("insert_entry_value: inserting `{key}` into `{mapping_path}`"),
+                );
+            }
+        }
         // The column the emission indents against, and the byte
         // position the edit touches: an existing key keeps its own
         // column and is rewritten at its value span, a new one takes
@@ -2205,10 +2696,15 @@ impl Document {
     /// *string* `"- x"`. Guarded by the same re-parse plus typed-value
     /// oracle as [`Document::insert_entry_value`].
     ///
+    /// A **flow** sequence takes `, value` before its closing bracket
+    /// instead of a new `- ` line, and `[]` receives its first member
+    /// (#338); only single-line flow collections accept inserts.
+    ///
     /// # Errors
     ///
-    /// - `path` does not resolve to a sequence, the sequence is empty
-    ///   (no anchor for indentation), or it is a flow sequence.
+    /// - `path` does not resolve to a sequence, or an empty **block**
+    ///   sequence leaves no item to anchor indentation on.
+    /// - The flow sequence at `path` spans more than one line.
     /// - The value has no auto-formatted spelling (see [`Emit::emit`]).
     /// - The splice would not re-parse, or fails the integrity check;
     ///   the document is left unchanged.
@@ -2239,6 +2735,25 @@ impl Document {
                 len,
             )
         };
+        // A **flow** sequence — `[a, b]` or `[]` — takes `, value`
+        // before the closing bracket instead of a new `- ` line (#338).
+        if let Some((fs, fe)) = self.flow_collection_span(path, b'[') {
+            self.refuse_multiline_flow("push_back_value", path, fs, fe)?;
+            self.refuse_inside_aliased_anchor("push_back_value", path, fs)?;
+            let rendered = Self::emit_flow_member(&expected_item)?;
+            let member = if len == 0 {
+                rendered
+            } else {
+                format!(", {rendered}")
+            };
+            let snapshot = self.clone();
+            return self.guarded_item_splice(
+                |doc| doc.replace_span(fe - 1, fe - 1, &member),
+                &expected,
+                &snapshot,
+                &format!("push_back_value: appending to `{path}`"),
+            );
+        }
         if len == 0 {
             return Err(Error::Parse(format!(
                 "push_back_value: the sequence at `{path}` is empty, so it has no item to \
@@ -2266,10 +2781,15 @@ impl Document {
     /// the same re-parse plus typed-value oracle as
     /// [`Document::insert_entry_value`].
     ///
+    /// Inside a single-line **flow** sequence the new member follows
+    /// the addressed item's own span: `[a, b]` after item 0 becomes
+    /// `[a, v, b]` (#338).
+    ///
     /// # Errors
     ///
     /// - `item_path` does not end in an index, or does not resolve to
-    ///   an item of a block sequence.
+    ///   a sequence item.
+    /// - The flow sequence spans more than one line.
     /// - The value has no auto-formatted spelling (see [`Emit::emit`]).
     /// - The splice would not re-parse, or fails the integrity check;
     ///   the document is left unchanged.
@@ -2307,6 +2827,25 @@ impl Document {
             let (doc_value, _) = cache.as_ref().expect("validate populated the cache");
             expected_after_insert_item(doc_value, &seq_path, index + 1, &expected_item)?
         };
+        // Inside a **flow** sequence the new member follows the
+        // addressed item's own span: `[a, b]` after item 0 becomes
+        // `[a, v, b]` (#338).
+        if let Some((fs, fe)) = self.flow_collection_span(&seq_path, b'[') {
+            self.refuse_multiline_flow("insert_after_value", item_path, fs, fe)?;
+            self.refuse_inside_aliased_anchor("insert_after_value", item_path, fs)?;
+            let (_, item_end) = self
+                .span_at(item_path)
+                .ok_or_else(|| Error::Parse(format!("path not found: {item_path}")))?;
+            let rendered = Self::emit_flow_member(&expected_item)?;
+            let member = format!(", {rendered}");
+            let snapshot = self.clone();
+            return self.guarded_item_splice(
+                |doc| doc.replace_span(item_end, item_end, &member),
+                &expected,
+                &snapshot,
+                &format!("insert_after_value: inserting after `{item_path}`"),
+            );
+        }
         let (column, anchor_pos) = self.sequence_item_anchor(&seq_path, index)?;
         self.refuse_inside_aliased_anchor("insert_after_value", item_path, anchor_pos)?;
         let fragment = self.emit_sequence_item(value, column, &seq_path)?;
@@ -2318,6 +2857,63 @@ impl Document {
             &snapshot,
             &format!("insert_after_value: inserting after `{item_path}`"),
         )
+    }
+
+    /// The span of the collection at `path` when it is spelled in
+    /// **flow** style opening with `open` (`b'{'` or `b'['`), resolved
+    /// through the loader's span tree. `None` for block collections
+    /// and unresolvable paths. The span starts exactly at the opening
+    /// bracket and ends after the closing one (#338).
+    fn flow_collection_span(&self, path: &str, open: u8) -> Option<(usize, usize)> {
+        self.ensure_cache();
+        let cache = self.cache.borrow();
+        let (value, span_tree) = cache.as_ref().expect("caller validated the document");
+        let segments = parse_query_path(path);
+        let ((s, e), _) = resolve_span(value, span_tree, &segments)?;
+        let (s, e) = trim_value_span(&self.source, s, e);
+        let s = s + self.source[s..e].bytes().take_while(|&b| b == b' ').count();
+        let close = if open == b'{' { b'}' } else { b']' };
+        (self.source.as_bytes().get(s) == Some(&open)
+            && e > s
+            && self.source.as_bytes().get(e - 1) == Some(&close))
+        .then_some((s, e))
+    }
+
+    /// The one refusal every single-line flow splice shares: a flow
+    /// collection spread over several lines has separators this module
+    /// cannot see from the span alone, so an insert there is refused
+    /// rather than guessed at — the stance `remove` already takes.
+    fn refuse_multiline_flow(&self, what: &str, path: &str, s: usize, e: usize) -> Result<()> {
+        if self.source[s..e].contains('\n') {
+            return Err(Error::Parse(format!(
+                "{what}: the flow collection at `{path}` spans more than one line; only \
+                 single-line flow collections accept inserts — reformat it, or splice with \
+                 `set`"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Render `value` as a single-line flow member: collections in
+    /// flow style, scalars with the serializer's quoting (a value the
+    /// plain spelling would misread is quoted, line breaks force
+    /// double quotes).
+    fn emit_flow_member(value: &Value) -> Result<String> {
+        // A bare string goes through the flow-context speller: the
+        // serializer renders a root scalar for block context, where
+        // `b, c` is plain-safe — inside `[…]` it is two members.
+        if let Value::String(s) = value {
+            return Ok(format_string_in_flow(s, SyntaxKind::PlainScalar));
+        }
+        let cfg = crate::SerializerConfig::new().flow_style(crate::FlowStyle::Flow);
+        let rendered = crate::to_string_value_with_config(value, &cfg)?;
+        let rendered = rendered.trim_end_matches('\n');
+        if rendered.contains('\n') {
+            return Err(Error::Parse(
+                "cannot spell this value on a single line inside a flow collection".into(),
+            ));
+        }
+        Ok(rendered.to_owned())
     }
 
     /// Refuse an edit at `pos` when it sits inside a value that is
@@ -4525,16 +5121,36 @@ impl Document {
     /// appended `- v` to the sequence *and* gave the document a
     /// top-level `qq`, returning `Ok`, because the result is valid
     /// YAML.
-    fn guarded_insert<F>(&mut self, container_path: &str, what: &str, edit: F) -> Result<()>
+    fn guarded_insert<F>(
+        &mut self,
+        container_path: &str,
+        what: &str,
+        growth: InsertGrowth<'_>,
+        edit: F,
+    ) -> Result<()>
     where
         F: FnOnce(&mut Self) -> Result<()>,
     {
         self.ensure_cache();
         let segments = parse_query_path(container_path);
-        let before_shape = {
+        let (before_shape, before_container) = {
             let cache = self.cache.borrow();
             let (value, _) = cache.as_ref().expect("ensure_cache populated");
-            shape_excluding(value, &segments)
+            let container = if container_path.is_empty() {
+                Some(value)
+            } else {
+                path_value(value, container_path)
+            };
+            let before = container.and_then(|c| match (&growth, c) {
+                (InsertGrowth::SeqPlusOne, Value::Sequence(s)) => {
+                    Some(ContainerBefore::Seq(s.len()))
+                }
+                (InsertGrowth::MapEntry(_), Value::Mapping(m)) => Some(ContainerBefore::Map(
+                    m.keys().map(|k| k.as_str().to_owned()).collect(),
+                )),
+                _ => None,
+            });
+            (shape_excluding(value, &segments), before)
         };
 
         let snapshot = self.clone();
@@ -4554,8 +5170,73 @@ impl Document {
                  the `_value` variant to write a value without splicing YAML."
             )));
         }
+        // The shape above elides the container — changing it is the
+        // insert's job — so pin that change to exactly the one entry
+        // asked for. Without this the smuggling moves *inside*:
+        //
+        //     push_back("s", "v\n  - w")
+        //
+        // kept every byte at the container's indent and appended two
+        // items at `Ok`.
+        if let Some(before) = before_container {
+            let after_container = if container_path.is_empty() {
+                Some(&after_value)
+            } else {
+                path_value(&after_value, container_path)
+            };
+            let grown_exactly = match (&growth, &before, after_container) {
+                (InsertGrowth::SeqPlusOne, ContainerBefore::Seq(n), Some(Value::Sequence(s))) => {
+                    s.len() == n + 1
+                }
+                (
+                    InsertGrowth::MapEntry(key),
+                    ContainerBefore::Map(keys),
+                    Some(Value::Mapping(m)),
+                ) => {
+                    // Expected: the pre-edit keys plus `key`.
+                    // Already-present covers the `<<`-override insert,
+                    // which replaces an inherited value without
+                    // growing the typed view. Order-insensitive: where
+                    // a merge places its inherited keys is the
+                    // loader's business, not this oracle's.
+                    let mut expected: Vec<&str> = keys.iter().map(String::as_str).collect();
+                    if !expected.contains(key) {
+                        expected.push(key);
+                    }
+                    let mut after: Vec<&str> = m.keys().map(|k| k.as_str()).collect();
+                    expected.sort_unstable();
+                    after.sort_unstable();
+                    expected == after
+                }
+                _ => false,
+            };
+            if !grown_exactly {
+                *self = snapshot;
+                return Err(Error::Parse(format!(
+                    "{what}: the fragment changed `{container_path}` beyond the single \
+                     entry asked for — the document was left unchanged. Use the \
+                     `_value` variant to write a value without splicing YAML."
+                )));
+            }
+        }
         Ok(())
     }
+}
+
+/// What one insert may do to its container — the growth half of
+/// [`Document::guarded_insert`]'s oracle.
+enum InsertGrowth<'a> {
+    /// The container sequence must end up exactly one item longer.
+    SeqPlusOne,
+    /// The container mapping's keys must become exactly the pre-edit
+    /// keys plus this one.
+    MapEntry(&'a str),
+}
+
+/// The container's pre-edit fingerprint for [`InsertGrowth`].
+enum ContainerBefore {
+    Seq(usize),
+    Map(Vec<String>),
 }
 
 fn shape_excluding(value: &Value, segments: &[QuerySegment]) -> String {
@@ -4690,6 +5371,88 @@ fn expected_after_remove(value: &Value, segments: &[QuerySegment]) -> Result<Val
         }
         _ => Err(Error::Parse("path not found".into())),
     }
+}
+
+/// Index of the first `segments` entry with no existing node under
+/// `root`, walking the typed view. `segments.len()` means the whole
+/// path resolves. An existing segment whose value cannot be descended
+/// through — a scalar, a null (other than the empty document root), a
+/// sequence where a key is asked for — is an error naming it, so
+/// [`Document::set_path`] refuses before touching a byte (#327).
+fn first_missing_segment(root: &Value, segments: &[QuerySegment], path: &str) -> Result<usize> {
+    let mut cursor = root;
+    for (i, segment) in segments.iter().enumerate() {
+        match segment {
+            QuerySegment::Key(key) => match cursor {
+                Value::Mapping(map) => match map.get(key.as_str()) {
+                    Some(child) => cursor = child,
+                    None => return Ok(i),
+                },
+                // The null *document* has no bytes claiming the root is
+                // null; everything is missing. An explicit `null` is
+                // told apart later, by the pre-edit candidate check.
+                Value::Null if i == 0 => return Ok(0),
+                Value::Null => {
+                    return Err(Error::Parse(format!(
+                        "set_path: `{}` resolves to a null value — filling an implicit \
+                         null with a new mapping is a fragment edit for now; splice it \
+                         with `set` (`{path}` was not written)",
+                        format_query_prefix(&segments[..i]),
+                    )));
+                }
+                _ => {
+                    return Err(Error::Parse(format!(
+                        "set_path: `{}` resolves to a non-mapping, so `{path}` cannot \
+                         descend through it; the document was left unchanged",
+                        format_query_prefix(&segments[..i]),
+                    )));
+                }
+            },
+            QuerySegment::Index(index) => match cursor {
+                Value::Sequence(seq) => match seq.get(*index) {
+                    Some(child) => cursor = child,
+                    None => return Ok(i),
+                },
+                _ => {
+                    return Err(Error::Parse(format!(
+                        "set_path: `{}` resolves to a non-sequence, so `{path}` cannot \
+                         index into it; the document was left unchanged",
+                        format_query_prefix(&segments[..i]),
+                    )));
+                }
+            },
+            QuerySegment::Wildcard | QuerySegment::RecursiveDescent => {
+                return Err(Error::Parse(format!(
+                    "set_path: `{path}` contains a wildcard or recursive-descent segment, \
+                     which does not address a single entry"
+                )));
+            }
+        }
+    }
+    Ok(segments.len())
+}
+
+/// Render `segments` back into the dotted/bracketed path syntax
+/// (`a.b[2].c`) so an ancestor prefix can be handed to the existing
+/// path-addressed mutators.
+fn format_query_prefix(segments: &[QuerySegment]) -> String {
+    use core::fmt::Write as _;
+    let mut out = String::new();
+    for segment in segments {
+        match segment {
+            QuerySegment::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            QuerySegment::Index(index) => {
+                let _ = write!(out, "[{index}]");
+            }
+            QuerySegment::Wildcard | QuerySegment::RecursiveDescent => {}
+        }
+    }
+    out
 }
 
 /// Walk backward from `value_start` past inline whitespace and find
@@ -5241,9 +6004,15 @@ fn format_string_for_site(s: &str, ctx: &SiteContext) -> Result<String> {
     // escaped: a literal block normalises `\r` into its own line
     // breaks, and NEL/LS/PS pass through plain or single-quoted styles
     // as raw bytes that read back as line breaks (#335).
-    if s.contains(['\r', '\u{0085}', '\u{2028}', '\u{2029}']) {
+    if s.chars().any(|c| {
+        matches!(
+            c,
+            '\r' | '\u{0085}' | '\u{2028}' | '\u{2029}' | '\u{feff}' | '\u{7f}'
+        ) || (c < '\u{20}' && c != '\t' && c != '\n')
+    }) {
         return Ok(format_double_quoted(s));
     }
+
     if ctx.in_flow {
         return Ok(format_string_in_flow(s, ctx.kind));
     }
@@ -5477,7 +6246,7 @@ pub(super) fn is_plain_safe(s: &str) -> bool {
     }
     // NEL/LS/PS read back as line breaks; only double-quoted escapes
     // carry them (#335). A `\r` is caught by the control-byte loop.
-    if s.contains(['\u{0085}', '\u{2028}', '\u{2029}']) {
+    if s.contains(['\u{0085}', '\u{2028}', '\u{2029}', '\u{feff}']) {
         return false;
     }
     // Reserved scalars that resolve to non-string types.
@@ -5509,6 +6278,12 @@ pub(super) fn is_plain_safe(s: &str) -> bool {
         return false;
     }
     if looks_like_number(s) {
+        return false;
+    }
+    // A scalar starting with `...` at column 0 reads as the
+    // document-end marker (`-`-leading strings are caught by the
+    // first-byte check below; `...` needs its own).
+    if s.starts_with("...") {
         return false;
     }
     let bytes = s.as_bytes();
@@ -5628,9 +6403,12 @@ pub(super) fn format_double_quoted(s: &str) -> String {
             '\u{0085}' => out.push_str("\\N"),
             '\u{2028}' => out.push_str("\\L"),
             '\u{2029}' => out.push_str("\\P"),
+            // A raw BOM must never reach the output — the reader
+            // rejects one inside a document (§5.2).
+            '\u{feff}' => out.push_str("\\uFEFF"),
             '\x08' => out.push_str("\\b"),
             '\x0c' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
                 let _ = write!(&mut out, "\\u{:04X}", c as u32);
             }
             c => out.push(c),

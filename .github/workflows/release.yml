@@ -77,6 +77,19 @@ jobs:
           # release workflow's `validate` job.
           echo "Version verified: $TAG_VERSION"
 
+      # Everything *else* that carries the version: Cargo.lock, the
+      # changelog heading, README install snippets, and — in the
+      # satellites — the core pin and any registry manifest. Added
+      # after v0.0.28, where noyalib-mcp's server.json and glama.json
+      # were missed and the mismatch only surfaced after the tag was
+      # pushed, forcing a tag deletion and re-tag.
+      #
+      # The same script is runnable locally *before* tagging, which is
+      # the point:  scripts/verify-release-versions.sh
+      - name: Verify every version-bearing file agrees
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/verify-release-versions.sh "${GITHUB_REF_NAME}"
+
   # ── Build checksums & SBOM ──────────────────────────────────────────
   artifacts:
     name: Build artifacts
@@ -106,7 +119,22 @@ jobs:
 
       - name: Generate SBOM
         run: |
+          set -euo pipefail
+          # Human-readable dependency listing (kept for reviewers) …
           cargo tree --edges normal --prefix depth --format '{p} {l}' > SBOM.txt
+          # … and the machine-readable SBOM procurement pipelines
+          # ingest. `cargo tree > txt` is not an SBOM format: EU CRA /
+          # NTIA guidance and every scanner (Grype, Trivy, Dependency-
+          # Track) expect CycloneDX or SPDX. `--all-features` records
+          # the superset graph so a vulnerability in an optional
+          # dependency is still visible to consumers who enable it.
+          cargo install --locked cargo-cyclonedx
+          cargo cyclonedx --format json --all-features --describe crate --spec-version 1.5
+          # cargo-cyclonedx writes next to each crate manifest; hoist
+          # the library's BOM to the repo root beside SBOM.txt so the
+          # attest / sign / upload steps reference one location.
+          mv crates/noyalib/noyalib.cdx.json SBOM.cdx.json
+          python3 -c "import json; d=json.load(open('SBOM.cdx.json')); print('CycloneDX', d['specVersion'], '—', d['metadata']['component']['name'], d['metadata']['component']['version'], '—', len(d.get('components', [])), 'components')"
 
       - name: Generate checksums
         run: |
@@ -144,6 +172,7 @@ jobs:
           subject-path: |
             target/package/*.crate
             SBOM.txt
+            SBOM.cdx.json
 
       # ── Keyless sigstore signing ──────────────────────────────────
       # `cosign sign-blob` with no `--key` triggers Fulcio keyless
@@ -173,6 +202,7 @@ jobs:
           done
           cd -
           cosign sign-blob --bundle "SBOM.txt.bundle" SBOM.txt
+          cosign sign-blob --bundle "SBOM.cdx.json.bundle" SBOM.cdx.json
 
       # ── Optional detached GPG signatures ──────────────────────────
       # Additive to the sigstore bundles above, not a replacement.
@@ -254,6 +284,7 @@ jobs:
 
           for f in target/package/*.crate; do sign "$f"; done
           sign SBOM.txt
+          sign SBOM.cdx.json
 
           gpgconf --kill all || true
           rm -rf "$GNUPGHOME"
@@ -269,8 +300,11 @@ jobs:
             target/package/SHA512SUMS.txt
             SBOM.txt
             SBOM.txt.bundle
+            SBOM.cdx.json
+            SBOM.cdx.json.bundle
             target/package/*.asc
             SBOM.txt.asc
+            SBOM.cdx.json.asc
           retention-days: 5
 
   # ── Cross-platform verification ─────────────────────────────────────
@@ -363,7 +397,16 @@ jobs:
             artifacts/target/package/SHA512SUMS.txt
             artifacts/SBOM.txt
             artifacts/SBOM.txt.bundle
-            artifacts/SBOM.txt.asc
+            # The `[c]` character class makes these actual globs:
+            # `nullglob` only removes unmatched *patterns*, so the
+            # previous literal spelling stayed in the array when GPG
+            # signing was skipped and failed `gh release create` on a
+            # missing file — exactly the fork-without-key case the
+            # comment above promises to survive.
+            artifacts/SBOM.txt.as[c]
+            artifacts/SBOM.cdx.json
+            artifacts/SBOM.cdx.json.bundle
+            artifacts/SBOM.cdx.json.as[c]
           )
           shopt -u nullglob
           printf 'attaching %s\n' "${assets[@]}"
@@ -381,14 +424,25 @@ jobs:
     environment: crates-io
     permissions:
       contents: read
+      # Mints the OIDC identity token crates.io exchanges for a
+      # short-lived publish token. Without it the auth step fails.
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: stable
+      # Trusted publishing: swaps this job's GitHub OIDC identity for a
+      # temporary crates.io token, revoked by the action's post step when
+      # the job ends. Needs a trusted publisher registered on crates.io
+      # for this crate (repo + release.yml + environment crates-io).
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
       - name: Publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         # Parent repo publishes only `noyalib` (the library core).
         # All four satellites publish from their own repos per
         # ADR-0005 workspace split:
