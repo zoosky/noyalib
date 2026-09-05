@@ -16,11 +16,12 @@ use std::collections::BTreeMap;
 use noyalib::{Error, Value, from_str, from_str_borrowing};
 
 fn assert_collision<T: std::fmt::Debug>(r: Result<T, Error>, ctx: &str) {
-    // The AST retry locates the collision since #378, so the located
-    // form arrives; `kind()` is the stable way to tell either.
     assert!(
-        matches!(&r, Err(e) if e.kind() == noyalib::ErrorKind::KeyCollision),
-        "{ctx}: expected a key collision, got {r:?}"
+        matches!(
+            r,
+            Err(Error::KeyCollision(_) | Error::KeyCollisionAt { .. })
+        ),
+        "{ctx}: expected KeyCollision, got {r:?}"
     );
 }
 
