@@ -54,7 +54,11 @@
   - [0009 — set_path parent creation](adr/0009-set-path-parent-creation.md)
   - [0010 — Typed collection set_value](adr/0010-typed-collection-set-value.md)
   - [0011 — Flow inserts and anchor policy](adr/0011-flow-inserts-and-anchor-policy.md)
+<<<<<<< HEAD
   - [0012 — Quoted path segments](adr/0012-quoted-path-segments.md)
+=======
+  - [0013 — Located duplicate-key errors](adr/0013-located-duplicate-key-errors.md)
+>>>>>>> feat/duplicate-key-location
 
 # Releases
 
