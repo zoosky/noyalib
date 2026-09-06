@@ -7,6 +7,95 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [v0.0.34] - 2026-09-05
+
+### Added (family)
+
+- **The official YAML test suite runs through every companion crate's own
+  entry point.** A shared `yaml-test-suite` workflow checks the vendored
+  suite out at the pinned core commit and runs each satellite's
+  `tests/yaml_test_suite.rs`: the CLI's exit code, the language server's
+  diagnostics, the MCP tool result, the `serde_yaml` shim and the
+  WebAssembly JSON model. Its first run found and fixed two defects (a
+  false "more than one document" error in `noyalib-lsp`, an implicit-null
+  value reported as missing by `noyalib-mcp`).
+- **Dependabot bumps folded in:** serde-saphyr 1.2.0, sval 2.22.0,
+  smallvec 1.16.0, jsonschema 0.52.1, indexmap 2.14.1 and the pinned
+  actions groups, with `cargo-vet` exemptions regenerated.
+
+### Changed
+
+- **Two regression gates run on every push in every family repo.** The
+  shared docs-lint workflow checks that every relative documentation
+  link resolves (it ran only in the Pages deploy on main before, so a
+  link that resolved on a maintainer's disk merged and broke a deploy),
+  and `scripts/verify-release-versions.sh` reads the install snippets
+  under `docs/` as well as the READMEs (three pages carried snippets the
+  gate never read).
+- **The family layout contract covers the community files, the
+  citation record, the agent invariants, the devcontainer, the manual,
+  the version gate, and the seed corpus.** Every satellite carries them
+  since 2026-09-05; docs/ECOSYSTEM.md gains a table of where each crate
+  is published (crates.io, npm, ghcr.io).
+
+### Removed
+
+- **`pkg/docker/Dockerfile.full`.** It built the CLI binaries from
+  monorepo paths that no longer exist, and the `noyafmt` and `noyalib`
+  images it once produced (last built at v0.0.8) are deleted from GHCR.
+  The CLI image is published by noya-cli as
+  `ghcr.io/sebastienrousseau/noya-cli`; the MCP image by noyalib-mcp.
+
+### Fixed
+
+- **The Dependabot configuration was broken in two ways:** the docker
+  block's trailer had survived the Dockerfile removal and, as a duplicate
+  key, relabelled every github-actions PR `deps(docker)`; the npm block
+  pointed at `pkg/npm-mcp-wrapper`, which lives in `noyalib-mcp` now, so
+  every Dependabot run errored. Both removed.
+- **CodeQL runs on `feat/**` pushes and pull requests**, not only on
+  main, so a commit that reaches main through a release branch is
+  scanned; OpenSSF Scorecard's SAST check had flagged commits merged
+  into feat/v0.0.33 as unscanned.
+- **An unterminated verbatim tag is refused.** `!<` at end of input with
+  no closing `>` was accepted with whatever followed as the tag name
+  (`!<<` gave the tag `!<`), and the emitter then wrote it as `!< ""`,
+  which parsed to a different tag. `c-verbatim-tag` requires the `>`;
+  the scanner now says so. Found by the new alloc-only round-trip fuzz
+  target on its first minute.
+
+### Added
+
+- **Property tests for the emitter's block-scalar choices and the path
+  grammar's quoting** (`tests/proptest_emitter_paths.rs`): for every
+  generated string, emit-then-parse is the identity and `to_string` is
+  idempotent, with and without a sibling entry and as a sequence item;
+  for every generated key, `quote_key`, `push_key`, and `join_keys`
+  address the entry. These are the #383, #385, #387, and #388 classes,
+  which example-based tests could not enumerate.
+- **A structure-aware fuzz target**, `fuzz_value_roundtrip`: `Arbitrary`
+  builds `Value` trees and the target asserts value round-trip, CST
+  agreement on emitted text, and that the alias budget refuses a
+  generated fan-out exactly when its alias occurrences exceed
+  `max_alias_expansions`.
+- **An alloc-only fuzz crate**, `fuzz-nostd/`, whose only dependency
+  edge disables the core's default features; its targets cannot reach a
+  std-only API, so the `no_std` code shape is fuzzed rather than only
+  compiled. CI builds and replays both crates on every push.
+- **`arbitrary` feature**: `arbitrary::Arbitrary` for `Value`, `Number`,
+  `Tag`, `TaggedValue`, and `Mapping`, so a fuzz target or property test
+  writes `|v: Value|` and gets every variant, number kind, tag, and
+  nested collection from one generator. Recursion is bounded by the
+  remaining entropy; NaN is generated and left to the harness.
+- **Miri runs Tree Borrows and the alignment check weekly.** The
+  per-PR job keeps Stacked Borrows on the default build; the weekly
+  sweep adds Tree Borrows on the focused suite and
+  `-Zmiri-symbolic-alignment-check` on the simd module, each too slow
+  for a PR (together they exceeded two hours on simd alone).
+  `scripts/miri.sh` takes `MIRI_MODEL`, `MIRI_FEATURES`, and
+  `MIRI_ALIGN`. The alloc-only build is not a Miri leg: the library's
+  unit tests are std-only, so that shape is covered by `fuzz-nostd`.
+
 ## [v0.0.33] - 2026-09-05
 
 ### Performance
