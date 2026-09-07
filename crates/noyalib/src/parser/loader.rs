@@ -7,16 +7,13 @@
 
 use crate::de::RequireIndent;
 use crate::error::{Error, Result};
+use crate::parser::budget;
 use crate::parser::events::Event;
 use crate::prelude::IndexMap;
 use crate::prelude::*;
 #[cfg(feature = "std")]
 use crate::span_context::SpanTree;
 use crate::value::{Mapping, Number, Tag, TaggedValue, Value};
-
-/// Maximum number of bytes an expanded alias can account for per document.
-/// Prevents billion-laughs style attacks.
-const MAX_ALIAS_BYTES: usize = 1024 * 1024 * 32; // 32 MB
 
 /// Overhead in bytes accounted for each node in a mapping or sequence.
 const NODE_OVERHEAD: usize = 32;
@@ -397,6 +394,11 @@ struct Loader<'a> {
     /// the streaming path's `anchor_def_spans`) — powers the
     /// "did you mean …?" affordance on `Error::UnknownAnchorAt`.
     anchor_def_spans: IndexMap<String, usize>,
+    /// Anchors defined in earlier documents of the stream (name to
+    /// byte index of the last definition). Anchors do not cross `---`
+    /// (YAML 1.2.2 §3.2.2.2); when an alias names one of these the
+    /// error says so instead of only "unknown anchor".
+    earlier_anchor_defs: IndexMap<String, usize>,
     alias_count: usize,
     alias_bytes: usize,
     config: &'a ParseConfig,
@@ -455,6 +457,7 @@ impl<'a> Loader<'a> {
             stack: Vec::with_capacity(16),
             anchor_map: IndexMap::with_capacity(4),
             anchor_def_spans: IndexMap::with_capacity(4),
+            earlier_anchor_defs: IndexMap::new(),
             alias_count: 0,
             alias_bytes: 0,
             config,
@@ -496,7 +499,7 @@ impl<'a> Loader<'a> {
             Event::Scalar { .. } | Event::SequenceStart { .. } | Event::MappingStart { .. }
         ) {
             self.node_count += 1;
-            if self.node_count > self.config.max_nodes {
+            if budget::nodes_exceeded(self.node_count, self.config.max_nodes) {
                 return Err(Error::Budget(crate::BudgetBreach::MaxNodes {
                     limit: self.config.max_nodes,
                     observed: self.node_count,
@@ -531,7 +534,8 @@ impl<'a> Loader<'a> {
             Event::DocumentStart => {
                 self.in_document = true;
                 self.anchor_map.clear();
-                self.anchor_def_spans.clear();
+                self.earlier_anchor_defs
+                    .extend(self.anchor_def_spans.drain(..));
                 self.alias_count = 0;
                 self.alias_bytes = 0;
                 // Budget: max_documents
@@ -550,15 +554,19 @@ impl<'a> Loader<'a> {
                     return Err(Error::parse_at("alias outside document", input, span.start));
                 }
                 self.alias_count += 1;
-                if self.alias_count > self.config.max_alias_expansions {
+                if budget::alias_count_exceeded(self.alias_count, self.config.max_alias_expansions)
+                {
                     return Err(Error::RepetitionLimitExceeded);
                 }
                 // Budget: alias_anchor_ratio heuristic.
                 // Trips when aliases vastly outnumber anchors —
                 // a billion-laughs amplification fingerprint.
                 if let Some(ratio) = self.config.alias_anchor_ratio {
-                    let anchors = self.anchor_count.max(1) as f64;
-                    if (self.alias_count as f64) > ratio * anchors {
+                    if budget::alias_ratio_exceeded(
+                        self.alias_count,
+                        self.anchor_count,
+                        Some(ratio),
+                    ) {
                         return Err(Error::Budget(crate::BudgetBreach::AliasAnchorRatio {
                             ratio,
                             anchors: self.anchor_count,
@@ -567,6 +575,23 @@ impl<'a> Loader<'a> {
                     }
                 }
 
+                // An anchor that this document has opened but not yet
+                // finished: the alias points inside the node being
+                // built. YAML allows a cyclic representation graph; a
+                // `Value` is a tree and cannot hold one, so say that
+                // rather than calling the anchor unknown.
+                if !self.anchor_map.contains_key(&anchor) {
+                    if let Some(&defined_at) = self.anchor_def_spans.get(anchor.as_str()) {
+                        return Err(Error::parse_at(
+                            format!(
+                                "alias `*{anchor}` points at `&{anchor}`, still being defined at {}; a self-referential node cannot be represented as a tree",
+                                crate::error::Location::from_index(input, defined_at)
+                            ),
+                            input,
+                            span.start,
+                        ));
+                    }
+                }
                 let (value, span_tree) =
                     self.anchor_map.get(&anchor).cloned().ok_or_else(|| {
                         let alias_loc = crate::error::Location::from_index(input, span.start);
@@ -578,6 +603,14 @@ impl<'a> Loader<'a> {
                             self.anchor_def_spans.get(s).map(|&idx| {
                                 (
                                     s.to_string(),
+                                    crate::error::Location::from_index(input, idx),
+                                )
+                            })
+                        })
+                        .or_else(|| {
+                            self.earlier_anchor_defs.get(anchor.as_str()).map(|&idx| {
+                                (
+                                    anchor.clone(),
                                     crate::error::Location::from_index(input, idx),
                                 )
                             })
@@ -595,20 +628,27 @@ impl<'a> Loader<'a> {
                 // — the rule behind serde_yaml's "repetition limit
                 // exceeded" (it caps alias jumps at events × 100).
                 if let Some(factor) = self.config.alias_jump_event_factor {
-                    self.alias_jump_charge = self
-                        .alias_jump_charge
-                        .saturating_add(count_value_nodes(&value));
-                    if self.alias_jump_charge > self.event_count.saturating_mul(factor) {
+                    let (charge, over) = budget::jump_charge_exceeded(
+                        self.alias_jump_charge,
+                        count_value_nodes(&value),
+                        self.event_count,
+                        factor,
+                    );
+                    self.alias_jump_charge = charge;
+                    if over {
                         return Err(Error::RepetitionLimitExceeded);
                     }
                 }
-                self.alias_bytes += estimate_value_size(&value);
                 // Bound cumulative alias expansion by the document length
                 // limit — a classic billion-laughs vector amplifies well
                 // beyond the raw input size.
-                if self.alias_bytes > self.config.max_document_length
-                    || self.alias_bytes > MAX_ALIAS_BYTES
-                {
+                let (bytes, over) = budget::alias_bytes_exceeded(
+                    self.alias_bytes,
+                    estimate_value_size(&value),
+                    self.config.max_document_length,
+                );
+                self.alias_bytes = bytes;
+                if over {
                     return Err(Error::RepetitionLimitExceeded);
                 }
 
@@ -697,7 +737,7 @@ impl<'a> Loader<'a> {
                 anchor, tag, span, ..
             } => {
                 self.depth += 1;
-                if self.depth > self.config.max_depth {
+                if budget::depth_exceeded(self.depth, self.config.max_depth) {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 if let Some(name) = anchor.as_ref() {
@@ -757,7 +797,7 @@ impl<'a> Loader<'a> {
                 anchor, tag, span, ..
             } => {
                 self.depth += 1;
-                if self.depth > self.config.max_depth {
+                if budget::depth_exceeded(self.depth, self.config.max_depth) {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 if let Some(name) = anchor.as_ref() {
@@ -1198,6 +1238,11 @@ struct NoSpanLoader<'a> {
     // point at the closest known definition — the same "did you mean
     // `&logger`?" affordance the streaming path already offers.
     anchor_def_spans: IndexMap<String, usize>,
+    /// Anchors defined in earlier documents of the stream (name to
+    /// byte index of the last definition). Anchors do not cross `---`
+    /// (YAML 1.2.2 §3.2.2.2); when an alias names one of these the
+    /// error says so instead of only "unknown anchor".
+    earlier_anchor_defs: IndexMap<String, usize>,
     alias_count: usize,
     alias_bytes: usize,
     // Merge-key occurrences seen across the current document (for
@@ -1249,6 +1294,7 @@ impl<'a> NoSpanLoader<'a> {
             stack: Vec::new(),
             anchor_map: IndexMap::default(),
             anchor_def_spans: IndexMap::default(),
+            earlier_anchor_defs: IndexMap::default(),
             alias_count: 0,
             alias_bytes: 0,
             merge_key_count: 0,
@@ -1288,7 +1334,7 @@ impl<'a> NoSpanLoader<'a> {
             Event::Scalar { .. } | Event::SequenceStart { .. } | Event::MappingStart { .. }
         ) {
             self.node_count += 1;
-            if self.node_count > self.config.max_nodes {
+            if budget::nodes_exceeded(self.node_count, self.config.max_nodes) {
                 return Err(Error::Budget(crate::BudgetBreach::MaxNodes {
                     limit: self.config.max_nodes,
                     observed: self.node_count,
@@ -1321,7 +1367,8 @@ impl<'a> NoSpanLoader<'a> {
             Event::DocumentStart => {
                 self.in_document = true;
                 self.anchor_map.clear();
-                self.anchor_def_spans.clear();
+                self.earlier_anchor_defs
+                    .extend(self.anchor_def_spans.drain(..));
                 // Reset the per-document alias budget, matching the span-full
                 // Loader (see DocumentStart above). Without this, alias counts
                 // accumulate across a multi-document stream, so a stream whose
@@ -1348,19 +1395,40 @@ impl<'a> NoSpanLoader<'a> {
                     return Err(Error::parse_at("alias outside document", input, span.start));
                 }
                 self.alias_count += 1;
-                if self.alias_count > self.config.max_alias_expansions {
+                if budget::alias_count_exceeded(self.alias_count, self.config.max_alias_expansions)
+                {
                     return Err(Error::RepetitionLimitExceeded);
                 }
                 // Budget: alias_anchor_ratio (billion-laughs amplification
                 // fingerprint), mirroring the span-full Loader.
                 if let Some(ratio) = self.config.alias_anchor_ratio {
-                    let anchors = self.anchor_count.max(1) as f64;
-                    if (self.alias_count as f64) > ratio * anchors {
+                    if budget::alias_ratio_exceeded(
+                        self.alias_count,
+                        self.anchor_count,
+                        Some(ratio),
+                    ) {
                         return Err(Error::Budget(crate::BudgetBreach::AliasAnchorRatio {
                             ratio,
                             anchors: self.anchor_count,
                             aliases: self.alias_count,
                         }));
+                    }
+                }
+                // An anchor that this document has opened but not yet
+                // finished: the alias points inside the node being
+                // built. YAML allows a cyclic representation graph; a
+                // `Value` is a tree and cannot hold one, so say that
+                // rather than calling the anchor unknown.
+                if !self.anchor_map.contains_key(&anchor) {
+                    if let Some(&defined_at) = self.anchor_def_spans.get(anchor.as_str()) {
+                        return Err(Error::parse_at(
+                            format!(
+                                "alias `*{anchor}` points at `&{anchor}`, still being defined at {}; a self-referential node cannot be represented as a tree",
+                                crate::error::Location::from_index(input, defined_at)
+                            ),
+                            input,
+                            span.start,
+                        ));
                     }
                 }
                 let value = self.anchor_map.get(&anchor).cloned().ok_or_else(|| {
@@ -1376,6 +1444,14 @@ impl<'a> NoSpanLoader<'a> {
                                 crate::error::Location::from_index(input, idx),
                             )
                         })
+                    })
+                    .or_else(|| {
+                        self.earlier_anchor_defs.get(anchor.as_str()).map(|&idx| {
+                            (
+                                anchor.clone(),
+                                crate::error::Location::from_index(input, idx),
+                            )
+                        })
                     });
                     Error::UnknownAnchorAt {
                         name: anchor,
@@ -1386,21 +1462,28 @@ impl<'a> NoSpanLoader<'a> {
                 // serde_yaml-profile transitive repetition budget —
                 // see the span-full loader's twin for the rationale.
                 if let Some(factor) = self.config.alias_jump_event_factor {
-                    self.alias_jump_charge = self
-                        .alias_jump_charge
-                        .saturating_add(count_value_nodes(&value));
-                    if self.alias_jump_charge > self.event_count.saturating_mul(factor) {
+                    let (charge, over) = budget::jump_charge_exceeded(
+                        self.alias_jump_charge,
+                        count_value_nodes(&value),
+                        self.event_count,
+                        factor,
+                    );
+                    self.alias_jump_charge = charge;
+                    if over {
                         return Err(Error::RepetitionLimitExceeded);
                     }
                 }
-                self.alias_bytes += estimate_value_size(&value);
                 // Bound cumulative alias expansion by both the crate-level
                 // hard cap and the caller-supplied `max_document_length`.
                 // Mirrors the span-full loader (billion-laughs guard) so
                 // the `Value` fast path can't outrun either budget.
-                if self.alias_bytes > self.config.max_document_length
-                    || self.alias_bytes > MAX_ALIAS_BYTES
-                {
+                let (bytes, over) = budget::alias_bytes_exceeded(
+                    self.alias_bytes,
+                    estimate_value_size(&value),
+                    self.config.max_document_length,
+                );
+                self.alias_bytes = bytes;
+                if over {
                     return Err(Error::RepetitionLimitExceeded);
                 }
                 self.push_value(value, false, span.start, input)?;
@@ -1461,7 +1544,7 @@ impl<'a> NoSpanLoader<'a> {
             }
             Event::SequenceStart { anchor, tag, span } => {
                 self.depth += 1;
-                if self.depth > self.config.max_depth {
+                if budget::depth_exceeded(self.depth, self.config.max_depth) {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 if let Some(name) = anchor.as_ref() {
@@ -1493,7 +1576,7 @@ impl<'a> NoSpanLoader<'a> {
             }
             Event::MappingStart { anchor, tag, span } => {
                 self.depth += 1;
-                if self.depth > self.config.max_depth {
+                if budget::depth_exceeded(self.depth, self.config.max_depth) {
                     return Err(Error::RecursionLimitExceeded { depth: self.depth });
                 }
                 if let Some(name) = anchor.as_ref() {
@@ -2092,7 +2175,7 @@ fn resolve_tagged_scalar(
                 } else {
                     parse_tagged_decimal_integer(trimmed, lossless_u64)
                 };
-                parsed.ok_or_else(|| Error::FailedToParseNumber(format!("!!int {value}")))
+                parsed.ok_or_else(|| Error::FailedToParseNumber(int_hint(value)))
             }
             "float" => {
                 let trimmed = value.trim();
@@ -2421,4 +2504,37 @@ mod merge_key_eligibility_tests {
         );
         assert!(treated_as_merge(MERGE_KEY, true), "both together");
     }
+}
+
+/// Explain an `!!int` that does not match YAML 1.2's integer form.
+///
+/// The two shapes people reach for are YAML 1.1's: a `0b` binary
+/// literal and `_` digit separators. YAML 1.2's core schema dropped
+/// both, so a parser that follows 1.2 has to refuse them under an
+/// explicit `!!int`. Saying which one it is saves the reader a trip to
+/// the specification.
+fn int_hint(value: &str) -> String {
+    let trimmed = value.trim();
+    let negative = trimmed.starts_with('-');
+    let unsigned = trimmed.strip_prefix(['-', '+']).unwrap_or(trimmed);
+    if unsigned.starts_with("0b") || unsigned.starts_with("0B") {
+        let digits = &unsigned[2..];
+        if !digits.is_empty() && digits.bytes().all(|b| matches!(b, b'0' | b'1')) {
+            if let Ok(n) = i64::from_str_radix(digits, 2) {
+                let n = if negative { -n } else { n };
+                return format!(
+                    "!!int {trimmed}: YAML 1.2 has no binary literal, `0b` was YAML 1.1; write {n}"
+                );
+            }
+        }
+    }
+    if unsigned.contains('_') {
+        let stripped: String = trimmed.chars().filter(|c| *c != '_').collect();
+        if stripped.parse::<i64>().is_ok() {
+            return format!(
+                "!!int {trimmed}: YAML 1.2 has no digit separators, `_` was YAML 1.1; write {stripped}"
+            );
+        }
+    }
+    format!("!!int {trimmed}")
 }
