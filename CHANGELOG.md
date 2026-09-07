@@ -7,6 +7,238 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [v0.0.41] - 2026-09-07
+
+### Changed
+
+- Lockstep release for the September GitHub Actions bumps across the
+  family, cherry-picked from Dependabot with authorship intact. No core
+  code change.
+
+## [v0.0.40] - 2026-09-07
+
+### Fixed
+
+- **The serialiser wrote a directive-resolved tag in a form that does
+  not parse back.** A tag introduced by `%TAG` is held as a bare URI
+  with no `!`, and the emitter wrote it as it stood, so
+  `!c!thing 1` came back as the plain scalar
+  `tag:example.com,2026:x/thing "1"` and the tag was lost. Such tags
+  are now written in the verbatim form `!<uri>`, which carries them
+  without needing the directive.
+- **The formatter tore apart a mapping used as an explicit key.** The
+  lines below `? a: 1` were emitted at the outer indent, so they became
+  entries of the surrounding mapping and the `: value` line was lost
+  entirely. They are now indented past the `?`.
+- **The formatter added a newline to a keep-chomped block scalar.** A
+  block scalar's token carries the indentation of the line after it, so
+  the emitter sat on a line of nothing but spaces and then ended it. A
+  `|+` scalar counts that blank line as content, so the value grew a
+  newline every time the file was formatted. The formatter no longer
+  leaves a whitespace-only line.
+
+### Added
+
+- **Every fixture that parses must also survive the serialiser**:
+  emitting the parsed value and reading it back has to give the same
+  value. That is what found the tag defect above.
+- **The streaming reader is held to the batch loader across the whole
+  official suite**, the same way the parallel path already was. It is
+  the third independent reader in the crate, so agreement is not free.
+- **Error paths in the CST editing API have tests**: query segments
+  that address more than one entry, renaming something that is not a
+  mapping key, and removing the document root. These are messages a
+  user can reach, and none of them had ever been read by a test.
+- **Every fixture that parses must survive the formatter**: its output
+  has to re-parse to the same value. Running the twenty spec-torture
+  documents through it is what found both defects above.
+- **The diagnostics are checked through every loader.** There are two
+  loaders behind the public API, one recording spans and one not, and
+  the v0.0.39 messages were only tested through the first. A message
+  that depends on which function the caller used is a bug waiting to
+  happen (`tests/loader_paths.rs`).
+
+### Changed
+
+- Lockstep release for the OpenSSF Best Practices badges: every
+  companion crate is now registered and passing, and each README
+  carries its own badge. No core code change.
+
+## [v0.0.39] - 2026-09-07
+
+### Fixed
+
+- **`parallel::values` counted one document too many** for any stream
+  that opened with a comment, a blank line or a directive: the splitter
+  treated that prologue as a document of its own, so the parallel path
+  disagreed with `load_all`. The prologue now stays with the document
+  its `---` opens. A property test holds the two paths to the same
+  answer across every file of the official test suite.
+- **A self-referential anchor said the wrong thing.** An alias pointing
+  at an anchor whose value is still being built was reported as an
+  unknown anchor defined "in an earlier document". It now says that the
+  alias points at an anchor still being defined and that a
+  self-referential node cannot be represented as a tree, which is the
+  actual limit: YAML's representation graph may be cyclic, a `Value` is
+  a tree.
+- **`!!int` on a YAML 1.1 spelling now says which one and what to
+  write.** `!!int 0b101010` answers "YAML 1.2 has no binary literal,
+  `0b` was YAML 1.1; write 42", and `!!int 100_000_000` names the digit
+  separator and gives 100000000.
+
+### Added
+
+- **Twenty documents that each stress one corner of the
+  specification** (`tests/fixtures/spec-torture/`), with every
+  expectation cross-checked against libyaml and go-yaml: complex keys
+  with all three chomping indicators and an explicit indentation
+  indicator; a merge lattice with `!!binary`, `!!timestamp`,
+  hexadecimal and octal integers; `!!set`, `!!omap` and `!!pairs`
+  together; graph recursion and anchor shadowing; a multi-line flow key
+  that every implementation refuses; custom local tags with infinities
+  and NaN; the null boundary shapes; `%TAG` shorthand resolution;
+  zero-indent nested sequences; a sequence of mappings and a mapping
+  holding a block scalar used as keys; four-byte emoji, a Japanese key
+  and a zero-width space in a key; tag and anchor in either order;
+  an anchored block-scalar key aliased as a value; plain-scalar
+  folding; and empty documents around a real one. Five of them separate
+  the implementations: a billion-laughs payload that the alias budget
+  refuses in under a second, where libyaml exhausts memory and go-yaml
+  does not finish inside a minute; the Norway problem, where `NO`,
+  `no`, `off`, `y` and `190:20:30` all stay strings under YAML 1.2's
+  core schema while libyaml still resolves them the 1.1 way; a block
+  scalar opened inside a flow collection, which every implementation
+  refuses; colons inside plain scalars; and a four-line plain scalar
+  used as an explicit key.
+
+## [v0.0.38] - 2026-09-06
+
+### Added
+
+- **An ultra-complex fixture through every surface**
+  (`tests/fixtures/ultra-complex/`): anchors and merge keys at two
+  depths, explicit `!!int`, `!!str`, `!!bool` and `!!pairs` tags,
+  literal and folded block scalars, flow and block sequences, a
+  sequence as a mapping key, comments everywhere, two documents. It
+  must parse through the typed loaders and the CST and project onto
+  exactly the JSON beside it; the same fixture runs through each
+  companion crate's entry point and is the playground's second
+  example on noyalib.com.
+- **Two diagnostics name the mistake.** `!!!int` (one bang too many)
+  is refused as "tag suffix must not contain `!`" with "did you mean
+  `!!int`?", since YAML 1.2.2 §6.8.2.2 excludes `!` from a tag suffix.
+  An alias that names an anchor from an earlier document says where
+  that anchor is defined and that anchors do not cross `---`
+  (§3.2.2.2), in the typed loaders and the CST alike; libyaml refuses
+  the same input with "an alias referenced an unknown anchor".
+
+### Fixed
+
+- **The CST formatter keeps explicit keys and lone properties
+  parseable.** `? a` / `: b` was rewritten as `? a: b` (a different
+  mapping), `? [a, b]` lost the space after `?` (a plain scalar, not a
+  key), and a tag or anchor alone on the line after a colon lost its
+  indentation. The value indicator of an explicit key now starts its own
+  line, the indicator keeps its space, and a lone property joins the key
+  line (`k: !!pairs`). Found by running the ultra-complex fixture through
+  `noyafmt`; every output must re-parse to the same value as its input.
+- **The registry drift net no longer runs `npm install`.** Both probes
+  fetch the exact version this checkout declares from the registry,
+  verify the tarball against the sha512 the registry publishes for it,
+  unpack it by hand and check that the package carries every file its
+  entry module imports (the question the 0.0.35 npm package failed).
+  Closes Scorecard alerts #59 and #60 (unpinned npm command).
+
+## [v0.0.37] - 2026-09-06
+
+### Changed
+
+- Lockstep release with the noyalib-wasm npm package gate repair: the
+  0.0.36 npm publish failed inside the gate itself under npm 12, so the
+  whole family moves to 0.0.37 together. No core code change.
+
+## [v0.0.36] - 2026-09-06
+
+### Added
+
+- **The yaml-test-suite now also runs as streams.** Every valid suite
+  case becomes a multi-document stream with a known-bad document
+  injected first, in the middle and last, and `cst::parse_stream`,
+  `parse_stream_with_config`, `load_all` and `load_all_as` must all
+  report the error at the injected byte, with line and column counted
+  on the stream (`tests/official_suite.rs`, 7,488 streams). This is the
+  property behind #407, and it found the two scanner fixes below.
+
+### Fixed
+
+- **A keep-chomped block scalar whose lines are all blank no longer
+  fails when another document follows** (`- |+`, a line of spaces, then
+  `---`). The scalar's first content line is now only a line that
+  belongs to it; a document marker at column 0 or a less indented line
+  ends it, and the blank lines are trailing breaks. Found by the
+  suite-stream permutations (JEF9).
+- **A tab before a top-level flow node parses the same in every
+  document of a stream.** `<tab>[` was accepted on the first line of a
+  stream (the suite's 6CA3) and rejected after `---` or `...`. The rule
+  is now one rule at every line start: a tab is separation before a
+  flow node at the top level, and indentation everywhere else. As a
+  consequence `<tab>- a` and `<tab>? a` on the first line of a stream,
+  which used to be accepted, are rejected like they already were in
+  every later document.
+- **A `...` that closes nothing is not a document.** `cst::parse_stream`
+  made an empty document out of a `...` at the start of a stream, or of
+  a second `...` right after another, where the typed loaders yield
+  none (the suite's HWV9). The marker now becomes the prologue of the
+  document that follows, so both entry points count documents the same
+  way and the sources still concatenate to the input byte-for-byte.
+- **CST scanner errors carry their position.** `cst::parse_stream`,
+  `parse_document` and the green-tree builder used to drop the byte
+  index of a scanner error (a directive after an unclosed document,
+  for instance); they now report the same location as the typed
+  loaders.
+
+- **`cst::parse_stream` and `parse_stream_with_config` locate an error
+  in the stream, not in the document that failed** (#407). The stream
+  parser parses each document from its own slice, so a failure in the
+  third document came back at the slice's line 2 with no way back to
+  the stream's line 5, while `load_all` reported line 5 for the same
+  bytes. Every location on the error, the similar-anchor suggestion
+  included, now counts from the start of the input the caller passed,
+  as the typed loaders already do. The first document of a stream, and
+  a single document, are unchanged.
+
+## [v0.0.35] - 2026-09-06
+
+### Added
+
+- **The resource budgets are pure predicates, machine-checked.**
+  `parser::budget` decides nesting depth, alias occurrences, the
+  alias-to-anchor ratio, the transitive repetition charge, expanded
+  bytes and the node ceiling over plain integers; both loaders call
+  them at the same points as before. Kani proof harnesses show the
+  checks are exact and monotone, the ratio heuristic never panics and
+  never trips on a non-finite ratio or while aliases do not outnumber
+  anchors, and the saturating accumulators can never wrap back under a
+  limit. A `kani` CI job runs them on every push.
+- **A `wasm32-wasip2` build job**: the library builds for the WASI
+  component-model target (defaults and `std`-only) on every push.
+- **`docs/COOKBOOK.md`**: task-shaped recipes, each naming the runnable
+  example it is distilled from.
+- **Family gaps closed in the satellites this cycle:** a GitHub Action
+  and hosted pre-commit hooks (noya-cli), a VS Code extension packaged
+  as a `.vsix` on every push (noyalib-lsp), and three stateless MCP
+  tools that take content in the request (noyalib-mcp).
+
+### Changed
+
+- **Branch protection on `main` now requires strict status checks,
+  signed commits, code-owner review and dismissal of stale reviews.**
+  A solo maintainer cannot require a second approval; the rest of the
+  OpenSSF Branch-Protection tier is on.
+- **The registry drift probe pins the npm installs** to the version the
+  checkout declares, so it tests the matching release and satisfies the
+  Scorecard's pinned-dependencies check.
+
 ## [v0.0.34] - 2026-09-05
 
 ### Added (family)

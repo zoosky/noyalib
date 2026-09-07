@@ -82,18 +82,40 @@ impl<'a> Formatter<'a> {
     }
 
     fn newline(&mut self) {
-        if !self.at_line_start {
-            self.out.push('\n');
-            self.at_line_start = true;
-            self.last_was_space = false;
+        if self.at_line_start {
+            return;
         }
+        // A block scalar's token carries the indentation of the line
+        // that follows it, so after writing one the cursor sits on a
+        // line holding nothing but spaces. Ending that line would add a
+        // blank line, and a keep-chomped scalar counts blank lines as
+        // content, so the value would gain a newline. Drop the spaces
+        // and we are already at the start of a line (found by
+        // formatting the spec-torture corpus).
+        let trimmed = self.out.trim_end_matches([' ', '\t']).len();
+        let line_is_only_space =
+            trimmed < self.out.len() && (trimmed == 0 || self.out.as_bytes()[trimmed - 1] == b'\n');
+        if line_is_only_space {
+            self.out.truncate(trimmed);
+        } else {
+            self.out.push('\n');
+        }
+        self.at_line_start = true;
+        self.last_was_space = false;
     }
 
     fn write_raw(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        self.indent();
+        // Indentation is written eagerly, so writing it before a token
+        // that opens with a line break leaves a line of nothing but
+        // spaces. Inside a keep-chomped block scalar that line is
+        // content and silently adds a newline to the value (found by
+        // formatting the spec-torture corpus).
+        if !text.starts_with(['\n', '\r']) {
+            self.indent();
+        }
         self.out.push_str(text);
         if let Some(last_newline) = text.rfind('\n') {
             let trailing = &text[last_newline + 1..];
@@ -238,12 +260,77 @@ impl<'a> Formatter<'a> {
     fn format_mapping_entry(&mut self, node: &GreenNode, base: usize) -> Result<()> {
         let mut pos = base;
         let mut saw_colon = false;
+        // An explicit key (`? key`) needs the space after its indicator
+        // as much as a sequence item needs the one after `-`: `?[a, b]`
+        // is a plain scalar, not an explicit key (found by the
+        // ultra-complex fixture).
+        let mut saw_question = false;
+        // A value whose tag or anchor sits alone on the line after the
+        // colon (`k:` / `  !!pairs` / `  - a`) is written as `k: !!pairs`:
+        // the line break is dropped and the property joins the key line,
+        // where it needs no indentation of its own (found by the
+        // ultra-complex fixture, which lost the property's indent).
+        let children: Vec<&GreenChild> = node.children().collect();
+        let mut drop_newline_at: Option<usize> = None;
+        if let Some(colon) = children.iter().position(|c| {
+            matches!(
+                c,
+                GreenChild::Token {
+                    kind: SyntaxKind::ColonIndicator,
+                    ..
+                }
+            )
+        }) {
+            let mut i = colon + 1;
+            let is_ws = |c: &GreenChild| {
+                matches!(
+                    c,
+                    GreenChild::Token {
+                        kind: SyntaxKind::Whitespace,
+                        ..
+                    }
+                )
+            };
+            while i < children.len() && is_ws(children[i]) {
+                i += 1;
+            }
+            if i < children.len()
+                && matches!(
+                    children[i],
+                    GreenChild::Token {
+                        kind: SyntaxKind::Newline,
+                        ..
+                    }
+                )
+            {
+                let newline = i;
+                i += 1;
+                while i < children.len() && is_ws(children[i]) {
+                    i += 1;
+                }
+                if i < children.len()
+                    && matches!(
+                        children[i],
+                        GreenChild::Token {
+                            kind: SyntaxKind::TagMark | SyntaxKind::AnchorMark,
+                            ..
+                        }
+                    )
+                {
+                    drop_newline_at = Some(newline);
+                }
+            }
+        }
 
-        for child in node.children() {
+        for (index, child) in children.iter().enumerate() {
             match child {
                 GreenChild::Token { kind, len } => {
                     let text = &self.source[pos..pos + *len as usize];
-                    if saw_colon
+                    if drop_newline_at == Some(index) {
+                        pos += child.text_len();
+                        continue;
+                    }
+                    if (saw_colon || saw_question)
                         && !matches!(
                             kind,
                             SyntaxKind::ColonIndicator
@@ -255,12 +342,37 @@ impl<'a> Formatter<'a> {
                         self.ensure_space();
                     }
                     if matches!(kind, SyntaxKind::ColonIndicator) {
+                        // An explicit key's value indicator starts its own
+                        // line: `? a` / `: b`. On the key's line it would
+                        // turn the key into a mapping (`? a: b`).
+                        if saw_question && !self.at_line_start {
+                            self.newline();
+                        }
                         saw_colon = true;
+                        saw_question = false;
+                    }
+                    if matches!(kind, SyntaxKind::QuestionIndicator) {
+                        saw_question = true;
                     }
                     self.handle_token(*kind, text);
                 }
                 GreenChild::Node(inner) => {
-                    if saw_colon {
+                    if saw_question && !saw_colon {
+                        self.ensure_space();
+                        // A mapping used as an explicit key continues on
+                        // the lines below the `?`, and those lines must
+                        // be indented past it or they become entries of
+                        // the surrounding mapping instead. Without this
+                        // the key is torn apart and the value is lost
+                        // (found by formatting the spec-torture corpus).
+                        if inner.kind() == SyntaxKind::BlockMapping {
+                            self.indent_level += 1;
+                            self.format_node(inner, pos)?;
+                            self.indent_level -= 1;
+                        } else {
+                            self.format_node(inner, pos)?;
+                        }
+                    } else if saw_colon {
                         if matches!(
                             inner.kind(),
                             SyntaxKind::BlockMapping | SyntaxKind::BlockSequence

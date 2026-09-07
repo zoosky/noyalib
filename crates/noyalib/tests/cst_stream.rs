@@ -3,7 +3,8 @@
 
 //! Multi-document splitting for `parse_stream`.
 
-use noyalib::cst::{Document, parse_stream};
+use noyalib::cst::{Document, parse_stream, parse_stream_with_config};
+use noyalib::{Error, ParserConfig, Value, load_all_as};
 
 fn join_sources(docs: &[Document]) -> String {
     docs.iter().map(Document::source).collect()
@@ -108,4 +109,112 @@ fn each_doc_independently_editable() {
     docs[1].set("version", "0.2.1").unwrap();
     assert_eq!(docs[0].source(), "---\nversion: 0.1.1\n");
     assert_eq!(docs[1].source(), "---\nversion: 0.2.1\n");
+}
+
+// Error locations count from the start of the stream (#407).
+
+#[test]
+fn error_in_a_later_document_is_located_in_the_stream() {
+    let src = "a: 1\n---\nb: 2\n---\nc: *nope\n";
+    let err = parse_stream(src).unwrap_err();
+    let loc = err.location().expect("located");
+    assert_eq!((loc.index(), loc.line(), loc.column()), (21, 5, 4));
+    assert!(src[loc.index()..].starts_with("*nope"));
+    // The typed loader reports the same position for the same bytes.
+    let typed = load_all_as::<Value>(src).unwrap_err();
+    assert_eq!(typed.location(), Some(loc));
+    // Both CST entry points agree.
+    let cfg = ParserConfig::new();
+    let with_config = parse_stream_with_config(src, &cfg).unwrap_err();
+    assert_eq!(with_config.location(), Some(loc));
+    assert_eq!(err.to_string(), "unknown anchor: nope at line 5, column 4");
+}
+
+#[test]
+fn error_in_the_first_document_is_unchanged() {
+    let src = "a: *nope\n---\nb: 1\n";
+    let loc = parse_stream(src).unwrap_err().location().expect("located");
+    assert_eq!((loc.index(), loc.line(), loc.column()), (3, 1, 4));
+}
+
+#[test]
+fn key_collision_in_a_later_document_is_located_in_the_stream() {
+    let src = "a: 1\n---\nb: 2\n---\n1: x\n\"1\": y\n";
+    let err = parse_stream(src).unwrap_err();
+    assert!(matches!(err, Error::KeyCollisionAt { .. }), "{err:?}");
+    let loc = err.location().expect("located");
+    assert_eq!((loc.index(), loc.line(), loc.column()), (23, 6, 1));
+    let typed = load_all_as::<Value>(src).unwrap_err();
+    assert_eq!(typed.location(), Some(loc));
+}
+
+#[test]
+fn similar_anchor_suggestion_is_located_in_the_stream() {
+    let src = "a: 1\n---\nb: &nope 1\nc: *nop\n";
+    let err = parse_stream(src).unwrap_err();
+    let Error::UnknownAnchorAt {
+        location,
+        suggestion,
+        ..
+    } = err
+    else {
+        panic!("{err:?}");
+    };
+    assert_eq!((location.line(), location.column()), (4, 4));
+    let (name, at) = suggestion.expect("a similar anchor is suggested");
+    assert_eq!(name, "nope");
+    assert_eq!((at.index(), at.line(), at.column()), (12, 3, 4));
+    assert!(src[at.index()..].starts_with("&nope"));
+}
+
+#[test]
+fn rendered_error_shows_the_failing_line_of_the_stream() {
+    let src = "a: 1\n---\nb: 2\n---\nc: *nope\n";
+    let rendered = parse_stream(src).unwrap_err().render(src);
+    assert!(rendered.contains("5 | c: *nope"), "{rendered}");
+}
+
+#[test]
+fn directive_after_an_unclosed_document_is_located_in_the_stream() {
+    // YAML 1.2.2 §9.1.4: a directive needs the previous document
+    // closed by `...`. The scanner rejects the stream before any
+    // document is parsed; the error still carries the directive's
+    // position, the same one the typed loader reports.
+    let src = "a: 1\n%YAML 1.2\n---\nb: 2\n";
+    let err = parse_stream(src).unwrap_err();
+    let loc = err.location().expect("located");
+    assert_eq!((loc.index(), loc.line(), loc.column()), (5, 2, 1));
+    assert!(src[loc.index()..].starts_with("%YAML"));
+    let typed = load_all_as::<Value>(src).unwrap_err();
+    assert_eq!(typed.location(), Some(loc));
+    assert!(
+        err.to_string()
+            .contains("directive must be preceded by '...'"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_document_end_marker_that_closes_nothing_is_not_a_document() {
+    // The suite's HWV9: a stream that is only `...` has no documents.
+    // parse_stream keeps its one-document-minimum for empty input, but
+    // a leading `...` must not add a document the typed loaders do not
+    // see; it becomes the prologue of the document that follows.
+    for (src, docs) in [
+        ("...\nfoo\n", 1),
+        ("...\n---\na: 1\n", 1),
+        ("# c\n...\nfoo\n", 1),
+        ("a: 1\n...\n...\nb: 2\n", 2),
+        ("a: 1\n...\n...\n", 1),
+        ("---\n...\n", 1),
+    ] {
+        let parsed = parse_stream(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+        assert_eq!(parsed.len(), docs, "{src:?}");
+        assert_eq!(parsed.iter().map(Document::source).collect::<String>(), src);
+        assert_eq!(
+            load_all_as::<Value>(src).unwrap().len(),
+            docs,
+            "typed {src:?}"
+        );
+    }
 }
