@@ -793,6 +793,21 @@ impl<'a> Scanner<'a> {
         if look >= self.input.len() || Self::is_break(self.input[look]) {
             return Ok(());
         }
+        // A comment is not indented content. YAML 1.2.2 gives
+        // `l-comment ::= s-separate-in-line c-nb-comment-text? b-comment`
+        // with `s-white ::= s-space | s-tab` (§6.2, §6.6), so whitespace
+        // before a `#` is *separation*, and a tab is as legal there as a
+        // space. Indentation (§6.1) is what may not contain tabs, and a
+        // comment line has none to satisfy.
+        //
+        // Without this the answer depended on the quote style of the
+        // line above: `"k: 1\n\t# t\n"` parsed and
+        // `"k: \"1\"\n\t# t\n"` did not, because the two paths leave
+        // the scanner at different `indent` values and the top-level
+        // escape below is keyed on that (#428).
+        if self.input[look] == b'#' {
+            return Ok(());
+        }
         let block_indicator = matches!(self.input[look], b'-' | b'?' | b':')
             && (look + 1 >= self.input.len() || Self::is_blank_or_break(self.input[look + 1]));
         if self.indent < 0 && !block_indicator {
@@ -1611,43 +1626,6 @@ impl<'a> Scanner<'a> {
             message: Cow::Owned(format!(
                 "document marker '{}{}{}' is not allowed inside a {style} scalar",
                 p0 as char, p0 as char, p0 as char,
-            )),
-            index: self.pos,
-        })
-    }
-
-    /// After a block-structural indicator (`-`, `?`, `:`), verify the
-    /// separation does not end in a tab immediately followed by another
-    /// structural indicator. Per YAML 1.2.2 §6.1 tabs are valid as
-    /// inline whitespace (spec example 6.3: `:\t bar` is fine), but a
-    /// tab cannot stand in for indentation when the next token would
-    /// itself open a new block scope — that is the Y79Y-class issue.
-    fn _reject_tab_indent_after_indicator(&self, indicator: &'static str) -> ScanResult<()> {
-        if self.flow_level != 0 {
-            return Ok(());
-        }
-        let mut look = self.pos;
-        let mut last_ws: u8 = 0;
-        while look < self.input.len() && Self::is_blank(self.input[look]) {
-            last_ws = self.input[look];
-            look += 1;
-        }
-        if last_ws != b'\t' || look >= self.input.len() {
-            return Ok(());
-        }
-        let next = self.input[look];
-        // Only reject when the following content is itself a structural
-        // token whose position is interpreted as indentation. Plain
-        // content after a tab is permitted (it is folded as scalar
-        // whitespace, not indentation).
-        let is_structural = matches!(next, b'-' | b'?' | b':')
-            && (look + 1 >= self.input.len() || Self::is_blank_or_break(self.input[look + 1]));
-        if !is_structural {
-            return Ok(());
-        }
-        Err(ScanError {
-            message: Cow::Owned(format!(
-                "tab character cannot precede a block-structural indicator after {indicator}"
             )),
             index: self.pos,
         })
