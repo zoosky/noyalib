@@ -1,6 +1,6 @@
 [package]
 name = "noyalib"
-version = "0.0.41"
+version = "0.0.45"
 edition = "2024"
 rust-version = "1.86.0"
 license = "MIT OR Apache-2.0"
@@ -353,8 +353,8 @@ ryu = { version = "1", optional = true }
 memchr = { version = "2.7", default-features = false }
 smallvec = { version = "1.13", default-features = false }
 miette = { version = "7", optional = true }
-ariadne = { version = "0.5", optional = true, default-features = false }
-garde = { version = "0.22", optional = true, default-features = false, features = ["derive"] }
+ariadne = { version = "0.6", optional = true, default-features = false }
+garde = { version = "0.23", optional = true, default-features = false, features = ["derive"] }
 validator = { version = "0.21", optional = true, features = ["derive"] }
 # NOTE: `serde_yaml` 0.9 is intentionally NOT a noyalib dependency.
 # The upstream crate is unmaintained; the `compat-serde-yaml` shim
@@ -375,7 +375,7 @@ serde_json = { version = "1.0", optional = true }
 # `validate-schema` feature is on. Default features are disabled so
 # we don't drag in `reqwest` for HTTP `$ref` resolution; users who
 # need that can re-enable it via their own dep.
-jsonschema = { version = "0.53", optional = true, default-features = false }
+jsonschema = { version = "0.56", optional = true, default-features = false }
 # `figment` integration — drop-in `Provider` for the popular
 # layered-configuration crate. Pulled in only when the `figment`
 # feature is on so non-figment users don't pay for it.
@@ -420,7 +420,7 @@ serde_bytes = "0.11"
 criterion = "0.8"
 proptest = "1.11"
 serde_yaml_ng = "0.10"
-yaml-rust2 = "0.12"
+yaml-rust2 = "0.13"
 rust-yaml = "1.0.1"
 # Bench-only competitor surface. None of these ship transitively
 # in any release artefact — they are dev-deps used exclusively by

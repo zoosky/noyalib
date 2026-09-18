@@ -116,6 +116,122 @@ pub enum RepairScope {
     Document,
 }
 
+/// Deliberate failures, for the tests that verify the rollbacks.
+///
+/// Every splicing mutator wraps its edit in the same three-part guard:
+/// splice, re-parse, compare the loaded value against a snapshot taken
+/// before the edit. Each part has a failure arm that restores the
+/// snapshot and reports what went wrong — and each of those arms fires
+/// only when the *mutator's own* logic has produced something wrong,
+/// which is to say never, from outside.
+///
+/// That left the whole safety net untested: nothing confirmed that a
+/// failed splice actually puts the document back. These switches make
+/// the two fallible steps fail on demand so the rollback arms can be
+/// driven and, more to the point, *checked*.
+///
+/// Compiled only under `cfg(test)` — the crate's own test target, which
+/// the coverage job builds and runs like any other. A consumer's build
+/// contains none of it, and neither does the library as an integration
+/// test links it. The switches are thread-local and default to off, so
+/// a test that does not ask for a failure cannot be given one by a test
+/// running beside it.
+#[cfg(test)]
+pub(crate) mod fault {
+    use core::cell::Cell;
+
+    thread_local! {
+        static FAIL_SPLICE: Cell<bool> = const { Cell::new(false) };
+        static FAIL_VALIDATE: Cell<bool> = const { Cell::new(false) };
+        static FAIL_ORACLE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(crate) fn splice_should_fail() -> bool {
+        FAIL_SPLICE.with(Cell::get)
+    }
+
+    pub(crate) fn validate_should_fail() -> bool {
+        FAIL_VALIDATE.with(Cell::get)
+    }
+
+    pub(crate) fn oracle_should_mismatch() -> bool {
+        FAIL_ORACLE.with(Cell::get)
+    }
+
+    /// Run `f` with [`Document::replace_span`] failing.
+    ///
+    /// The switch is cleared on the way out even if `f` panics, so one
+    /// failing assertion cannot leave the rest of the suite injecting
+    /// failures.
+    pub(crate) fn while_splicing_fails<R>(f: impl FnOnce() -> R) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                FAIL_SPLICE.with(|c| c.set(false));
+            }
+        }
+        FAIL_SPLICE.with(|c| c.set(true));
+        let _reset = Reset;
+        f()
+    }
+
+    /// Run `f` with the post-edit oracle rejecting whatever it is given.
+    ///
+    /// This is the third of the three guards, and the one that catches a
+    /// splice which parses but does not *mean* what was asked for. It
+    /// cannot be reached from outside at all: getting there requires the
+    /// mutator to have produced a document that re-parses into the wrong
+    /// value, which is the bug the guard exists to stop.
+    pub(crate) fn while_the_oracle_rejects<R>(f: impl FnOnce() -> R) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                FAIL_ORACLE.with(|c| c.set(false));
+            }
+        }
+        FAIL_ORACLE.with(|c| c.set(true));
+        let _reset = Reset;
+        f()
+    }
+
+    /// Run `f` with [`Document::validate`] failing.
+    pub(crate) fn while_validation_fails<R>(f: impl FnOnce() -> R) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                FAIL_VALIDATE.with(|c| c.set(false));
+            }
+        }
+        FAIL_VALIDATE.with(|c| c.set(true));
+        let _reset = Reset;
+        f()
+    }
+}
+
+/// Whether `source` contains a duplicate mapping key.
+///
+/// Loading a document with duplicate keys succeeds and collapses them,
+/// so a value-level comparison cannot tell that one was introduced.
+/// Re-reading under a policy that refuses duplicates can.
+fn duplicate_keys_present(source: &str) -> bool {
+    let mut config = ParserConfig::new();
+    config.duplicate_key_policy = crate::DuplicateKeyPolicy::Error;
+    crate::from_str_with_config::<Value>(source, &config).is_err()
+}
+
+/// Whether the post-edit oracle rejects the edit: the document loaded
+/// back differs from the value the mutator said it would produce.
+///
+/// Every guard compares through this so the rollback arms can be driven
+/// in tests; see [`fault::while_the_oracle_rejects`].
+pub(crate) fn oracle_rejects(actual: &Value, expected: &Value) -> bool {
+    #[cfg(test)]
+    if fault::oracle_should_mismatch() {
+        return true;
+    }
+    actual != expected
+}
+
 impl Document {
     /// Borrow the root [`GreenNode`].
     ///
@@ -327,6 +443,63 @@ impl Document {
     /// regular `Result`. On success, the typed cache is populated
     /// as a side-effect so a subsequent `as_value` call is free.
     ///
+    /// # A structurally invalid fragment commits
+    ///
+    /// The splice is verbatim, so a fragment that is not a well-formed
+    /// YAML node — `"[unclosed"` — is written out and this call still
+    /// returns `Ok(())`. The document is only checked when asked, and
+    /// [`Document::validate`] is how you ask:
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("m:\n  k: 1\n").unwrap();
+    /// doc.insert_entry("m", "z", "[unclosed").unwrap();                 // accepted
+    /// assert!(doc.validate().is_err());            // and reported here
+    /// ```
+    ///
+    /// Call `validate` before writing the result anywhere, or use
+    /// [`Document::insert_entry_value`] instead: the `_value` mutators render
+    /// the value themselves and cannot produce invalid YAML.
+    ///
+    /// # A structurally invalid fragment commits
+    ///
+    /// The splice is verbatim, so a fragment that is not a well-formed
+    /// YAML node — `"[unclosed"` — is written out and this call still
+    /// returns `Ok(())`. The document is only checked when asked, and
+    /// [`Document::validate`] is how you ask:
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("xs:\n  - p\n").unwrap();
+    /// doc.push_back("xs", "[unclosed").unwrap();                 // accepted
+    /// assert!(doc.validate().is_err());            // and reported here
+    /// ```
+    ///
+    /// Call `validate` before writing the result anywhere, or use
+    /// [`Document::push_back_value`] instead: the `_value` mutators render
+    /// the value themselves and cannot produce invalid YAML.
+    ///
+    /// # A structurally invalid fragment commits
+    ///
+    /// The splice is verbatim, so a fragment that is not a well-formed
+    /// YAML node — `"[unclosed"` — is written out and this call still
+    /// returns `Ok(())`. The document is only checked when asked, and
+    /// [`Document::validate`] is how you ask:
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("xs:\n  - p\n").unwrap();
+    /// doc.insert_after("xs[0]", "[unclosed").unwrap();                 // accepted
+    /// assert!(doc.validate().is_err());            // and reported here
+    /// ```
+    ///
+    /// Call `validate` before writing the result anywhere, or use
+    /// [`Document::insert_after_value`] instead: the `_value` mutators render
+    /// the value themselves and cannot produce invalid YAML.
+    ///
     /// # Errors
     ///
     /// Returns the underlying parse error if the source no longer
@@ -357,6 +530,10 @@ impl Document {
     /// assert!(doc.validate().is_ok());
     /// ```
     pub fn validate(&self) -> Result<()> {
+        #[cfg(test)]
+        if fault::validate_should_fail() {
+            return Err(Error::Parse("injected validate failure".into()));
+        }
         if self.cache.borrow().is_some() {
             return Ok(());
         }
@@ -404,6 +581,10 @@ impl Document {
     /// assert_eq!(doc.to_string(), "a: 42\n");
     /// ```
     pub fn replace_span(&mut self, start: usize, end: usize, replacement: &str) -> Result<()> {
+        #[cfg(test)]
+        if fault::splice_should_fail() {
+            return Err(Error::Parse("injected splice failure".into()));
+        }
         if start > end || end > self.source.len() {
             return Err(Error::Parse(format!(
                 "replace_span range {start}..{end} out of bounds (source length {})",
@@ -578,6 +759,25 @@ impl Document {
     /// document is left untouched. Restructuring the target itself —
     /// scalar to mapping, say — remains allowed.
     ///
+    /// # A structurally invalid fragment commits
+    ///
+    /// The splice is verbatim, so a fragment that is not a well-formed
+    /// YAML node — `"[unclosed"` — is written out and this call still
+    /// returns `Ok(())`. The document is only checked when asked, and
+    /// [`Document::validate`] is how you ask:
+    ///
+    /// ```
+    /// use noyalib::cst::parse_document;
+    ///
+    /// let mut doc = parse_document("a: 1\nb: 2\n").unwrap();
+    /// doc.set("a", "[unclosed").unwrap();          // accepted
+    /// assert!(doc.validate().is_err());            // and reported here
+    /// ```
+    ///
+    /// Call `validate` before writing the result anywhere, or use
+    /// [`Document::set_value`] and the other `_value` mutators, which
+    /// render the value themselves and cannot produce invalid YAML.
+    ///
     /// # Errors
     ///
     /// - `Error::Parse(...)` with "path not found" if `path` does
@@ -651,6 +851,28 @@ impl Document {
                 "set: the fragment for `{path}` added or removed entries \
                  elsewhere in the document — it was left unchanged. Use \
                  `set_value` to write a value without splicing YAML."
+            )));
+        }
+
+        // The shape fingerprint above cannot see a *shadowed* sibling. A
+        // fragment can only add lines, so it cannot reshape `b` in place
+        // — but it can write a second `b`, and duplicate keys collapse
+        // when the document is loaded, leaving the fingerprint identical:
+        //
+        //     set("a", "2\nb: changed")  on  "a: 1\nb:\n  c: 1\n"
+        //
+        // used to return `Ok` and produce a document with two `b` keys.
+        //
+        // Duplicate keys are legal here and some documents carry them on
+        // purpose, so the test is not "are there duplicates" but "did
+        // this edit introduce one": clean before and dirty after.
+        if !duplicate_keys_present(&snapshot.source) && duplicate_keys_present(&self.source) {
+            *self = snapshot;
+            return Err(Error::Parse(format!(
+                "set: the fragment for `{path}` introduced a duplicate key, \
+                 shadowing an entry elsewhere in the document — it was left \
+                 unchanged. Use `set_value` to write a value without \
+                 splicing YAML."
             )));
         }
         Ok(())
@@ -825,14 +1047,17 @@ impl Document {
         // folded scalar to a plain one) without changing the loaded
         // document (#337). `write_span` has already vetted the path, so
         // alias refusals and path errors are unaffected.
-        {
+        let segments = parse_query_path(path);
+        let target_is_collection = {
             self.ensure_cache();
             let cache = self.cache.borrow();
             let (root, _) = cache.as_ref().expect("ensure_cache populated");
-            if typed_value_at(root, &parse_query_path(path)) == Some(value) {
+            let current = typed_value_at(root, &segments);
+            if current == Some(value) {
                 return Ok(());
             }
-        }
+            matches!(current, Some(Value::Sequence(_) | Value::Mapping(_)))
+        };
         // A collection value replaces a collection node in the node's
         // own style — flow stays flow, block stays block (#328). The
         // scalar formatter below cannot spell one, so branch off here.
@@ -845,16 +1070,43 @@ impl Document {
         // give. (An equal value already returned above: a no-op is
         // harmless wherever it points.)
         self.refuse_inside_aliased_anchor("set_value", path, s)?;
+        // A block collection occupies its own lines, and the resolver
+        // widens its span to the first of them
+        // ([`extend_to_line_start`]) so that a *read* slice is uniformly
+        // indented and re-parses to the value it denotes. A scalar
+        // spliced over that span therefore starts where the collection's
+        // line started, which is the key's own column: `k:` / `  a: 1`
+        // came back as `k:` / `5`. This parser reads that; PyYAML and
+        // libyaml reject it, and one level down it surfaces as an
+        // "inconsistent indentation" error over a document that has
+        // none.
+        //
+        // The value goes where the collection's content sat instead, one
+        // indent step past the key when the collection sat at the key's
+        // own column. That is the correction `remove` already makes when
+        // it empties a sole entry, and it is what `set_value` already
+        // does for a scalar that was on its own line (`k:` / `  hello`
+        // becomes `k:` / `  5`): the new value goes where the old value's
+        // content began. This is the one span that had been widened past
+        // that rule.
+        let own_line = target_is_collection
+            && !segments.is_empty()
+            && s != e
+            && s == start_of_line(&self.source, s);
         // An empty span is an implicit null's insertion point, not a value to
         // overwrite: there is no scalar leaf there to read a style from, and
         // no `: ` separator either, since the span starts right after the
         // indicator. Everything else about the site — the neighbours, the
         // column — is read the same way.
         let filling_in = s == e;
-        let kind = if filling_in {
+        let kind = if filling_in || own_line {
             // No existing bytes means no quoting *intent* to preserve, which
             // is exactly the state `PlainScalar` denotes to the neighbour rule
-            // below.
+            // below. A span widened to a line start has none either: the leaf
+            // there is the indentation, which `is_block_site` rejects and the
+            // formatter reports as "target site is not a scalar leaf" — which
+            // is why a *string* over a block collection errored while a number
+            // corrupted, the arm disagreeing with itself.
             SyntaxKind::PlainScalar
         } else {
             leaf_kind_at(&self.green, s).ok_or_else(|| {
@@ -865,9 +1117,19 @@ impl Document {
         // plain (so there is no quoting *intent* to preserve) and a
         // sibling style dominates the surrounding `BlockMapping`,
         // match the neighbours.
-        let neighbour = sibling_dominant_scalar_kind(&self.green, s)
-            .filter(|_| kind == SyntaxKind::PlainScalar);
-        let entry_col = entry_indent_column(&self.source, s);
+        let neighbour = if own_line {
+            // At a line start the sibling walk resolves the *inner*
+            // collection, so it would hand back the quoting style of the
+            // value being replaced.
+            None
+        } else {
+            sibling_dominant_scalar_kind(&self.green, s).filter(|_| kind == SyntaxKind::PlainScalar)
+        };
+        let entry_col = if own_line {
+            own_line_replacement_column(&self.source, s, self.indent_unit())
+        } else {
+            entry_indent_column(&self.source, s)
+        };
         let in_flow = in_flow_collection(&self.green, s);
         let ctx = SiteContext {
             kind,
@@ -890,9 +1152,17 @@ impl Document {
         };
         let fragment = if filling_in {
             fill_in(&fragment)
+        } else if own_line {
+            // The splice starts at the line's first byte, so the fragment
+            // carries the indentation itself. A block literal's body already
+            // sits at `entry_col + 2`; only its header line needs placing.
+            format!("{}{fragment}", " ".repeat(entry_col))
         } else {
             fragment
         };
+        // Last, so it covers the block literal, the single-quoted
+        // multi-line scalar and the hoisted comment above alike.
+        let fragment = respell_breaks(&fragment, document_break(&self.source));
         self.replace_span(s, e, &fragment)
     }
 
@@ -975,6 +1245,11 @@ impl Document {
                 .trim_end_matches('\n')
                 .replace('\n', &format!("\n{pad}"))
         };
+        // The scalar arm's rule, on the arm that renders through the
+        // serializer. It must land *here*, above the candidate: the
+        // oracle proves something only if the bytes it parses are the
+        // bytes that get spliced.
+        let fragment = respell_breaks(&fragment, document_break(&self.source));
         // Oracle before the splice: the candidate must load back as
         // the document with exactly this one path replaced.
         let mut candidate = String::with_capacity(self.source.len() + fragment.len());
@@ -987,7 +1262,7 @@ impl Document {
                  re-parse ({err}); the document was left unchanged"
             ))
         })?;
-        if *reparsed.as_value() != expected {
+        if oracle_rejects(&reparsed.as_value(), &expected) {
             return Err(Error::Parse(format!(
                 "set_value: replacing `{path}` failed the integrity check — the rendered \
                  collection did not load back as the value given; the document was left \
@@ -1156,7 +1431,7 @@ impl Document {
                  mapping and not empty ({e}); the document was left unchanged"
             ))
         })?;
-        if candidate_value != expected {
+        if oracle_rejects(&candidate_value, &expected) {
             return Err(Error::Parse(format!(
                 "set_path: `{path}` cannot be created here — the document's root already \
                  holds a non-mapping value; the document was left unchanged"
@@ -1349,7 +1624,7 @@ impl Document {
                  the document was left unchanged"
             )));
         }
-        if *self.as_value() != expected {
+        if oracle_rejects(&self.as_value(), &expected) {
             *self = snapshot;
             return Err(Error::Parse(format!(
                 "remove: removing `{path}` failed the integrity check — the edit would \
@@ -1778,7 +2053,7 @@ impl Document {
                  unable to re-parse ({e}); the document was left unchanged"
             )));
         }
-        if *self.as_value() != expected {
+        if oracle_rejects(&self.as_value(), &expected) {
             *self = snapshot;
             return Err(Error::Parse(format!(
                 "swap_items: swapping items {i} and {j} of `{path}` failed the integrity \
@@ -2674,7 +2949,7 @@ impl Document {
                  unable to re-parse ({e}); the document was left unchanged"
             )));
         }
-        if *self.as_value() != expected {
+        if oracle_rejects(&self.as_value(), &expected) {
             *self = snapshot;
             return Err(Error::Parse(format!(
                 "insert_entry_value: inserting `{key}` into `{mapping_path}` failed the \
@@ -3089,7 +3364,19 @@ impl Document {
                  `{MERGE_KEY_SPELLING}` merge — use `set` with a fragment instead"
             ))
         })?;
-        Ok((column, end_of_line(&self.source, end), start))
+        // Two fixes to the same line; they compose rather than compete.
+        // `anchor_line_end` settles which line the anchor entry owns, so
+        // a sibling lands above a trailing comment (#418).
+        // `extend_past_kept_blank_lines` then steps over blank lines a
+        // keep-chomped scalar owns, so the sibling does not land inside
+        // another entry's value (#429). Order matters: the keep-chomped
+        // step takes the line the anchor walk settled on.
+        let line_end = anchor_line_end(&self.source, start, end, column);
+        Ok((
+            column,
+            extend_past_kept_blank_lines(&self.source, start, line_end),
+            start,
+        ))
     }
 }
 
@@ -3891,6 +4178,62 @@ fn implicit_null_insertion_point(source: &str, pos: usize) -> Option<(usize, usi
     match source.as_bytes().get(pos) {
         Some(b':' | b'-') => Some((pos + 1, pos + 1)),
         _ => None,
+    }
+}
+
+/// The span the comment API anchors on for `path`: the value's own span,
+/// or, when the entry has no value bytes, the point one would be written
+/// at.
+///
+/// An entry written `k:` with nothing after it is an implicit null. It is
+/// a real entry with a key token of its own, and `write_span` has resolved
+/// it since #310/#311, which is what lets `set_value` fill it in. The
+/// comment API never learned the same thing, so a `# todo` sitting beside
+/// such an entry was invisible to `comments_at` and unreachable by the
+/// mutators.
+///
+/// Restricted to entries that have a **key**. A `-` with nothing after it
+/// is the same shape reached by the other indicator, but neither go-yaml
+/// nor ruamel.yaml produces a usable result for it: setting a comment
+/// there orphans the existing one onto a line of its own, and removing the
+/// item leaves it behind. Nobody has a good answer for the sequence case,
+/// so this does not invent one.
+// Issue #425.
+impl Document {
+    pub(super) fn comment_anchor_span(&self, path: &str) -> Option<(usize, usize)> {
+        if let Some(span) = self.span_at(path) {
+            return Some(span);
+        }
+        // No value bytes. Only a mapping entry qualifies, and only when the
+        // indicator is really there to write after.
+        let (_, key_end) = self.key_span(path)?;
+        let rest = self.source.get(key_end..)?;
+        let colon = key_end + rest.find(':')?;
+        if rest[..colon - key_end].trim().is_empty() {
+            implicit_null_insertion_point(&self.source, colon)
+        } else {
+            None
+        }
+    }
+
+    /// The byte a leading comment run is measured upward from: the entry's
+    /// own key token when the path names one, and the comment anchor span
+    /// otherwise.
+    ///
+    /// A leading comment decorates the **entry**, so the line it sits above
+    /// is the entry's first line, which is the key's. For a scalar, a flow
+    /// collection or an implicit null the key and the value share that line
+    /// and either would do. For a block collection they do not: the value
+    /// starts on the next line, so measuring from it asks about the wrong
+    /// line and the run above the key is out of reach.
+    ///
+    /// A path that names no key, such as a sequence item, keeps the value
+    /// span it always used.
+    pub(super) fn leading_comment_anchor(&self, path: &str) -> Option<usize> {
+        if let Some((key_start, _)) = self.key_span(path) {
+            return Some(key_start);
+        }
+        self.comment_anchor_span(path).map(|(start, _)| start)
     }
 }
 
@@ -5466,14 +5809,24 @@ fn shape_excluding(value: &Value, segments: &[QuerySegment]) -> String {
                 for (k, val) in m {
                     out.push_str(k.as_str());
                     out.push(':');
-                    let next = match skip.first() {
-                        Some(QuerySegment::Key(sk)) if sk.as_str() == k.as_str() => &skip[1..],
-                        _ => &[][..],
-                    };
-                    if next.len() < skip.len() {
-                        walk(val, next, out);
-                    } else {
-                        walk_all(val, out);
+                    // On the path: recurse with the remaining segments, so
+                    // the elided target contributes its marker. Off it:
+                    // render the whole subtree, so a change anywhere
+                    // inside a sibling shows up in the fingerprint.
+                    //
+                    // This used to compute `next` first — `&skip[1..]` on a
+                    // match, `&[]` otherwise — and branch on
+                    // `next.len() < skip.len()`. That is true in *both*
+                    // cases (`skip` is never empty here; `walk` returns
+                    // early when it is), so `walk_all` was dead and every
+                    // sibling collapsed to the `<target>` marker. The
+                    // fingerprint then recorded only the top-level key
+                    // names, not the shapes under them.
+                    match skip.first() {
+                        Some(QuerySegment::Key(sk)) if sk.as_str() == k.as_str() => {
+                            walk(val, &skip[1..], out);
+                        }
+                        _ => walk_all(val, out),
                     }
                     out.push(',');
                 }
@@ -5482,14 +5835,11 @@ fn shape_excluding(value: &Value, segments: &[QuerySegment]) -> String {
             Value::Sequence(s) => {
                 out.push('[');
                 for (i, val) in s.iter().enumerate() {
-                    let next = match skip.first() {
-                        Some(QuerySegment::Index(si)) if *si == i => &skip[1..],
-                        _ => &[][..],
-                    };
-                    if next.len() < skip.len() {
-                        walk(val, next, out);
-                    } else {
-                        walk_all(val, out);
+                    match skip.first() {
+                        Some(QuerySegment::Index(si)) if *si == i => {
+                            walk(val, &skip[1..], out);
+                        }
+                        _ => walk_all(val, out),
                     }
                     out.push(',');
                 }
@@ -5842,6 +6192,24 @@ fn column_of_key_at(source: &str, value_start: usize) -> Option<usize> {
     }
 }
 
+/// The column a replacement must sit at when the value it replaces
+/// occupies its own lines.
+///
+/// Normally that is the old value's own indent. A block *sequence* is
+/// allowed to sit at its key's own column — `on:` / `- push`, the
+/// GitHub Actions and Ansible idiom — and a value written there does
+/// not re-parse as that key's value, so the answer is one indent step
+/// past the key instead. [`sole_entry_range`] makes the same call when
+/// `remove` empties a sole entry, which is why `on:` / `- push` becomes
+/// `on:` / `  []` rather than `on:` / `[]`.
+///
+/// `line_start` is the first byte of the line the old value begins.
+fn own_line_replacement_column(source: &str, line_start: usize, unit: usize) -> usize {
+    let own = skip_line_indent(source, line_start) - line_start;
+    let key = column_of_key_at(source, line_start).unwrap_or(own);
+    if own <= key { key + unit } else { own }
+}
+
 /// Walk every scalar leaf in the green tree and pick the
 /// dominant *quoted* style. Plain mapping keys overwhelm any
 /// real signal from the values so we deliberately ignore them —
@@ -5899,6 +6267,121 @@ fn walk_collections(node: &GreenNode, visit: &mut dyn FnMut(SyntaxKind)) {
     }
 }
 
+/// The end of the anchor entry's own last line: the line a new sibling is
+/// spliced after.
+///
+/// Not simply `end_of_line(end)`. The two span sources disagree about
+/// where a nested block collection stops. `resolve_path_in_green` trims it
+/// to its content, but the loader's span tree runs on to the next token,
+/// sweeping up the blank and comment lines that follow. That difference is
+/// invisible for a scalar entry, where there is nothing to sweep, and for
+/// an entry with nothing after it. It shows when the mapping's last entry
+/// is a *nested block collection* with a comment beneath it: the anchor
+/// landed past the comment, so the new key was written after it and the
+/// comment became that key's head comment instead of the document's
+/// (#418).
+///
+/// The last line the entry owns is therefore the last one in `start..end`
+/// that is not blank and not a comment sitting *outside* the entry.
+/// Indentation is what tells those apart, and `column` is the entry's own:
+///
+/// - a comment indented *strictly deeper* than the entry sits inside its
+///   block, so a new sibling goes after it;
+/// - a comment at the entry's own column or shallower is not inside it,
+///   and a sibling goes before it. At the entry's own column it could be
+///   read either way, and going before is what the anchor did until #288.
+///
+/// The line holding `start` always counts, because the entry begins there,
+/// and a blank line is trivia — except inside a keep-chomped block scalar,
+/// which is handled before the walk begins.
+///
+/// Indentation here counts a tab as one column, where `column_of_key_at`
+/// counts leading spaces only. The two can therefore disagree about a
+/// tab-indented comment. That is deliberate: a tab is not valid YAML
+/// indentation (#428), so there is no right column to give it, and this
+/// keeps the measure total rather than guessing.
+///
+/// Only comments outside the entry move, which is the reported class: a
+/// document-final comment after a nested block, at the mapping's own
+/// column or at the document's. A comment indented inside the block keeps
+/// the behaviour it has had since #288, which is the better answer there
+/// and not what the report is about.
+// Issue #418, a regression from #288.
+fn anchor_line_end(source: &str, start: usize, end: usize, column: usize) -> usize {
+    // A blank line is trivia only when it cannot be content. Inside a
+    // keep-chomped block scalar (`|+`, `>+`) the trailing blanks *are*
+    // the value — which is why `trim_value_span` hands such a span back
+    // untrimmed — and dropping them here would splice into the middle of
+    // the scalar and silently shorten a value the caller never named.
+    // The scalar can sit anywhere under the anchor, not only at its top,
+    // so the question is asked of the whole span.
+    let blank_may_be_content = span_holds_keep_chomped_scalar(source, start, end);
+    let mut best = end_of_line(source, start);
+    let mut i = best;
+    while i < end {
+        let line_end = end_of_line(source, i);
+        let line = &source[i..line_end];
+        let text = line.trim();
+        let owned = if text.is_empty() {
+            blank_may_be_content
+        } else if text.starts_with('#') {
+            line.len() - line.trim_start_matches([' ', '\t']).len() > column
+        } else {
+            true
+        };
+        if owned {
+            best = line_end;
+        }
+        if line_end == i {
+            break;
+        }
+        i = line_end;
+    }
+    best
+}
+
+/// Whether `start..end` holds the header of a keep-chomped block scalar,
+/// which makes a blank line inside that span possibly the scalar's own
+/// content rather than trivia.
+///
+/// Deliberately errs toward `true`: a `|+` inside a quoted string counts,
+/// and so does one under an entry whose blanks are not in fact its own.
+/// The asymmetry decides the direction. A false `true` places a new key
+/// below a blank line, which is a matter of taste; a false `false`
+/// truncates a value, which is data loss.
+fn span_holds_keep_chomped_scalar(source: &str, start: usize, end: usize) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = start;
+    while i < end {
+        let line_end = end_of_line(source, i).min(end);
+        // `is_keep_chomped_block_scalar` expects the value's first byte,
+        // so offer it each indicator on the line in turn; it rejects
+        // anything that is not a header.
+        //
+        // Each offer gets a three-byte window rather than the rest of the
+        // line. A header is the indicator plus, in either order, one
+        // indentation digit and one chomping character, so a `+` that
+        // belongs to it is always within two bytes. Handing over the
+        // whole line instead would make a line of `|||...|` cost a scan
+        // per pipe, and this runs on every insert.
+        for (offset, _) in bytes[i..line_end]
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| matches!(**b, b'|' | b'>'))
+        {
+            let at = i + offset;
+            if is_keep_chomped_block_scalar(source, at, (at + 3).min(line_end)) {
+                return true;
+            }
+        }
+        if line_end == i {
+            break;
+        }
+        i = line_end;
+    }
+    false
+}
+
 /// Position of the byte immediately past the next `\n` at or after
 /// `pos`. If `pos` already points past a newline, returns `pos`.
 /// At end-of-input, returns `source.len()`.
@@ -5926,6 +6409,32 @@ fn document_break(source: &str) -> &'static str {
     if saw { "\r\n" } else { "\n" }
 }
 
+/// A finished fragment with its own line breaks re-spelled in the
+/// document's convention ([`document_break`]).
+///
+/// The emitters are `\n`-separated by design (see
+/// [`indent_continuation_lines`]), and a splice that *adds* a line takes
+/// the document's spelling instead. An insertion learned that in #261;
+/// a replacement grows lines too, whenever the value written has more of
+/// them than the value replaced, and did not.
+///
+/// Applied to the finished fragment rather than inside a formatter, so
+/// that every producer on the path is covered: the block literal's body,
+/// a multi-line single-quoted scalar, and the break a hoisted comment
+/// sits above. [`format_block_literal`] itself stays `\n`-only, because
+/// the insertion path shares it and re-spells later.
+///
+/// A blind substitution is safe because no fragment can carry a raw
+/// `\r`: every string containing one is routed to double-quoted style
+/// and escaped, by `format_string_for_site` and by the serializer alike
+/// (#335). So `\r\r\n` is unreachable.
+fn respell_breaks(fragment: &str, nl: &str) -> String {
+    if nl == "\n" || !fragment.contains('\n') {
+        return fragment.to_owned();
+    }
+    fragment.replace('\n', nl)
+}
+
 /// The line break a splice at `pos` must supply for itself, if any.
 ///
 /// [`end_of_line`] returns the byte after the line's `\n`, or the end
@@ -5951,6 +6460,57 @@ fn start_of_line(source: &str, pos: usize) -> usize {
         i -= 1;
     }
     i
+}
+
+/// Advances past blank lines that a keep-chomped block scalar owns.
+///
+/// A blank line is normally trivia, and a new sibling key may be spliced
+/// in above it. Under `|+` or `>+` it is not trivia — chomping is what
+/// decides, and "keep" means the trailing line breaks are part of the
+/// value. Splicing above them moves them out of the scalar and into the
+/// document, so the key that was asked for is added correctly and a
+/// *different* key's value silently loses a newline (#429).
+///
+/// Nothing fails when that happens: the document still parses, every
+/// byte is still present, and a diff of the raw text looks like an
+/// ordinary insertion. Only the value changed.
+///
+/// The scan is bounded to the anchor entry's own span and only looks for
+/// a header, so it errs toward treating blanks as content. That
+/// direction is the safe one: a false positive puts a new key one line
+/// lower than a reader might expect, which is cosmetic; a false negative
+/// corrupts a value.
+fn extend_past_kept_blank_lines(source: &str, start: usize, line_end: usize) -> usize {
+    if !span_holds_keep_chomped_header(source, start, line_end) {
+        return line_end;
+    }
+    let bytes = source.as_bytes();
+    let mut i = line_end;
+    while i < bytes.len() {
+        let stop = end_of_line(source, i);
+        if !source[i..stop].trim().is_empty() {
+            break;
+        }
+        i = stop;
+        if stop == line_end {
+            break;
+        }
+    }
+    i
+}
+
+/// Whether `start..end` contains a `|+` or `>+` block-scalar header.
+///
+/// Deliberately crude: a `|+` inside a quoted string counts. Getting
+/// this wrong in the permissive direction costs a blank line's placement;
+/// getting it wrong the other way costs a value.
+fn span_holds_keep_chomped_header(source: &str, start: usize, end: usize) -> bool {
+    let end = end.min(source.len());
+    if start >= end {
+        return false;
+    }
+    let region = &source[start..end];
+    region.contains("|+") || region.contains(">+")
 }
 
 fn end_of_line(source: &str, pos: usize) -> usize {
@@ -6651,6 +7211,60 @@ pub(super) fn format_double_quoted(s: &str) -> String {
     out
 }
 #[cfg(test)]
+mod respell_breaks_tests {
+    //! `respell_breaks` re-spells a *replacement's* breaks;
+    //! `indent_continuation_lines` re-spells an *insertion's*. They are
+    //! the same operation, and the second at indent zero is the first.
+    //!
+    //! Pinned as an equivalence rather than implemented as one, so the
+    //! two halves of #261's rule cannot drift on what re-spelling means
+    //! while still reading as what each call site is doing.
+
+    use super::{document_break, indent_continuation_lines, respell_breaks};
+
+    #[test]
+    fn it_is_indent_continuation_lines_at_column_zero() {
+        for fragment in [
+            "|-\n  one\n  two",
+            "one",
+            "",
+            "\n",
+            "a\n\nb",
+            "|- # note\n  multi\n  line",
+        ] {
+            for nl in ["\n", "\r\n"] {
+                assert_eq!(
+                    respell_breaks(fragment, nl),
+                    indent_continuation_lines(fragment, 0, nl),
+                    "fragment {fragment:?} with break {nl:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_lf_document_leaves_the_fragment_alone() {
+        assert_eq!(respell_breaks("a\nb", document_break("x: 1\n")), "a\nb");
+    }
+
+    #[test]
+    fn a_crlf_document_respells_every_break() {
+        assert_eq!(
+            respell_breaks("a\nb\nc", document_break("x: 1\r\n")),
+            "a\r\nb\r\nc"
+        );
+    }
+
+    #[test]
+    fn a_mixed_document_takes_the_default() {
+        assert_eq!(
+            respell_breaks("a\nb", document_break("x: 1\r\ny: 2\n")),
+            "a\nb"
+        );
+    }
+}
+
+#[cfg(test)]
 mod absorb_emptied_line_tests {
     //! Direct unit coverage for @zoosky's #294 helper.
     //!
@@ -6757,5 +7371,314 @@ mod absorb_emptied_line_tests {
         let (ws, we) = absorb_emptied_line(src, s, e);
         assert_eq!(ws, start_of_line(src, s));
         assert_eq!(we, end_of_line(src, e));
+    }
+}
+
+#[cfg(test)]
+mod rollback_invariant_tests {
+    //! What happens when an edit fails halfway.
+    //!
+    //! Every splicing mutator promises the same thing: if the edit
+    //! cannot be completed, the document is left exactly as it was.
+    //! That promise is kept by a rollback arm on each of the three
+    //! fallible steps — the splice, the re-parse, and the comparison
+    //! against the pre-edit value — and none of those arms can be
+    //! reached from outside, because reaching one means the mutator's
+    //! own logic produced something wrong.
+    //!
+    //! So the promise was never checked. These tests use the
+    //! [`super::fault`] switches to fail each step on demand, and then
+    //! assert the part that matters: not that an error came back, but
+    //! that the document is byte-for-byte what it was before.
+
+    use super::fault;
+    use super::{Document, parse_document};
+    use crate::Value;
+
+    /// Carries an inline comment so the comment mutators have
+    /// something to edit; without one they are documented no-ops and
+    /// would never reach a splice at all.
+    const DOC: &str = "a: 1  # beside a\nxs:\n  - p\n  - q\nm:\n  k: 1\n";
+
+    /// The mutators that consult `validate` before accepting an edit
+    /// to [`DOC`]. Which ones do is a property of the *shape* being
+    /// edited as much as the method: `remove` has a documented fast
+    /// path for an entry that owns its line, and takes it here, so it
+    /// is covered separately by
+    /// [`remove_rolls_back_when_it_cannot_take_its_fast_path`]. The
+    /// fragment-splicing mutators re-parse the source directly instead
+    /// — that is the optimistic commit documented on `set`.
+    ///
+    /// Listed rather than inferred so that a mutator quietly dropping
+    /// its `validate` call fails this test instead of passing it.
+    const VALIDATE_GUARDED: &[&str] = &[
+        "rename_key",
+        "swap_items",
+        "move_item",
+        "push_back_value",
+        "insert_after_value",
+        "insert_entry_value",
+        "set_inline_comment",
+        "set_leading_comment",
+        "remove_inline_comment",
+    ];
+
+    /// One mutator, pinned to a fixed path and argument.
+    type Mutator = fn(&mut Document) -> crate::Result<()>;
+
+    /// Every mutator that edits through a splice, as a name and a call.
+    fn mutators() -> Vec<(&'static str, Mutator)> {
+        vec![
+            ("set", |d| d.set("a", "2")),
+            ("set_path", |d| d.set_path("a", &Value::from(2_i64))),
+            ("set_path new key", |d| {
+                d.set_path("fresh", &Value::from(1_i64))
+            }),
+            ("set_value", |d| d.set_value("a", &Value::from(2_i64))),
+            ("remove", |d| d.remove("a")),
+            ("rename_key", |d| d.rename_key("a", "z")),
+            ("swap_items", |d| d.swap_items("xs", 0, 1)),
+            ("move_item", |d| d.move_item("xs", 0, 1)),
+            ("push_back", |d| d.push_back("xs", "r")),
+            ("push_back_value", |d| {
+                d.push_back_value("xs", &Value::from("r"))
+            }),
+            ("insert_after", |d| d.insert_after("xs[0]", "r")),
+            ("insert_after_value", |d| {
+                d.insert_after_value("xs[0]", &Value::from("r"))
+            }),
+            ("insert_entry", |d| d.insert_entry("m", "n", "2")),
+            ("insert_entry_value", |d| {
+                d.insert_entry_value("m", "n", &Value::from(2_i64))
+            }),
+            ("set_inline_comment", |d| d.set_inline_comment("a", "c")),
+            ("set_leading_comment", |d| d.set_leading_comment("a", "c")),
+            ("remove_inline_comment", |d| d.remove_inline_comment("a")),
+        ]
+    }
+
+    /// The control: with nothing injected, every one of them succeeds.
+    /// Without this, a mutator that fails for an unrelated reason would
+    /// make the two tests below pass while proving nothing.
+    #[test]
+    fn every_mutator_succeeds_when_nothing_is_injected() {
+        for (name, op) in mutators() {
+            let mut doc = parse_document(DOC).expect("fixture parses");
+            op(&mut doc).unwrap_or_else(|e| {
+                panic!("{name}: fails without any injected fault, so the rollback tests below measure nothing: {e}")
+            });
+        }
+    }
+
+    #[test]
+    fn a_failed_splice_leaves_the_document_byte_for_byte_unchanged() {
+        let mut refused = 0;
+        for (name, op) in mutators() {
+            // Build (and warm) the document outside the injection
+            // scope, so only the mutator's own splice is affected.
+            let mut doc = parse_document(DOC).expect("fixture parses");
+            doc.validate().expect("fixture validates");
+
+            let result = fault::while_splicing_fails(|| op(&mut doc));
+
+            // The invariant is not "it errors" — a mutator may decline
+            // to splice at all. It is that a *reported failure* leaves
+            // nothing behind.
+            if result.is_err() {
+                refused += 1;
+                assert_eq!(
+                    doc.to_string(),
+                    DOC,
+                    "{name}: the splice failed and the document was left edited"
+                );
+            }
+        }
+        assert!(
+            refused >= 10,
+            "only {refused} mutators reported a failed splice; the injection is              probably not reaching them, so this test proves nothing"
+        );
+    }
+
+    #[test]
+    fn a_failed_revalidation_leaves_the_document_byte_for_byte_unchanged() {
+        for (name, op) in mutators() {
+            let mut doc = parse_document(DOC).expect("fixture parses");
+            doc.validate().expect("fixture validates");
+
+            let result = fault::while_validation_fails(|| op(&mut doc));
+
+            if VALIDATE_GUARDED.contains(&name) {
+                assert!(
+                    result.is_err(),
+                    "{name}: re-validation failed and the mutator reported success, \
+                     so its guard is no longer consulting `validate`"
+                );
+            }
+            if result.is_err() {
+                assert_eq!(
+                    doc.to_string(),
+                    DOC,
+                    "{name}: re-validation failed and the document was left edited"
+                );
+            }
+        }
+    }
+
+    /// `remove` skips the guard when the entry owns its line — deleting
+    /// a whole line cannot disturb a neighbour. When it does *not* own
+    /// its line, as inside a flow mapping, the guard arbitrates, and
+    /// that is the path with the rollback on it.
+    #[test]
+    fn remove_rolls_back_when_it_cannot_take_its_fast_path() {
+        const FLOW: &str = "f: {x: 1, y: 2}\ng: 3\n";
+
+        // Control: it succeeds, and only `f.x` goes.
+        let mut doc = parse_document(FLOW).expect("parse");
+        doc.remove("f.x").expect("removing a flow member");
+        let out = doc.to_string();
+        assert!(out.contains("y: 2"), "the sibling was removed too: {out}");
+        assert!(
+            out.contains("g: 3"),
+            "the next entry was removed too: {out}"
+        );
+
+        let mut doc = parse_document(FLOW).expect("parse");
+        doc.validate().expect("fixture validates");
+        let res = fault::while_validation_fails(|| doc.remove("f.x"));
+        assert!(
+            res.is_err(),
+            "re-validation failed and `remove` reported success"
+        );
+        assert_eq!(doc.to_string(), FLOW, "`remove` left the document edited");
+
+        let mut doc = parse_document(FLOW).expect("parse");
+        doc.validate().expect("fixture validates");
+        let res = fault::while_splicing_fails(|| doc.remove("f.x"));
+        assert!(
+            res.is_err(),
+            "the splice failed and `remove` reported success"
+        );
+        assert_eq!(doc.to_string(), FLOW, "`remove` left the document edited");
+    }
+
+    /// After a rolled-back edit the document must still be *usable* —
+    /// a snapshot restored with a stale cache would report the
+    /// pre-rollback value and quietly corrupt the next edit.
+    #[test]
+    fn a_rolled_back_document_still_edits_correctly_afterwards() {
+        for (name, op) in mutators() {
+            let mut doc = parse_document(DOC).expect("fixture parses");
+            doc.validate().expect("fixture validates");
+
+            let _ = fault::while_splicing_fails(|| op(&mut doc));
+
+            // The same mutator, now without the injected failure.
+            op(&mut doc).unwrap_or_else(|e| {
+                panic!("{name}: the document was unusable after a rollback: {e}")
+            });
+            let out = doc.to_string();
+            let reparsed: Value = crate::from_str(&out).unwrap_or_else(|e| {
+                panic!("{name}: post-rollback edit broke the document: {e}\n{out}")
+            });
+            assert_eq!(
+                reparsed,
+                *doc.as_value(),
+                "{name}: the cached value disagrees with the source after a rollback"
+            );
+        }
+    }
+
+    /// The third guard: the splice lands, the document re-parses, but it
+    /// does not load back as the value the mutator promised. Unreachable
+    /// from outside by construction — getting there means the mutator
+    /// itself produced the wrong document — so only injection can prove
+    /// that the rollback behind it works.
+    #[test]
+    fn a_rejected_oracle_leaves_the_document_byte_for_byte_unchanged() {
+        let mut refused = 0;
+        for (name, op) in mutators() {
+            let mut doc = parse_document(DOC).expect("fixture parses");
+            doc.validate().expect("fixture validates");
+
+            let result = fault::while_the_oracle_rejects(|| op(&mut doc));
+
+            if result.is_err() {
+                refused += 1;
+                assert_eq!(
+                    doc.to_string(),
+                    DOC,
+                    "{name}: the oracle rejected the edit and the document was left edited"
+                );
+            }
+        }
+        // Seven of the table reach the oracle. The rest either take a
+        // documented fast path that skips it (`remove` on an entry that
+        // owns its line) or re-parse the source directly instead
+        // (`set`'s optimistic commit). The floor is what stops this
+        // test passing vacuously if the injection stops arriving.
+        assert!(
+            refused >= 7,
+            "only {refused} mutators consulted the oracle; the injection is probably \
+             not reaching them, so this test proves nothing"
+        );
+    }
+
+    /// And the document must still be usable afterwards — a snapshot put
+    /// back with a stale cache would report the pre-rollback value.
+    #[test]
+    fn a_document_rolled_back_by_the_oracle_still_edits_correctly() {
+        for (name, op) in mutators() {
+            let mut doc = parse_document(DOC).expect("fixture parses");
+            doc.validate().expect("fixture validates");
+            if fault::while_the_oracle_rejects(|| op(&mut doc)).is_ok() {
+                // This mutator does not consult the oracle, so there was
+                // no rollback to recover from.
+                continue;
+            }
+
+            op(&mut doc)
+                .unwrap_or_else(|e| panic!("{name}: unusable after an oracle rollback: {e}"));
+            let out = doc.to_string();
+            let reparsed: Value = crate::from_str(&out)
+                .unwrap_or_else(|e| panic!("{name}: post-rollback edit broke the document: {e}"));
+            assert_eq!(
+                reparsed,
+                *doc.as_value(),
+                "{name}: the cached value disagrees with the source after an oracle rollback"
+            );
+        }
+    }
+
+    /// The switches must not leak between tests: each helper clears its
+    /// flag on the way out, including on a panic inside the closure.
+    #[test]
+    fn an_injected_failure_is_cleared_even_when_the_closure_panics() {
+        let panicked = std::panic::catch_unwind(|| {
+            fault::while_splicing_fails(|| panic!("deliberate"));
+        });
+        assert!(panicked.is_err(), "the closure was expected to panic");
+        assert!(
+            !fault::splice_should_fail(),
+            "the splice switch stayed on after a panic, which would make every \
+             later test in this thread fail for the wrong reason"
+        );
+
+        let panicked = std::panic::catch_unwind(|| {
+            fault::while_validation_fails(|| panic!("deliberate"));
+        });
+        assert!(panicked.is_err(), "the closure was expected to panic");
+        assert!(
+            !fault::validate_should_fail(),
+            "the validate switch stayed on after a panic"
+        );
+
+        let panicked = std::panic::catch_unwind(|| {
+            fault::while_the_oracle_rejects(|| panic!("deliberate"));
+        });
+        assert!(panicked.is_err(), "the closure was expected to panic");
+        assert!(
+            !fault::oracle_should_mismatch(),
+            "the oracle switch stayed on after a panic"
+        );
     }
 }

@@ -5,7 +5,385 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.0.45] - 2026-09-17
+
+### Added
+
+- **`docs/errors.md`** — every error variant, the `ErrorKind` it reports,
+  the stable `code()` a tool can match on, and what raises it. 32
+  variants, 11 kinds.
+
+- **`docs/internals.md`** — the module map (68 modules) and the twelve
+  longest functions, which are where the time goes and where a change
+  is most likely to cost something.
+
+  Both are **generated** from the source by
+  `scripts/generate-reference-docs.sh`, because an inventory maintained
+  by hand is wrong the first time someone adds an item and forgets the
+  document. Generation alone would not be enough — someone can forget to
+  run it — so `tests/reference_docs_are_complete.rs` reads the source
+  and the documents and fails when they disagree, in *both* directions:
+  a variant or module missing from a document, and a document naming
+  something that no longer exists. Both documents are compiled by the
+  same CI gate as the rest of `docs/`.
+
+### Changed
+
+- Dependencies brought to their latest releases. `ariadne` 0.5 → 0.6 and
+  `garde` 0.22 → 0.23 are major bumps for a `0.x` crate; the adapters and
+  their examples were checked to still render and validate identically,
+  not merely to compile. `serde-saphyr` 1.2 → 1.3, `memchr` 2.8.2 →
+  2.8.3, `smallvec` 1.16.0 → 1.16.1, and the cargo-vet exemptions moved
+  with them.
+
+
+### Fixed
+
+- **A leading comment anchored on the value, not the key** (#442, thanks
+  @zoosky). A leading comment decorates the entry, so the line it sits
+  above is the entry's first line — the key's. The comment API measured
+  from the *value* instead, which is the same line only when the value
+  is a scalar, a flow collection or an implicit null. For a block-valued
+  key the value starts on the next line, so the upward walk began one
+  line too low.
+
+  `comments_at("k").before` reported `[]` for a comment sitting directly
+  above `k:`, contradicting the field's own documented contract, and
+  `set_comment(.., Before, ..)` spliced the new comment *inside* the
+  block, where it documented the first child instead.
+
+  Worse, it could claim a comment it did not own: for
+  `k:\n  # about n\n  n: 1\n` the walk started inside the block, so
+  `# about n` was reported as the leading comment of both `k` and `k.n`
+  — and `remove_comment("k", Before)` deleted it. A caller that named
+  `k` destroyed a comment belonging to a key it never mentioned, at
+  `Ok(())`.
+
+  `leading_comment_anchor` now returns the entry's key token when the
+  path names one. Where key and value share a line the anchor moves zero
+  bytes, which is why the scalar, flow, implicit-null, nested-key and
+  sequence-item cases come out byte for byte as before.
+
+
+- **`!!str` was ignored by the borrowed value graph.** The tag is a
+  *resolution* tag, not a decoration — it says the scalar is a string —
+  and the owned graph honours it. The borrowed reader discarded the tag
+  before resolving, so a document saying explicitly that a value is a
+  string handed back a number:
+
+  ```text
+  a: !!str 1
+    from_str::<Value>        -> String("1")
+    from_str_borrowed        -> Number(Integer(1))
+  ```
+
+  Found by running one corpus through every pair of readers and
+  requiring them to agree, rather than by testing each against what it
+  should say.
+
+
+- **`set` accepted a fragment that shadowed a sibling with a duplicate
+  key.** The method is documented to refuse a fragment that reaches
+  outside the target, and it guards that with a fingerprint of the
+  document's shape with the edited path elided. A spliced fragment can
+  only *add* lines, so it cannot reshape a sibling in place — but it can
+  write a second copy of an existing key, and duplicate keys collapse
+  when the document is loaded, leaving the fingerprint identical:
+
+  ```yaml
+  # set("a", "2\nb: changed") on `a: 1` / `b: {c: 1}` returned Ok
+  a: 2
+  b: changed      # injected by the fragment
+  b:
+    c: 1
+  ```
+
+  The guard now also asks whether the edit *introduced* a duplicate key
+  — clean before and dirty after — rather than whether duplicates exist,
+  so a document that carries them on purpose stays editable.
+
+- **The shape fingerprint never recorded a sibling's shape.** Its walk
+  chose between recursing along the edited path and rendering a subtree
+  whole by testing `next.len() < skip.len()`, which is true in *both*
+  branches (`skip` is never empty there), so the render-whole arm was
+  dead code and every off-path child collapsed to the `<target>` marker.
+  The walk now branches on whether the child is actually on the path.
+
+
+- **`Spanned<T>` dropped the per-call parser toggles.** `ParserConfig`
+  carries two options that reach the value deserializer —
+  `plain_scalar_strings` and `ignore_binary_tag_for_string` — and every
+  descent site propagates them through `Deserializer::descend`, whose
+  doc says "used by every descent site … so the toggles survive the
+  walk". `SpannedMapAccess` was a descent site that did not: it built
+  the inner deserializer with `Deserializer::new` / `with_span_context`,
+  both of which default the toggles to `false`.
+
+  The effect was a silent inconsistency between two fields of the same
+  struct: with `plain_scalar_strings` on, a `String` field read
+  `k: .inf` happily while a `Spanned<String>` field beside it failed
+  with "expected string, found float". The toggles now travel with the
+  access, and the one site that genuinely has no config to carry —
+  deserializing straight from a `Value` — passes `false` explicitly.
+
+### Testing
+
+- The third CST guard is now verified. Each mutator checks its edit
+  three ways — the splice, the re-parse, and an oracle comparing the
+  document against the value it promised — and only the first two could
+  be driven. Every oracle comparison now goes through one helper with a
+  `cfg(test)` switch behind it, so the rollback under the third guard is
+  exercised and asserted (byte-for-byte restoration, and the document
+  still usable afterwards) rather than assumed.
+
+## [v0.0.44] - 2026-09-16
+
+### Fixed
+
+- **A formatting wrapper around a struct moved the struct's fields up a
+  level.** `SpaceAfter`, `Commented`, and a `FlowSeq`/`FlowMap`/`LitStr`/
+  `FoldStr` holding a shape other than the one it names all fall back to
+  ordinary block output. The serializer's layout decision did not look
+  through them: it treated every `__noya_` wrapper as inline, so the key
+  was written `wrapped: ` and the block mapping that followed started at
+  the *parent's* column.
+
+  ```yaml
+  # was — `wrapped` is null and `k` is a sibling of `head`
+  head: 0
+  wrapped:
+  k: 3
+  tail: 9
+  ```
+
+  The result is valid YAML that means something else, so nothing failed
+  loudly. `SpaceAfter` and `Commented` around a struct are ordinary
+  usage, not a misuse of the wrapper. `needs_block_layout` now predicts,
+  per tag, what the writer will actually emit.
+
+- **`SpaceAfter` emitted no blank line.** It is documented as "emit a
+  blank line after the value" and wrote a single newline, which
+  `start_line` then absorbed when it opened the next entry — so between
+  mapping entries and between sequence items, which is the whole point
+  of the wrapper, it did nothing. Its only test serialized it at the
+  document root, where a bare value produces the same bytes, so the test
+  passed either way.
+
+- **A comment beside an entry with no value was invisible.** An entry
+  written `k:` with nothing after it is an implicit null: a real entry
+  with a key token of its own, which `write_span` has resolved since
+  #310/#311 so that `set_value` can fill it in. The comment API asked for
+  the value's span instead, so a `# todo` sitting right beside the entry
+  was not reported by `comments_at`, both setters refused it, and both
+  removers reported success having done nothing. All four now work, at any
+  depth and at end of input, keeping whatever gutter the author wrote. An
+  empty sequence item is deliberately unchanged, because no implementation
+  has a usable answer there (#425).
+
+- **A new key was inserted below a comment that belonged to the
+  document, not to the entry above it** (#418, a regression in v0.0.25).
+
+  ```yaml
+  a:
+    b:
+      n: 1
+  # trailing
+  ```
+
+  `insert_entry("a", "c", "2")` wrote `c` *after* `# trailing`, so a
+  comment closing the document silently became the new key's head
+  comment. Reading the comments back reported it against `a.c`.
+
+  The anchor an insert splices after comes from the loader's span tree,
+  which runs on to the next token and sweeps up the blank and comment
+  lines below an entry. The green tree trims a block collection to its
+  content instead, so the two disagree, and only for this shape: a
+  mapping whose last entry is a *nested block collection* with a comment
+  beneath it. A scalar entry sweeps up nothing, which is why a flat
+  mapping was never affected. The anchor moved to the span tree in
+  v0.0.25 (#288, PR #289) to fix insertion into mappings with `.` in
+  their keys; this side of it was not noticed.
+
+  The insert now walks the anchor's lines and stops at the last one the
+  entry actually owns. Indentation decides: a comment indented strictly
+  deeper than the anchor's key is inside its block and keeps the new
+  sibling below it, while a comment at the key's own column or shallower
+  is not, and the sibling goes above. A blank line is trivia too, except
+  where it can be content: inside a keep-chomped block scalar (`|+`,
+  `>+`) the trailing blanks are the value, and the walk leaves a span
+  holding one alone rather than splicing into the middle of it.
+  `insert_entry`, `insert_entry_value` and `set_path` all reach that
+  anchor, so all three are fixed, at either nesting depth and under
+  CRLF.
+
+- **A replacement wrote LF into a CRLF document.** `set_value` with a
+  multi-line string gave a CRLF file a bare line feed per line the
+  replacement grew, and so did a collection replacement with more lines
+  than the value it replaced. The insertion mutators learned to take the
+  document's own line break in #261; a replacement adds lines too,
+  whenever the value written has more of them than the value replaced,
+  and it did not. The finished fragment is now re-spelled at the splice,
+  which covers the block literal, a multi-line single-quoted scalar and
+  the comment hoisted onto a block header alike. The emitters stay
+  LF-separated, as the insertion path requires. A replacement that keeps
+  the line count, a flow collection, an LF document and a document that
+  already mixes terminators are all unchanged.
+- **A scalar written over a block collection landed at its key's own
+  column.** `set_value("k", 5)` over `k:` / `  a: 1` produced `k:` /
+  `5`, which this parser reads back and PyYAML and libyaml reject; one
+  level down it surfaced as an "inconsistent indentation" error over a
+  document that has none. The resolver widens a block collection's span
+  to its first line so a read slice is uniformly indented, and a scalar
+  spliced over that span started where the line started. The value now
+  goes where the collection's content sat, or one indent step past the
+  key when the collection sat at the key's own column, which is the
+  column `remove` already picks when it empties a sole entry. A string
+  over a block collection writes too, where it used to report that the
+  target site is not a scalar leaf. Flow collections, sequence items and
+  the document root are unchanged. See ADR-0010.
+
+=======
+
+- **A tab before a comment is separation, not indentation (#428).**
+  Whether `\t# t` parsed depended on the quote style of the line above
+  it: `k: 1` accepted it and `k: "1"` rejected it, because the two paths
+  leave the scanner at different `indent` values and the top-level
+  escape in `reject_tab_indentation` is keyed on that. YAML 1.2.2 gives
+  `l-comment ::= s-separate-in-line c-nb-comment-text? b-comment` with
+  `s-white ::= s-space | s-tab` (§6.2, §6.6), so whitespace before `#`
+  is separation and a tab is as legal there as a space. The no-tabs rule
+  is about indentation (§6.1), which a comment line has none of.
+
+  A tab indenting real content is still an error, and block scalars
+  still reject a tab-indented comment through their own separate check —
+  both covered by tests so neither drifts unnoticed.
+
+- **Inserting a key no longer truncates a keep-chomped block scalar
+  (#429).** `insert_entry` spliced the new key at the end of the anchor
+  entry's last line. Under `|+` or `>+` the trailing blank lines *are*
+  the value, so the key landed above them and they moved out of the
+  scalar and into the document: the requested key was added correctly
+  and a different key silently lost a newline.
+
+  Nothing failed when that happened — the document still parsed, every
+  byte was still present, and the raw-text diff looked like an ordinary
+  insertion. Only the value changed. The insertion point now clears
+  blank lines a keep-chomped scalar owns, and errs toward treating them
+  as content: a false positive places a key one line lower, a false
+  negative corrupts a value.
+
+### Removed
+
+- **`Scanner::_reject_tab_indent_after_indicator`.** Thirty lines
+  describing a YAML 1.2.2 §6.1 rule — a tab may not stand in for
+  indentation when the next token opens a block scope — with no caller
+  since the initial commit, its underscore prefix silencing the
+  dead-code lint. It read like an enforced rule and enforced nothing,
+  which is worse than its absence: anyone auditing the scanner for
+  Y79Y-class handling would have found it and stopped looking. The
+  crate passes 406/406 strict conformance without it. Wiring it in
+  would change what the parser accepts and belongs in a release where
+  that is the point, not in a patch.
+
+### Documentation
+
+- **`set`, `insert_entry`, `push_back` and `insert_after` commit a
+  structurally invalid fragment.** The splice is verbatim, so a
+  fragment that is not a well-formed YAML node — `"[unclosed"` — is
+  written out and the call still returns `Ok(())`; only
+  `Document::validate` reports it. That was a deliberate design
+  decision recorded in a code comment and stated nowhere a caller would
+  see it. All four now document it, each with a runnable example, and
+  point at the `_value` variants, which render the value themselves and
+  cannot produce invalid YAML.
+
+- **Four APIs in `docs/COOKBOOK.md` did not exist as written**, so
+  anyone copying them got a compile error: `load_all::<T>` (`load_all`
+  is not generic — `load_all_as::<T>` is), `ParserConfig::from_str`
+  (there is no such method — `from_str_with_config(text, &cfg)`),
+  `validate_against_schema(..)?.violations()` (it returns
+  `Result<()>`; `CompiledSchema::iter_errors` is the one that reports
+  every violation), and `noyalib::BorrowedValue` /
+  `noyalib::from_str_borrowed` (both live in `noyalib::borrowed`).
+
+- **Every rust block in `docs/` is compiled in CI.** Only the two
+  READMEs were checked, so 31 of the blocks under `docs/` had stopped
+  compiling without anything noticing. All 70 blocks across the 11
+  Markdown files with rust in them now build against the crate, using
+  rustdoc's hidden-line convention (`#`) so the rendered snippets are
+  unchanged, and `,ignore` only where a block needs a dependency
+  noyalib does not have (`serde_yaml_bw`, `miette`, `sval`,
+  `tokio-util`) or is explicitly a shape sketch. The CI job takes the
+  file list as an input; a doc added without an entry there is checked
+  by nothing, which is how this gap opened.
+
+### Testing
+
+- **The rollback under every CST mutator is now verified.** Each
+  splicing mutator wraps its edit in the same guard — splice, re-parse,
+  compare the loaded value against a pre-edit snapshot — and restores
+  the snapshot when any part fails. None of those failure arms can be
+  reached from outside, because reaching one means the mutator's own
+  logic produced something wrong, so nothing had ever confirmed that a
+  failed edit actually puts the document back.
+
+  A `cfg(test)`-only failpoint (`cst::document::fault`) makes the
+  splice and the re-parse fail on demand. The tests then assert the
+  property that matters: not that an error comes back, but that the
+  document is byte-for-byte what it was, and that it still edits
+  correctly afterwards — a restored snapshot with a stale cache would
+  report the pre-rollback value and corrupt the *next* edit. The
+  failpoint is compiled only into the crate's own test target; a
+  consumer's build, and the library as an integration test links it,
+  contain none of it.
+
+  Writing the tests turned up two behaviours worth naming: `remove`
+  has a documented fast path for an entry that owns its line and skips
+  the guard entirely there (the flow-collection case is tested
+  separately), and `set` re-parses the source directly rather than
+  calling `validate`, which is the optimistic commit now documented on
+  the method.
+
+- **`relocate` is exercised per variant.** It re-anchors a located
+  error from a single document's slice onto the whole input, and it is
+  `pub(crate)`, reached only from the `cst` module — so which variants
+  it actually shifted depended on which errors a CST test happened to
+  produce. Every located variant is now checked directly, including the
+  nested location inside `UnknownAnchorAt`'s suggestion.
+
+- **Both loaders are held to the same limits.** `from_str::<Value>`
+  takes a fast path that never builds a `SpanTree`; `load_all` and any
+  target needing positions take the span-aware loader. The two
+  implement every `ParserConfig` budget separately, and the suite drove
+  only the first, so the span-aware loader's copy of each check was
+  unexercised. The matrix now runs through both and asserts they agree
+  on the `ErrorKind` and the wording.
+
+- Coverage suites for the CST mutators' refusal and rollback paths, the
+  serializer's entry-point family and `fmt` wrappers, the streaming
+  deserializer's merge-key and enum-variant handling, and every
+  `ParserConfig` budget and policy. The budget suite carries a control
+  test asserting each input is *accepted* at the default settings —
+  without it, a case that fails for an unrelated reason looks like a
+  working limit. It caught one on the first run: `max_documents` cannot
+  be reached through `from_str`, which refuses multi-document input
+  before consulting the budget.
+
+## [v0.0.43] - 2026-09-08
+
+### Changed
+
+- Lockstep release for a hardening pass on the VS Code extension's
+  publish step in noyalib-lsp. No core code change.
+
+## [v0.0.42] - 2026-09-08
+
+### Changed
+
+- Lockstep release for the VS Code extension's publish path: the
+  extension is now bundled, carries an icon and a licence the packager
+  recognises, and the language server's release workflow publishes it to
+  the Marketplace once a token is configured. No core code change.
 
 ## [v0.0.41] - 2026-09-07
 
