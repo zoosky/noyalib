@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
 
@@ -51,7 +51,7 @@ jobs:
           key: feature-powerset
 
       - name: Install cargo-hack
-        run: cargo install --locked cargo-hack
+        run: cargo install --locked cargo-hack --version 0.6.45
 
       - name: Check every feature pair
         run: >
@@ -62,14 +62,14 @@ jobs:
 
       # The pair sweep above is `--no-dev-deps`, so it never compiles a
       # test, bench or example. That is the right trade for 310 library
-      # combinations, but it means the sweep cannot see a test that
-      # names a feature-gated item without gating itself — the break
-      # that reached main three times. ci.yml's
-      # `default-feature-targets` job covers the default set per PR;
-      # this covers each feature on its own, once a week, where the
-      # extra cost is affordable.
-      - name: Check every target under each single feature
+      # combinations, but it means the sweep cannot see a target that
+      # names an optional feature's item without gating itself. Hosted
+      # targets are written against the default surface, so retain that
+      # baseline while layering each optional feature on its own. The
+      # per-PR `each-feature` job checks the library graph with every
+      # feature truly isolated, including alloc-only configurations.
+      - name: Check hosted targets with each optional feature
         run: >
           cargo hack check -p noyalib
-          --each-feature --all-targets
+          --each-feature --features default --all-targets
           --exclude-features nightly-simd,compare-saphyr
