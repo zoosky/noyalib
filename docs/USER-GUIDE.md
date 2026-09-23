@@ -250,8 +250,15 @@ let res: Result<noyalib::Value, _> =
     from_str_with_config(input, &cfg);
 ```
 
-`ParserConfig::strict()` enables a sane "untrusted-input"
-preset; tweak from there if you need to relax specific dials.
+Use `ParserConfig::profile(ParserProfile::Standard)`, `Strict`, or
+`SerdeYaml` when the selected trust and compatibility contract should be
+explicit in code. `ParserConfig::strict()` remains an alias for the strict
+profile.
+
+`ParserLimits` groups the resource budgets independently from YAML semantics.
+`config.limits()` extracts the active budgets, and
+`config.with_limits(limits)` replaces all of them while preserving version,
+key, policy, property, registry, and resolver settings.
 
 | Dial | Default | `strict()` | Protects against |
 |---|---|---|---|
@@ -336,6 +343,7 @@ The CST exposes:
 |---|---|
 | `parse_document(s)` / `parse_stream(s)` | Read, under the default `ParserConfig` |
 | `parse_document_with_config(s, &cfg)` / `parse_stream_with_config(s, &cfg)` | Read under a `ParserConfig` (budgets, the alias-to-anchor ratio, key policies); the document keeps it for every later re-parse |
+| `doc.edit()` | Queue non-overlapping byte-range replacements and atomically commit them with one complete-document validation |
 | `doc.set(path, fragment)` | Write a literal scalar |
 | `doc.set_value(path, &Value)` | Write any `Value` |
 | `doc.entry(path)` | Chainable mutable handle (18 methods, smart `items[0]` paths) |
@@ -524,7 +532,24 @@ let docs: Vec<MyConfig> = noyalib::parallel::parse(stream)?;
 ```
 
 The pre-scan is `O(input_len)`; the per-document work
-parallelises across the Rayon thread pool.
+parallelises across the Rayon thread pool. Services can supply a bounded,
+caller-owned pool instead of using Rayon's global pool:
+
+```rust
+# let stream = "---\na: 1\n---\na: 2\n---\na: 3\n---\na: 4\n";
+let pool = noyalib::parallel::ThreadPoolBuilder::new()
+    .num_threads(2)
+    .build()?;
+let docs = noyalib::parallel::parse_with_config_in_pool::<noyalib::Value>(
+    stream,
+    &noyalib::ParserConfig::default(),
+    &pool,
+)?;
+# assert_eq!(docs.len(), 4);
+```
+
+The pool owns the concurrency limit and lifecycle. Inputs with fewer than four
+documents remain sequential to avoid scheduling overhead.
 
 ## 10b. Error-recovering parser for LSP / IDE (`recovery` feature)
 
@@ -536,7 +561,7 @@ diagnostics list and offer autocomplete on the recoverable
 subtrees.
 
 ```rust
-// Cargo.toml: noyalib = { version = "0.0.45", features = ["recovery"] }
+// Cargo.toml: noyalib = { version = "0.0.51", features = ["recovery"] }
 use noyalib::recovery::parse_lenient;
 
 let half_typed = "name: noyalib\nfeatures: [recovery, sval\n# ^ unclosed\n";
@@ -556,23 +581,26 @@ See [`crates/noyalib/examples/recovery_lenient.rs`](../crates/noyalib/examples/r
 ## 10c. Native async parsing on tokio (`tokio` feature)
 
 For high-concurrency services parsing YAML from network sources,
-the `tokio` feature lets you skip `spawn_blocking`:
+the `tokio` feature provides bounded drain helpers and a backpressured
+document stream:
 
 ```rust,ignore
 // Needs an async runtime and, for pattern 2, `tokio-util` in *your*
 // Cargo.toml, so this block is shown rather than compiled here.
-// Cargo.toml: noyalib = { version = "0.0.45", features = ["tokio"] }
-use noyalib::tokio_async::{from_async_reader_multi, YamlDecoder};
+// Cargo.toml: noyalib = { version = "0.0.51", features = ["tokio"] }
+use noyalib::tokio_async::{async_yaml_stream, from_async_reader_multi};
 
 // Pattern 1: drain-and-parse
 let docs: Vec<MyDoc> = from_async_reader_multi(&mut reader).await?;
 
-// Pattern 2: streaming codec — for tower middleware pipelines
-let framed = tokio_util::codec::FramedRead::new(reader, YamlDecoder::<MyDoc>::new());
+// Pattern 2: backpressured stream, one parsed document per item
+let documents = async_yaml_stream::<_, MyDoc>(reader);
 ```
 
 Per-document boundaries follow the YAML 1.2.2 §9.1.2 `---`
-grammar — column-0 marker followed by whitespace or EOL.
+grammar: column-0 marker followed by whitespace or EOL. Parsing each
+complete document is synchronous when the stream is polled; the stream
+prevents additional reads until the consumer requests the next item.
 
 See [`crates/noyalib/examples/tokio_async_reader.rs`](../crates/noyalib/examples/tokio_async_reader.rs).
 
@@ -587,7 +615,7 @@ cost of serde monomorphisation. The adapter implements
 ```rust,ignore
 // `sval` and the `sval::Stream` you hand it are *your* dependencies,
 // so this block is shown rather than compiled here.
-// Cargo.toml: noyalib = { version = "0.0.45", features = ["sval"] }
+// Cargo.toml: noyalib = { version = "0.0.51", features = ["sval"] }
 let value: noyalib::Value = noyalib::from_str("name: noyalib")?;
 sval::Value::stream(&value, &mut my_stream)?;
 ```
